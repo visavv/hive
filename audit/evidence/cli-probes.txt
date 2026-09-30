@@ -1,0 +1,22 @@
+--- reserve_pct=150
+reserve_pct is a percentage (0-100; 0 turns the reserve off)
+--- daily_tokens=abc
+daily_tokens must be a number (e.g. 2m, 500k)
+--- unknown key
+unknown budget key "foo" (keys: daily_tokens, reserve_pct, max_concurrent, media_daily, paused, daily_tokens.<provider>)
+--- providers add bad base
+added weird to <repo>/.hive-audit-cli/agents.json
+try: hive doctor weird  ·  hive chat weird
+probing with ACP initialize (npx adapters may download on first run)…
+✓ weird     hive-api-agent 0.1.0 proto v1 auth: can't reach notaurl · ERR_INVALID_URL [load, resume, close] 643ms
+--- send to unknown
+no agent or group "nobody" (agents: none; groups: none)
+--- tts without key
+ELEVENLABS_API_KEY is not set
+--- image no prompt
+usage: hive image "prompt" [--size 1536x1024] [--edit file.png] [--out name]
+--- usage empty
+media:tts  tokens 5h      0 · today      0 · 7d      0
+
+budget: reserve_pct=85  max_concurrent=3  media_daily=40   (hive budget set key=value)
+limits: Claude reports its 5-hour/weekly windows while it runs; other providers show tokens and any limit they hit.
