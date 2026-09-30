@@ -39,12 +39,12 @@ export interface SessionOptions {
   hiveDb: string;
   policy?: PermissionPolicy;
   /** Called for "ask" policy; return the optionId to select. */
-  askPermission?: (req: schema.RequestPermissionRequest, agent: string) => Promise<string>;
+  askPermission?: (req: schema.RequestPermissionRequest, agent: string, signal: AbortSignal) => Promise<string>;
   /**
    * Called when the agent asks the user a structured question
    * (`elicitation/create`). Without a handler hive declines.
    */
-  elicit?: (req: schema.CreateElicitationRequest, agent: string) => Promise<schema.CreateElicitationResponse>;
+  elicit?: (req: schema.CreateElicitationRequest, agent: string, signal: AbortSignal) => Promise<schema.CreateElicitationResponse>;
   /** Text prepended to the very first prompt (system-ish briefing). */
   briefing?: string;
   /** Try to resume this ACP session (session/resume, else session/load) before creating a new one. */
@@ -178,6 +178,9 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
   }
   get queued() {
     return this.queue.length;
+  }
+  get pid(): number | undefined {
+    return this.proc?.pid;
   }
   /** True while the current ACP session is brand new and has never been prompted. */
   get pristine() {
@@ -326,8 +329,8 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
       this.emitEv({ type: "notice", text: `queued (${this.queue.length} waiting)` });
       return;
     }
-    const r = await this.runTurn(text);
-    if (!r.error) await this.drain();
+    await this.runTurn(text);
+    await this.drain();
   }
 
   /**
@@ -354,10 +357,9 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
 
   /** If idle and mail is waiting, deliver it. Returns true if a turn ran. */
   async poke(): Promise<boolean> {
-    if (this.busy || this.closed || Date.now() < this.nextWakeAt) return false;
-    const p = this.queue.shift() ?? this.pendingMailPrompt();
-    if (!p) return false;
-    await this.prompt(p);
+    if (this.busy || this.closed) return false;
+    if (!this.queue.length && (Date.now() < this.nextWakeAt || this.db.unreadCount(this.name) === 0)) return false;
+    await this.drain();
     return true;
   }
 
@@ -389,12 +391,13 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
     if (this.disposed) return;
     this.disposed = true;
     this.closed = true;
+    for (const abort of this.pendingAsks) abort();
     this.resolveClosed();
     if (this.db.db.open) {
       this.dbStatus(this.name, "asleep", "closed");
       this.db.close();
     }
-    killTree(this.proc);
+    await killTree(this.proc);
   }
 
   // ---- internals ----
@@ -478,6 +481,8 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
   /** Mail delivery waits until this time (backoff after failures / ignored mail / budget). */
   private nextWakeAt = 0;
   private failStreak = 0;
+  /** Consecutive wake-ups that didn't reduce unread mail. */
+  private ignoredStreak = 0;
   private wakes: number[] = [];
   /** Aborts for permission/question requests waiting on a human. */
   private pendingAsks = new Set<() => void>();
@@ -522,17 +527,25 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
    * broken agent or one that ignores its mail can't spin.
    */
   private async drain() {
-    while (!this.closed && !this.busy && Date.now() >= this.nextWakeAt) {
+    while (!this.closed && !this.busy) {
+      // What the human typed always runs; mail waits out the backoff and budget.
       const queued = this.queue.shift();
-      const next = queued ?? this.mailWake();
+      if (queued) {
+        await this.runTurn(queued);
+        continue;
+      }
+      if (Date.now() < this.nextWakeAt) break;
+      const next = this.mailWake();
       if (!next) break;
-      const before = queued ? 0 : this.db.unreadCount(this.name);
+      const before = this.db.unreadCount(this.name);
       const r = await this.runTurn(next);
       if (r.error) break;
-      if (!queued && this.db.unreadCount(this.name) >= before) {
-        this.backoff("mail still unread after a wake-up");
+      if (this.db.unreadCount(this.name) >= before) {
+        this.ignoredStreak++;
+        this.backoff("mail still unread after a wake-up", this.ignoredStreak);
         break;
       }
+      this.ignoredStreak = 0;
     }
   }
 
@@ -551,9 +564,9 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
     return p;
   }
 
-  private backoff(why: string) {
-    this.failStreak++;
-    const ms = Math.min(10 * 60_000, 5000 * 2 ** Math.min(this.failStreak - 1, 7));
+  private backoff(why: string, streak?: number) {
+    if (streak === undefined) streak = ++this.failStreak;
+    const ms = Math.min(10 * 60_000, 5000 * 2 ** Math.min(streak - 1, 7));
     this.nextWakeAt = Date.now() + ms;
     this.emitEv({ type: "notice", text: `${why}; pausing mail delivery for ${Math.round(ms / 1000)}s` });
   }
@@ -713,7 +726,8 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
       this.dbStatus(this.name, "waiting", `permission: ${title}`);
       this.emitEv({ type: "status", status: "waiting", note: `permission: ${title}` });
       if (this.opts.askPermission) {
-        const id = await this.withCancel(this.opts.askPermission(req, this.name));
+        const ask = this.opts.askPermission;
+        const id = await this.withCancel((signal) => ask(req, this.name, signal));
         opt = id === CANCELLED ? undefined : (req.options.find((o) => o.optionId === id) ?? reject());
       } else {
         opt = reject();
@@ -727,9 +741,18 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
   }
 
   /** Race a human answer against cancel() and the ask timeout. */
-  private withCancel<T>(p: Promise<T>): Promise<T | typeof CANCELLED> {
+  private withCancel<T>(start: (signal: AbortSignal) => Promise<T>): Promise<T | typeof CANCELLED> {
+    // The signal tells the asker (UI backend, terminal) to withdraw its prompt.
+    const ctrl = new AbortController();
     let abort!: () => void;
-    const cancelled = new Promise<typeof CANCELLED>((r) => (abort = () => r(CANCELLED)));
+    const cancelled = new Promise<typeof CANCELLED>(
+      (r) =>
+        (abort = () => {
+          ctrl.abort();
+          r(CANCELLED);
+        }),
+    );
+    const p = start(ctrl.signal);
     this.pendingAsks.add(abort);
     let timer: NodeJS.Timeout | undefined;
     if (this.opts.askTimeoutMs)
@@ -749,7 +772,8 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
       this.dbStatus(this.name, "waiting", `question: ${req.message.slice(0, 100)}`);
       this.emitEv({ type: "status", status: "waiting", note: `question: ${req.message.slice(0, 100)}` });
       try {
-        const r = await this.withCancel(this.opts.elicit(req, this.name));
+        const el = this.opts.elicit;
+        const r = await this.withCancel((signal) => el(req, this.name, signal));
         res = r === CANCELLED ? { action: "cancel" } : r;
       } catch {
         res = { action: "cancel" };

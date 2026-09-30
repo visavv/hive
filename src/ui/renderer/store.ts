@@ -178,6 +178,18 @@ class Store {
         break;
       case "backend_down":
         this.toast(ev.text, "error");
+        // The requests behind open cards died with the backend.
+        for (const [name, p] of this.panes)
+          for (const i of p.items) {
+            if (i.k === "permission" && !i.decided) {
+              i.decided = "void (backend restarted)";
+              this.touch(name, i);
+            }
+            if (i.k === "elicitation" && !i.done) {
+              i.done = "void (backend restarted)";
+              this.touch(name, i);
+            }
+          }
         break;
       case "agent":
         global = this.applyAgent(ev.agent, ev.e as any);

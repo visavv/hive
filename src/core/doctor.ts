@@ -104,7 +104,7 @@ export async function probe(def: AgentDef, timeoutMs = 90_000, authWaitMs = 8000
   } finally {
     clearTimeout(timer);
     res.ms = Date.now() - t0;
-    killTree(proc);
+    void killTree(proc, 500);
   }
   return res;
 }

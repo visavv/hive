@@ -85,6 +85,7 @@ export class Scheduler {
   private startedAgents = new Set<string>();
   /** Watch jobs paused by a usage limit (other kinds just wait on next_run). */
   private pausedUntil = new Map<number, number>();
+  private pauseStreak = new Map<number, number>();
   /** Jobs whose agent lives in another process; don't reclaim them for a while. */
   private handOff = new Map<number, number>();
   private ticking = false;
@@ -266,6 +267,7 @@ export class Scheduler {
     const cur = this.db.getJob(job.id);
     if (!cur) return;
     const now = Date.now();
+    this.pauseStreak.delete(job.id);
     const patch: Partial<JobRow> = { runs: iteration, last_run: now, failures: 0, last_error: null };
     let end: string | undefined;
     switch (job.kind) {
@@ -304,6 +306,10 @@ export class Scheduler {
    * The iteration isn't consumed and a watch job keeps its pending changes.
    */
   private pause(job: JobRow, error: string) {
+    // A "limit" that never lifts is a failure after all: every 6th pause in a row counts as one.
+    const n = (this.pauseStreak.get(job.id) ?? 0) + 1;
+    this.pauseStreak.set(job.id, n);
+    if (n % 6 === 0) return this.fail(job, `still limited after ${n} pauses: ${error}`);
     const until = resetTime(error) ?? Date.now() + (this.opts.rateLimitWaitMs ?? 30 * 60_000);
     this.db.updateJob(job.id, { next_run: until, last_error: `paused (usage limit): ${error.slice(0, 300)}` });
     const cur = this.db.getJob(job.id) ?? job;
@@ -595,6 +601,8 @@ export function describeSchedule(j: JobRow): string {
 
 /** Does this error text look like a usage / rate limit rather than a real failure? */
 export function isRateLimit(msg: string): boolean {
+  // Out of credit / billing problems don't fix themselves by waiting.
+  if (/insufficient_quota|billing|credit balance|payment/i.test(msg)) return false;
   return /rate.?limit|usage limit|limit reached|quota|too many requests|\b429\b|overloaded|try again (later|in)|resets? (at|in)/i.test(msg);
 }
 

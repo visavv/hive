@@ -249,7 +249,16 @@ function renderJob(e: JobEvent) {
   }
 }
 
-async function askPermission(req: schema.RequestPermissionRequest, agent: string): Promise<string> {
+async function askPermission(req: schema.RequestPermissionRequest, agent: string, signal?: AbortSignal): Promise<string> {
+  // If the session gives up (Ctrl-C / cancel), stop waiting for this answer.
+  signal?.addEventListener("abort", () => {
+    if (answer) {
+      const a = answer;
+      answer = undefined;
+      console.log(dim("\n(permission request withdrawn)"));
+      a("");
+    }
+  });
   if (!process.stdin.isTTY) return req.options.find((o) => o.kind.startsWith("reject"))?.optionId ?? req.options[0].optionId;
   console.log(`\n${cyan(`[${agent}]`)} ${yellow("🔐")} ${req.toolCall.title ?? "tool"}${(req.toolCall as any).kind ? dim(` (${(req.toolCall as any).kind})`) : ""}`);
   req.options.forEach((o, i) => console.log(`  ${i + 1}. ${o.name} ${dim(`(${o.kind})`)}`));

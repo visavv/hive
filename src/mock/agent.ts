@@ -150,9 +150,9 @@ acp
     sess.cancelled = false;
     if (sess.turns === 1 && sess.how !== "new") await say(cx, sessionId, `(${sess.how} session ${sessionId})\n`);
 
-    // 1. inbox
+    // 1. inbox (MOCK_DEAF=1: an agent that never reads its mail)
     await toolCall(cx, sessionId, `t${++n}`, "hive_inbox", "pending", "fetch");
-    const inboxRaw = await callTool(sess, "hive_inbox", {});
+    const inboxRaw = process.env.MOCK_DEAF === "1" ? "[]" : await callTool(sess, "hive_inbox", {});
     await toolCall(cx, sessionId, `t${n}`, "hive_inbox", "completed", "fetch");
     let inbox: any[] = [];
     try {

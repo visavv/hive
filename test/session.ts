@@ -156,5 +156,30 @@ hub.db.send("dave", "*", "fresh news", "after");
 assert(hub.db.unreadCount("newbie") === 1, "broadcasts after joining are");
 void newbie;
 
+// ---- an agent that ignores its mail: budget + growing backoff, via the hub's poke loop ----
+const deaf = await hub.add({ name: "deaf", agent: mock("deaf", { MOCK_DEAF: "1" }), cwd: process.cwd(), maxWakesPer10Min: 2 });
+hub.db.send("carol", "deaf", "hello", "x");
+await new Promise((r) => setTimeout(r, 7000));
+const deafPrompts = hub.db.events(0, 100_000).filter((e) => e.agent === "deaf" && e.type === "prompt").length;
+assert(deafPrompts >= 1 && deafPrompts <= 2, `ignored mail: wake-ups limited by backoff and budget (${deafPrompts} in 7 s)`);
+// the human's own prompts are not held back by the mail backoff
+void deaf.prompt("hello human prompt");
+await until(() => hub.db.events(0, 100_000).some((e) => e.agent === "deaf" && e.type === "prompt" && JSON.parse(e.data).text === "hello human prompt"), 8000, "typed prompt").catch(() => {});
+assert(hub.db.events(0, 100_000).some((e) => e.agent === "deaf" && e.type === "prompt" && JSON.parse(e.data).text === "hello human prompt"), "typed prompts run even while mail delivery is backed off");
+
+// ---- failed start leaves no ghost agent row ----
+await hub.add({ name: "ghosty", agent: { ...mock("ghosty"), command: "/nonexistent/binary", args: [] }, cwd: process.cwd(), startTimeoutMs: 5000 }).catch(() => {});
+assert(!hub.db.getAgent("ghosty"), "a failed start doesn't leave a ghost agent in the hive");
+
+// ---- owner mail excludes agent broadcasts; prune never resurrects read broadcasts ----
+const ownerBefore = hub.db.unreadCount("owner");
+hub.db.send("carol", "*", "chatter", "for agents");
+assert(hub.db.unreadCount("owner") === ownerBefore, "agent broadcasts are not owner mail");
+hub.db.markRead(hub.db.inbox("dave").map((m) => m.id), "dave");
+const daveUnread = hub.db.unreadCount("dave");
+hub.db.db.prepare("UPDATE message_reads SET read_at = read_at - 40*86400000").run();
+hub.db.prune(30);
+assert(hub.db.unreadCount("dave") === daveUnread, "pruning old events doesn't make read broadcasts unread again");
+
 await hub.close();
 finish("session");
