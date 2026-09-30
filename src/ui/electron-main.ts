@@ -157,6 +157,19 @@ app.whenReady().then(() => {
       } catch {}
     }
   });
+  // Native file picker for skill parameters (transcripts etc.). Returns a path only.
+  ipcMain.handle("hive:pick-file", async () => {
+    if (!win) return null;
+    const r = await dialog.showOpenDialog(win, {
+      defaultPath: workDir,
+      properties: ["openFile"],
+      filters: [
+        { name: "Transcripts & text", extensions: ["txt", "srt", "vtt", "md", "json", "csv"] },
+        { name: "All files", extensions: ["*"] },
+      ],
+    });
+    return r.canceled ? null : (r.filePaths[0] ?? null);
+  });
   ipcMain.on("hive:attention", () => {
     if (win && !win.isFocused()) win.flashFrame(true);
   });

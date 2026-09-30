@@ -250,3 +250,16 @@ button.small.on { color: var(--accent); border-color: var(--line); }
 .job-list li.clickable:hover { background: var(--bg3); }
 .runs { max-height: 60vh; overflow-y: auto; }
 .modal:has(.runs) { width: min(820px, 94vw); }
+
+/* ---- recipes / skills ---- */
+.recipe-list { display: grid; gap: 6px; margin-bottom: 8px; }
+.recipe, .skill { display: flex; flex-direction: column; align-items: flex-start; text-align: left; gap: 2px; padding: 6px 10px; }
+.recipe.on, .skill.on { border-color: var(--accent); background: var(--bg3); }
+.skills { display: grid; grid-template-columns: 220px 1fr; gap: 12px; min-height: 320px; }
+.skill-list { display: flex; flex-direction: column; gap: 4px; max-height: 60vh; overflow-y: auto; }
+.skill-form label { grid-template-columns: 110px 1fr; }
+.file-row { display: flex; gap: 6px; }
+.file-row input { flex: 1; }
+.modal:has(.skills), .modal:has(.recipe-list) { width: min(860px, 94vw); }
+.welcome-actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+code { font-family: var(--mono); background: var(--bg); padding: 1px 4px; border-radius: 3px; }

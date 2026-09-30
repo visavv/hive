@@ -4,6 +4,7 @@ import { connect, hello, onEvent, onFocusLast, rpc } from "./bridge.js";
 import { store, useStore } from "./store.js";
 import { Pane } from "./Pane.js";
 import { Drawer } from "./Drawer.js";
+import { RecipesDialog, SkillsDialog } from "./Extras.js";
 import { focus } from "./focus.js";
 import { ctxPct, fmtIdle, parseDuration, statusLabel, suggestName } from "./format.js";
 
@@ -15,7 +16,7 @@ function saveLayout(patch: Partial<Layout>) {
   void rpc("saveLayout", store.layout);
 }
 
-async function openPane(spec: PaneSpec, persist = true, startJob = false) {
+export async function openPane(spec: PaneSpec, persist = true, startJob = false) {
   if (persist && !store.layout.panes.some((p) => p.name === spec.name)) saveLayout({ panes: [...store.layout.panes, spec] });
   store.starting.set(spec.name, { kind: spec.kind });
   store.changed();
@@ -81,6 +82,7 @@ export function App() {
   const [adding, setAdding] = useState(false);
   const [jobFor, setJobFor] = useState<string | null>(null);
   const [drawer, setDrawer] = useState(false);
+  const [dialog, setDialog] = useState<"" | "recipes" | "skills">("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const names = layout.panes.map((p) => p.name);
@@ -121,6 +123,9 @@ export function App() {
         const z = store.layout.zoom ?? 1;
         const next = e.key === "0" ? 1 : Math.min(2, Math.max(0.6, Math.round((z + (e.key === "-" ? -0.1 : 0.1)) * 10) / 10));
         saveLayout({ zoom: next });
+      } else if (mod && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setDialog("skills");
       } else if (mod && e.key.toLowerCase() === "i") {
         e.preventDefault();
         setDrawer((d) => !d);
@@ -142,14 +147,26 @@ export function App() {
 
   return (
     <div className={`app${layout.sidebar ? "" : " nosidebar"}`}>
-      <TopBar names={names} selected={selected} setSelected={setSelected} onAdd={() => setAdding(true)} onHive={() => setDrawer(!drawer)} />
+      <TopBar
+        names={names}
+        selected={selected}
+        setSelected={setSelected}
+        onAdd={() => setAdding(true)}
+        onHive={() => setDrawer(!drawer)}
+        onRecipes={() => setDialog("recipes")}
+        onSkills={() => setDialog("skills")}
+      />
       {layout.sidebar && <Sidebar names={names} onAdd={() => setAdding(true)} />}
       <main className="grid-wrap">
         {names.length === 0 ? (
           <div className="welcome">
             <h1>hive</h1>
             <p>Run Claude Code, Codex, Qwen and friends side by side. They can message each other through the hive.</p>
-            <button className="primary" onClick={() => setAdding(true)}>+ Add an agent</button>
+            <div className="welcome-actions">
+              <button className="primary" onClick={() => setAdding(true)}>+ Add an agent</button>
+              <button onClick={() => setDialog("recipes")}>⚡ Set up a team (recipe)</button>
+              <button onClick={() => setDialog("skills")}>✦ Run a skill</button>
+            </div>
             <p className="dim">
               Ctrl+N add · Ctrl+1..9 jump · Ctrl+Tab cycle · Ctrl+B broadcast · Ctrl+I hive report &amp; mail · Ctrl+M maximize · Ctrl+= / Ctrl+- zoom · Ctrl+\ sidebar · hover a pane to type into it
             </p>
@@ -178,6 +195,8 @@ export function App() {
       {adding && <AddAgentDialog onClose={() => setAdding(false)} />}
       {jobFor && <JobDialog agent={jobFor} onClose={() => setJobFor(null)} />}
       {drawer && <Drawer onClose={() => setDrawer(false)} />}
+      {dialog === "recipes" && <RecipesDialog onClose={() => setDialog("")} />}
+      {dialog === "skills" && <SkillsDialog onClose={() => setDialog("")} />}
       <div className="toasts">
         {toasts.map((t) => (
           <div key={t.id} className={`toast ${t.level}`}>{t.text}</div>
@@ -189,12 +208,14 @@ export function App() {
 
 // ---- top bar: broadcast + layout controls ----
 
-function TopBar({ names, selected, setSelected, onAdd, onHive }: {
+function TopBar({ names, selected, setSelected, onAdd, onHive, onRecipes, onSkills }: {
   names: string[];
   selected: Set<string>;
   setSelected: (s: Set<string>) => void;
   onAdd: () => void;
   onHive: () => void;
+  onRecipes: () => void;
+  onSkills: () => void;
 }) {
   const unread = useStore((s) => s.ownerUnread);
   const layout = useStore((s) => s.layout);
@@ -239,6 +260,12 @@ function TopBar({ names, selected, setSelected, onAdd, onHive }: {
         {cols} cols
         <button className="ghost" disabled={cols >= 8} onClick={() => saveLayout({ columns: cols + 1, widths: undefined })}>+</button>
       </span>
+      <button className="ghost" onClick={onSkills} title="reusable prompts with parameters (Ctrl+K)">
+        ✦ Skills
+      </button>
+      <button className="ghost" onClick={onRecipes} title="set up a ready-made team of agents">
+        ⚡ Recipes
+      </button>
       <button className={`hive-btn${unread ? " has-mail" : ""}`} onClick={onHive} title="report, inbox, blackboard, mail (Ctrl+I)">
         ✉ Hive{unread ? <span className="badge alert">{unread}</span> : null}
       </button>
@@ -538,7 +565,7 @@ function labelOf(o: { currentValue: string | boolean; options?: { value: string;
 
 // ---- dialogs ----
 
-function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+export function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   useEffect(() => {
     const k = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", k);
@@ -674,6 +701,8 @@ function JobDialog({ agent, onClose }: { agent: string; onClose: () => void }) {
   const [every, setEvery] = useState("10m");
   const [path, setPath] = useState(".");
   const [minLines, setMinLines] = useState("50");
+  const [maxWait, setMaxWait] = useState("");
+  const [cooldown, setCooldown] = useState("");
   const [err, setErr] = useState("");
   const submit = async () => {
     if (!prompt.trim()) return setErr("write the instruction the agent should run");
@@ -692,7 +721,17 @@ function JobDialog({ agent, onClose }: { agent: string; onClose: () => void }) {
       p.everyMs = ms;
     } else if (kind === "watch") {
       p.watchPath = path.trim() || ".";
-      p.minLines = Number(minLines) || 50;
+      p.minLines = Number(minLines) || (p.watchPath.startsWith("@bb:") ? 1 : 50);
+      if (maxWait.trim()) {
+        const ms = parseDuration(maxWait);
+        if (!ms) return setErr(`bad duration "${maxWait}" (e.g. 30m)`);
+        p.maxWaitMs = ms;
+      }
+      if (cooldown.trim()) {
+        const ms = parseDuration(cooldown);
+        if (!ms) return setErr(`bad duration "${cooldown}" (e.g. 10m)`);
+        p.cooldownMs = ms;
+      }
     }
     try {
       const id = await rpc("addJob", p);
@@ -751,20 +790,42 @@ function JobDialog({ agent, onClose }: { agent: string; onClose: () => void }) {
           <>
             <label>
               <span>Watch</span>
-              <select value={path === "@branches" ? "@branches" : "path"} onChange={(e) => setPath(e.target.value === "@branches" ? "@branches" : ".")}>
-                <option value="path">a folder</option>
-                <option value="@branches">agents' branches (hive/*) — coders in worktrees</option>
+              <select
+                value={path === "@branches" ? "@branches" : path.startsWith("@bb:") ? "@bb" : "path"}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setPath(v === "@branches" ? "@branches" : v === "@bb" ? "@bb:ideas/raw/" : ".");
+                  setMinLines(v === "@bb" ? "1" : "50");
+                }}
+              >
+                <option value="path">a folder (changed lines)</option>
+                <option value="@branches">agents' branches (hive/*) — commits by coders in worktrees</option>
+                <option value="@bb">blackboard entries (new items under a prefix)</option>
               </select>
             </label>
-            {path !== "@branches" && (
+            {path.startsWith("@bb:") && (
+              <label>
+                <span>Prefix</span>
+                <input value={path.slice(4)} onChange={(e) => setPath("@bb:" + e.target.value)} placeholder="ideas/raw/" />
+              </label>
+            )}
+            {path !== "@branches" && !path.startsWith("@bb:") && (
               <label>
                 <span>Path</span>
                 <input value={path} onChange={(e) => setPath(e.target.value)} placeholder="relative to the agent's folder" />
               </label>
             )}
             <label>
-              <span>Min lines</span>
+              <span>{path.startsWith("@bb:") ? "Min entries" : "Min lines"}</span>
               <input value={minLines} onChange={(e) => setMinLines(e.target.value)} />
+            </label>
+            <label>
+              <span>Max wait</span>
+              <input value={maxWait} onChange={(e) => setMaxWait(e.target.value)} placeholder="e.g. 30m — review any change after this long" />
+            </label>
+            <label>
+              <span>Cooldown</span>
+              <input value={cooldown} onChange={(e) => setCooldown(e.target.value)} placeholder="e.g. 10m — at most one review per" />
             </label>
           </>
         )}

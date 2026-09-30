@@ -18,6 +18,7 @@
       watch options: --min-lines N (or min new entries)  --max-wait 30m (any change after T)  --cooldown 10m (at most every T)
   hive groups · hive group create|add|rm|delete <name> [members…]   mail "@name" reaches all members
   hive recipe list · hive recipe apply <id> [--agent claude] [--alt codex]   a ready-made team (review-loop, solid-code, idea-pipeline, studio)
+  hive skill list · hive skill run <name> k=v … · hive skill new <name> [--describe "…"]   reusable prompts with parameters
  *   hive once <agent> [--in 20m | --at 2026-10-01T09:00] "prompt"
  *   hive jobs [--all]                         list jobs
  *   hive job stop|start|runs|rm <id>
@@ -54,6 +55,9 @@ import { defaultDb } from "../core/home.js";
 import { BB_PREFIX, BRANCHES } from "../core/watch.js";
 import { buildReport, renderReport } from "../core/report.js";
 import { RECIPES, applyRecipe } from "../core/recipes.js";
+import { findSkill, listSkills, parseSkill, projectSkillsDir, skillTemplate, userSkillsDir } from "../core/skills.js";
+import { runSkill, writeSkill } from "../core/skill-run.js";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { listWorktrees, mergeWorktree, removeWorktree, syncWorktree } from "../core/worktree.js";
 import { HiveDb, type JobRow, type NewJob } from "../hive/db.js";
 
@@ -88,6 +92,9 @@ const { values, positionals } = parseArgs({
     alt: { type: "string" },
     agent: { type: "string" },
     prefix: { type: "string" },
+    describe: { type: "string" },
+    project: { type: "boolean", default: false },
+    out: { type: "string" },
     cooldown: { type: "string" },
     help: { type: "boolean", short: "h", default: false },
   },
@@ -121,6 +128,7 @@ const USAGE = `hive — local multi-agent harness
       watch options: --min-lines N (or min new entries)  --max-wait 30m (any change after T)  --cooldown 10m (at most every T)
   hive groups · hive group create|add|rm|delete <name> [members…]   mail "@name" reaches all members
   hive recipe list · hive recipe apply <id> [--agent claude] [--alt codex]   a ready-made team (review-loop, solid-code, idea-pipeline, studio)
+  hive skill list · hive skill run <name> k=v … · hive skill new <name> [--describe "…"]   reusable prompts with parameters
   hive once <agent> [--in 20m | --at 2026-10-01T09:00] "prompt"
   hive jobs [--all]                       list jobs
   hive job stop|start|runs|rm <id>
@@ -846,6 +854,76 @@ async function main() {
       (r.ok ? console.log : console.error)(r.ok ? green(r.message) : red(r.message));
       if (!r.ok) process.exitCode = 1;
       return;
+    }
+
+    case "skills":
+    case "skill": {
+      const cwd = resolve(values.cwd ?? process.cwd());
+      const [sub, name, ...kv] = cmd === "skills" ? ["list"] : rest;
+      if (!sub || sub === "list") {
+        const all = listSkills(cwd);
+        for (const sk of all) console.log(`${cyan(sk.name.padEnd(16))} ${dim(sk.source.padEnd(8))} ${sk.description}`);
+        console.log(dim(`\nrun:  hive skill run <name> param=value … (file params take a path)\nnew:  hive skill new <name> [--describe "what it should do"] [--project]\nuser skills: ${userSkillsDir()}   project skills: ${projectSkillsDir(cwd)}`));
+        return;
+      }
+      if (!name) die(`usage: hive skill ${sub} <name>`);
+      if (sub === "show") {
+        const sk = findSkill(cwd, name);
+        console.log(`${cyan(sk.name)} — ${sk.description}\n${dim(sk.path)}\nagent: ${sk.agent ?? "claude"} · policy: ${sk.policy}${sk.output ? ` · saves to ${sk.output}` : ""}\nparams:`);
+        for (const p of sk.params) console.log(`  ${p.name}${p.required ? "*" : ""} (${p.type}${p.choices ? `: ${p.choices.join("|")}` : ""}${p.default ? `, default ${p.default}` : ""})${p.description ? dim(` — ${p.description}`) : ""}`);
+        return;
+      }
+      if (sub === "new") {
+        if (!/^[\w.-]{1,60}$/.test(name)) die(`invalid skill name "${name}"`);
+        const dir = values.project ? projectSkillsDir(cwd) : userSkillsDir();
+        const file = join(dir, `${name}.md`);
+        if (existsSync(file) && !values.force) die(`${file} exists (--force to overwrite)`);
+        let text = skillTemplate(name);
+        if (values.describe) {
+          const kind = values.agent ?? "claude";
+          console.log(dim(`asking ${kind} to write the skill…`));
+          const hub = newHub();
+          try {
+            text = await writeSkill(hub, name, values.describe, { cwd, kind });
+          } finally {
+            await hub.close();
+          }
+        }
+        parseSkill(text, file);
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(file, text);
+        console.log(`${green("created")} ${file}\n${dim(`edit it, then: hive skill run ${name} …`)}`);
+        return;
+      }
+      if (sub === "edit") {
+        console.log(findSkill(cwd, name).path);
+        return;
+      }
+      if (sub === "run") {
+        const sk = findSkill(cwd, name);
+        const params: Record<string, string> = {};
+        for (const a of kv) {
+          const m = a.match(/^([\w-]+)=([\s\S]*)$/);
+          if (!m) die(`parameters look like name=value (got "${a}")`);
+          params[m[1]] = m[2];
+        }
+        const hub = newHub();
+        try {
+          const r = await runSkill(hub, sk, params, { cwd, kind: values.agent });
+          if (r.result.error) process.exitCode = 1;
+          if (values.out) {
+            writeFileSync(resolve(cwd, values.out), r.reply);
+            console.log(dim(`\nsaved to ${resolve(cwd, values.out)}`));
+          } else if (r.saved) console.log(dim(`\nsaved to ${r.saved}`));
+          console.log(dim(`follow up: hive chat ${values.agent ?? sk.agent ?? "claude"} --name ${r.agent}`));
+        } catch (e: any) {
+          die(e.message);
+        } finally {
+          await hub.close();
+        }
+        return;
+      }
+      die(`unknown skill subcommand "${sub}" (list|show|new|run|edit)`);
     }
 
     case "recipes":

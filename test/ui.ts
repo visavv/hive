@@ -176,6 +176,35 @@ try {
   assert(await page.locator(".modal .rep-sum").count(), "clicking a job shows its runs with summaries");
   await page.keyboard.press("Escape");
 
+  // skills: run yt-titles on a transcript from the dialog; it opens its own pane
+  writeFileSync(join(dir, "transcript.txt"), "we build a robot that folds laundry and it fails twice before it works");
+  await page.keyboard.press("Control+K");
+  await page.locator(".modal .skill", { hasText: "yt-titles" }).click();
+  await page.locator(".modal label:has-text('transcript') input").fill(join(dir, "transcript.txt"));
+  await page.locator(".modal label:has-text('notes') textarea").fill("the failures are the story");
+  await page.locator(".modal label:has-text('Agent') select").selectOption("mock");
+  await page.locator(".modal button[type=submit]").click();
+  await pane(page, "skill-yt-titles").locator(".msg.agent", { hasText: "A title" }).waitFor({ timeout: 15_000 });
+  assert(true, "skills dialog runs a skill with a file parameter in its own pane");
+  await pane(page, "skill-yt-titles").locator(".msg.user", { hasText: "folds laundry" }).first().waitFor({ timeout: 5000 });
+  assert(true, "the transcript was inlined into the prompt");
+  await page.keyboard.press("Control+K");
+  await page.locator(".modal .skill", { hasText: "yt-titles" }).click();
+  await page.locator(".modal button[type=submit]").click();
+  await page.locator(".modal .err", { hasText: "missing required parameter" }).waitFor({ timeout: 5000 });
+  assert(true, "missing required skill parameters are reported in the dialog");
+  await page.keyboard.press("Escape");
+  await pane(page, "skill-yt-titles").locator("button.close").click();
+
+  // recipes: studio opens a chat pane
+  await page.locator(".topbar button", { hasText: "Recipes" }).click();
+  await page.locator(".modal .recipe", { hasText: "Creator studio" }).click();
+  await page.locator(".modal label:has-text('Main agent') select").selectOption("mock");
+  await page.locator(".modal button[type=submit]").click();
+  await page.locator(`[data-pane="studio"] textarea:not([disabled])`).waitFor({ timeout: 20_000 });
+  assert(true, "a recipe sets up its team and opens the agent you talk to");
+  await pane(page, "studio").locator("button.close").click();
+
   // hive drawer: mail to the owner, report, blackboard, send as owner
   await pane(page, "alpha").locator("textarea").fill("tellowner: overnight run finished; bb ideas/dark-mode=add a dark mode toggle");
   await pane(page, "alpha").locator("textarea").press("Enter");

@@ -11,4 +11,5 @@ contextBridge.exposeInMainWorld("hiveBridge", {
   },
   hello: (): Promise<boolean> => ipcRenderer.invoke("hive:hello"),
   attention: () => ipcRenderer.send("hive:attention"),
+  pickFile: (): Promise<string | null> => ipcRenderer.invoke("hive:pick-file"),
 });

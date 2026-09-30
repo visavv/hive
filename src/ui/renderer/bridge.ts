@@ -8,6 +8,7 @@ interface HiveBridge {
   hello(): Promise<boolean>;
   /** Flash the taskbar entry when the window isn't focused. */
   attention?(): void;
+  pickFile?(): Promise<string | null>;
 }
 
 declare global {

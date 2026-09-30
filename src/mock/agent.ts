@@ -191,6 +191,16 @@ acp
       await callTool(sess, "hive_bb_set", { key: bbM[1], value: bbM[2] });
       await say(cx, sessionId, `blackboard ${bbM[1]} set\n`);
     }
+    const skillW = text.match(/Write a hive skill file named "([\w.-]+)"/);
+    if (skillW)
+      await say(
+        cx,
+        sessionId,
+        "Here you go:\n```markdown\n---\nname: " +
+          skillW[1] +
+          "\ndescription: written by the mock\nagent: claude\npolicy: reject-all\nparams:\n  - name: topic\n    type: text\n    required: true\n---\nWrite about {{topic}}.\n```\n",
+      );
+    if (/Write \d+ title options/.test(text)) await say(cx, sessionId, "1. A title [curiosity]\n2. Another title [outcome]\n");
     if (/\bhostile-img\b/.test(text)) await say(cx, sessionId, "look: ![leak](//localhost/etc/hostname) and ![x](file:///etc/passwd)\n");
     const diffM = text.match(/hivediff (\w+)(?: branch=(\S+))?/);
     if (diffM)
