@@ -66,10 +66,13 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
       </header>
       {agent && (
         <div className="pane-sub" title={agent.cwd}>
-          {/[\\/]\.hive[\\/]worktrees[\\/]/.test(agent.cwd) ? (
-            <span className="branch">⎇ hive/{agent.cwd.split(/[\\/]/).pop()}</span>
+          {agent.branch?.startsWith("hive/") ? (
+            <span className="branch" title={agent.cwd}>⎇ {agent.branch}</span>
           ) : (
-            <span>{shortPath(agent.cwd)}</span>
+            <span>
+              {shortPath(agent.cwd)}
+              {agent.branch ? ` ⎇ ${agent.branch}` : ""}
+            </span>
           )}
           {agent.role && <span>· {agent.role}</span>}
           <span>· {agent.policy}</span>

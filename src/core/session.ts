@@ -20,7 +20,7 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import * as acp from "@agentclientprotocol/sdk";
 import type * as schema from "@agentclientprotocol/sdk";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { AGENTS, resolveEnv, spawnSpec, type AgentDef } from "./agents.js";
+import { AGENTS, killTree, resolveEnv, spawnSpec, type AgentDef } from "./agents.js";
 import { nodeEntry } from "./paths.js";
 import { AUTH_STATUS_UPDATE, authLabel, type AuthStatus } from "./doctor.js";
 import { HiveDb } from "../hive/db.js";
@@ -49,6 +49,8 @@ export interface SessionOptions {
   briefing?: string;
   /** Try to resume this ACP session (session/resume, else session/load) before creating a new one. */
   resumeSessionId?: string;
+  /** Mail wake-ups allowed per agent per 10 minutes (stops agent ping-pong). Default 30. */
+  maxWakesPer10Min?: number;
   /** Max ms to wait for the agent to initialize and open a session. */
   startTimeoutMs?: number;
 }
@@ -104,6 +106,8 @@ class Queue<T> {
 }
 
 const hiveServer = nodeEntry("hive/server");
+const WAKE_WINDOW_MS = 10 * 60_000;
+const CANCELLED = Symbol("cancelled");
 
 export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
   readonly name: string;
@@ -194,7 +198,7 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
       const wasClosed = this.closed;
       this.closed = true;
       if (!this.db.db.open) return;
-      this.db.setStatus(this.name, "asleep", wasClosed ? "closed" : `exited ${code}`);
+      this.dbStatus(this.name, "asleep", wasClosed ? "closed" : `exited ${code}`);
       this.emitEv({ type: "exit", code });
       // Unblock a turn that was waiting on this process.
       this.updates.push({ kind: "error", error: new Error(`agent process exited (${code})`) });
@@ -258,7 +262,7 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
           const msg = String(err?.message ?? err);
           if (!this.closed) {
             this.emitEv({ type: "status", status: "error", note: msg });
-            if (this.db.db.open) this.db.setStatus(this.name, "error", msg);
+            if (this.db.db.open) this.dbStatus(this.name, "error", msg);
           }
           this.updates.push({ kind: "error", error: err });
           rejectReady(err);
@@ -291,12 +295,21 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
   async newSession(): Promise<string> {
     if (!this.ctx) throw new Error("session not started");
     if (this.busy) throw new Error(`${this.name} is busy`);
+    this.busy = true; // nothing else may start a turn while the session switches
+    try {
+      await this.switchSession();
+    } finally {
+      this.busy = false;
+    }
+    return this.sessionIdValue!;
+  }
+
+  private async switchSession() {
     const old = this.sessionIdValue;
     if (old && this.caps.sessionCapabilities?.close) {
-      await this.ctx.request(acp.methods.agent.session.close, { sessionId: old }).catch(() => {});
+      await this.ctx!.request(acp.methods.agent.session.close, { sessionId: old }).catch(() => {});
     }
     await this.openSession(undefined, "fresh");
-    return this.sessionIdValue!;
   }
 
   /** Send a prompt. If busy, queue it. Returns when the turn (and queued work) ends. */
@@ -306,24 +319,35 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
       this.emitEv({ type: "notice", text: `queued (${this.queue.length} waiting)` });
       return;
     }
-    await this.runTurn(text);
-    await this.drain();
+    const r = await this.runTurn(text);
+    if (!r.error) await this.drain();
   }
 
   /**
    * Run exactly one turn and report how it ended. Waits for the agent to be
-   * idle first. Used by the scheduler, which needs the stop reason and usage.
+   * idle, then claims it before anything else can start a turn. With `fresh`
+   * the turn runs in a brand-new ACP session (unless the current one has
+   * never been prompted). Used by the scheduler.
    */
-  async runOnce(text: string): Promise<TurnResult> {
+  async runOnce(text: string, opts: { fresh?: boolean } = {}): Promise<TurnResult & { sessionId?: string }> {
     while (this.busy) await new Promise((r) => setTimeout(r, 100));
-    const r = await this.runTurn(text);
-    void this.drain();
-    return r;
+    if (this.closed) return { stopReason: "closed", error: "session closed" };
+    // Claimed synchronously after the wait, so no other turn slips in.
+    this.busy = true;
+    try {
+      if (opts.fresh && !this.firstPrompt) await this.switchSession();
+    } catch (e) {
+      this.busy = false;
+      throw e;
+    }
+    const r = await this.runTurn(text, true);
+    if (!r.error) void this.drain().catch(() => {});
+    return { ...r, sessionId: this.sessionIdValue };
   }
 
   /** If idle and mail is waiting, deliver it. Returns true if a turn ran. */
   async poke(): Promise<boolean> {
-    if (this.busy || this.closed) return false;
+    if (this.busy || this.closed || Date.now() < this.nextWakeAt) return false;
     const p = this.queue.shift() ?? this.pendingMailPrompt();
     if (!p) return false;
     await this.prompt(p);
@@ -334,6 +358,10 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
   async cancel() {
     if (!this.ctx || !this.sessionIdValue) return;
     this.queue = [];
+    // ACP: after cancel the client answers outstanding permission requests
+    // with "cancelled"; the same goes for questions.
+    for (const abort of this.pendingAsks) abort();
+    this.pendingAsks.clear();
     await this.ctx.notify(acp.methods.agent.session.cancel, { sessionId: this.sessionIdValue });
   }
 
@@ -356,10 +384,10 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
     this.closed = true;
     this.resolveClosed();
     if (this.db.db.open) {
-      this.db.setStatus(this.name, "asleep", "closed");
+      this.dbStatus(this.name, "asleep", "closed");
       this.db.close();
     }
-    this.proc?.kill();
+    killTree(this.proc);
   }
 
   // ---- internals ----
@@ -436,12 +464,20 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
       status_note: "",
       session_id: sid,
     });
-    this.db.log(this.name, "session", { sessionId: sid, how });
+    this.dbLog(this.name, "session", { sessionId: sid, how });
     this.emitEv({ type: "session", sessionId: sid, how });
   }
   private replayingId?: string;
+  /** Mail delivery waits until this time (backoff after failures / ignored mail / budget). */
+  private nextWakeAt = 0;
+  private failStreak = 0;
+  private wakes: number[] = [];
+  /** Aborts for permission/question requests waiting on a human. */
+  private pendingAsks = new Set<() => void>();
   /** Agent text of the current turn, logged as a "reply" event for history. */
   private replyText = "";
+  /** Full agent text of the last finished turn. */
+  lastReply = "";
 
   private onUpdate(n: schema.SessionNotification) {
     const replay = n.sessionId === this.replayingId && !this.busy;
@@ -470,25 +506,65 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
         return `${f.count} from ${f.from}${subj ? ` (${subj}${f.subjects.length > 3 ? ", …" : ""})` : ""}`;
       })
       .join("; ");
-    return `You have ${total} unread hive message${total === 1 ? "" : "s"}: ${list}. Call hive_inbox, act on anything addressed to you, reply with hive_send where a reply is expected, then continue or stop.`;
+    return `You have ${total} unread hive message${total === 1 ? "" : "s"}: ${list}. Call hive_inbox and act on anything addressed to you. Reply with hive_send only when you have new information, a result or a question — never just to acknowledge or thank. Then continue or stop.`;
   }
 
+  /**
+   * Run queued prompts and mail wake-ups back to back. Stops (and backs off)
+   * when a turn fails or a wake-up didn't reduce the unread count, so a
+   * broken agent or one that ignores its mail can't spin.
+   */
   private async drain() {
-    while (!this.closed && !this.busy) {
-      const next = this.queue.shift() ?? this.pendingMailPrompt();
+    while (!this.closed && !this.busy && Date.now() >= this.nextWakeAt) {
+      const queued = this.queue.shift();
+      const next = queued ?? this.mailWake();
       if (!next) break;
-      await this.runTurn(next);
+      const before = queued ? 0 : this.db.unreadCount(this.name);
+      const r = await this.runTurn(next);
+      if (r.error) break;
+      if (!queued && this.db.unreadCount(this.name) >= before) {
+        this.backoff("mail still unread after a wake-up");
+        break;
+      }
     }
   }
 
-  private async runTurn(text: string): Promise<TurnResult> {
-    if (!this.ctx || !this.sessionIdValue) throw new Error(`${this.name}: session not started`);
-    if (this.closed) return { stopReason: "closed", error: "session closed" };
+  /** Mail wake-up prompt, subject to the per-agent wake budget. */
+  private mailWake(): string | undefined {
+    const p = this.pendingMailPrompt();
+    if (!p) return undefined;
+    const now = Date.now();
+    this.wakes = this.wakes.filter((t) => now - t < WAKE_WINDOW_MS);
+    if (this.wakes.length >= (this.opts.maxWakesPer10Min ?? 30)) {
+      this.nextWakeAt = this.wakes[0] + WAKE_WINDOW_MS;
+      this.emitEv({ type: "notice", text: `mail wake budget used up; next delivery ${new Date(this.nextWakeAt).toLocaleTimeString()}` });
+      return undefined;
+    }
+    this.wakes.push(now);
+    return p;
+  }
+
+  private backoff(why: string) {
+    this.failStreak++;
+    const ms = Math.min(10 * 60_000, 5000 * 2 ** Math.min(this.failStreak - 1, 7));
+    this.nextWakeAt = Date.now() + ms;
+    this.emitEv({ type: "notice", text: `${why}; pausing mail delivery for ${Math.round(ms / 1000)}s` });
+  }
+
+  private async runTurn(text: string, claimed = false): Promise<TurnResult> {
+    if (!this.ctx || !this.sessionIdValue) {
+      if (claimed) this.busy = false;
+      throw new Error(`${this.name}: session not started`);
+    }
+    if (this.closed) {
+      if (claimed) this.busy = false;
+      return { stopReason: "closed", error: "session closed" };
+    }
     this.busy = true;
     this.lastActivity = Date.now();
-    this.db.setStatus(this.name, "working", text.slice(0, 120));
+    this.dbStatus(this.name, "working", text.slice(0, 120));
     this.emitEv({ type: "status", status: "working", note: text.slice(0, 120) });
-    this.db.log(this.name, "prompt", { text });
+    this.dbLog(this.name, "prompt", { text });
     this.emitEv({ type: "prompt", text });
     this.replyText = "";
 
@@ -518,7 +594,7 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
         if (msg.kind === "stop") {
           result = { stopReason: msg.response.stopReason, usage: msg.response.usage ?? undefined };
         } else {
-          const err = String((msg.error as any)?.message ?? msg.error);
+          const err = errorText(msg.error);
           result = { stopReason: "error", error: err };
           this.emitEv({ type: "notice", text: `turn failed: ${err}` });
         }
@@ -527,12 +603,15 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
     } finally {
       this.emitEv({ type: "turn_end", stopReason: result.stopReason, usage: result.usage });
       if (this.db.db.open) {
-        if (this.replyText) this.db.log(this.name, "reply", { text: this.replyText });
-        this.db.log(this.name, "turn_end", { stopReason: result.stopReason, usage: result.usage, error: result.error });
-        this.db.setStatus(this.name, this.closed ? "asleep" : result.error ? "error" : "idle", result.error ?? "");
+        this.lastReply = this.replyText;
+        if (this.replyText) this.dbLog(this.name, "reply", { text: this.replyText });
+        this.dbLog(this.name, "turn_end", { stopReason: result.stopReason, usage: result.usage, error: result.error });
+        this.dbStatus(this.name, this.closed ? "asleep" : result.error ? "error" : "idle", result.error ?? "");
       }
       this.busy = false;
       this.lastActivity = Date.now();
+      if (result.error) this.backoff("turn failed");
+      else this.failStreak = 0;
       this.emitEv({ type: "status", status: result.error ? "error" : "idle", note: result.error });
     }
     return result;
@@ -568,7 +647,7 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
         break;
       case "tool_call":
         this.emitEv({ type: "tool_call", id: u.toolCallId, title: u.title, status: u.status ?? "pending", kind: u.kind ?? undefined, raw: u });
-        this.db.log(this.name, "tool_call", { id: u.toolCallId, title: u.title, kind: u.kind });
+        this.dbLog(this.name, "tool_call", { id: u.toolCallId, title: u.title, kind: u.kind });
         break;
       case "tool_call_update":
         this.emitEv({ type: "tool_update", id: u.toolCallId, status: u.status ?? undefined, title: u.title ?? undefined, raw: u });
@@ -598,60 +677,89 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
   }
 
   private async onPermission(req: schema.RequestPermissionRequest): Promise<schema.RequestPermissionResponse> {
+    // Never fall back to an allow option: if nothing fits, cancel.
     const pick = (kinds: schema.PermissionOptionKind[]) =>
-      kinds.map((k) => req.options.find((o) => o.kind === k)).find(Boolean) ?? req.options[0];
+      kinds.map((k) => req.options.find((o) => o.kind === k)).find(Boolean);
+    const reject = () => pick(["reject_once", "reject_always"]);
     const title = req.toolCall.title ?? "tool";
     const kind = (req.toolCall as any).kind as string | undefined;
     let opt: schema.PermissionOption | undefined;
+    let decided = false;
     switch (this.policy) {
       case "allow-all":
         opt = pick(["allow_once", "allow_always"]);
+        decided = true;
         break;
       case "reject-all":
-        opt = pick(["reject_once", "reject_always"]);
+        opt = reject();
+        decided = true;
         break;
       case "allow-reads":
-        opt =
-          kind === "read" || kind === "search" || kind === "fetch" || kind === "think"
-            ? pick(["allow_once", "allow_always"])
-            : undefined;
+        if (kind === "read" || kind === "search" || kind === "fetch" || kind === "think") {
+          opt = pick(["allow_once", "allow_always"]);
+          decided = true;
+        }
         break;
     }
-    if (!opt) {
-      this.db.setStatus(this.name, "waiting", `permission: ${title}`);
+    if (!decided) {
+      this.dbStatus(this.name, "waiting", `permission: ${title}`);
       this.emitEv({ type: "status", status: "waiting", note: `permission: ${title}` });
       if (this.opts.askPermission) {
-        const id = await this.opts.askPermission(req, this.name);
-        opt = req.options.find((o) => o.optionId === id) ?? pick(["reject_once"]);
+        const id = await this.withCancel(this.opts.askPermission(req, this.name));
+        opt = id === CANCELLED ? undefined : (req.options.find((o) => o.optionId === id) ?? reject());
       } else {
-        opt = pick(["reject_once", "reject_always"]);
+        opt = reject();
       }
-      this.db.setStatus(this.name, "working", "");
+      this.dbStatus(this.name, "working", "");
     }
-    this.emitEv({ type: "permission", title, decision: opt.kind });
-    this.db.log(this.name, "permission", { title, kind, decision: opt.kind });
-    return { outcome: { outcome: "selected", optionId: opt.optionId } };
+    const decision = opt?.kind ?? "cancelled";
+    this.emitEv({ type: "permission", title, decision });
+    this.dbLog(this.name, "permission", { title, kind, decision });
+    return opt ? { outcome: { outcome: "selected", optionId: opt.optionId } } : { outcome: { outcome: "cancelled" } };
+  }
+
+  /** Race a human answer against cancel(). */
+  private withCancel<T>(p: Promise<T>): Promise<T | typeof CANCELLED> {
+    let abort!: () => void;
+    const cancelled = new Promise<typeof CANCELLED>((r) => (abort = () => r(CANCELLED)));
+    this.pendingAsks.add(abort);
+    return Promise.race([p, cancelled]).finally(() => this.pendingAsks.delete(abort));
   }
 
   private async onElicitation(req: schema.CreateElicitationRequest): Promise<schema.CreateElicitationResponse> {
     let res: schema.CreateElicitationResponse = { action: "decline" };
     if (this.opts.elicit) {
-      this.db.setStatus(this.name, "waiting", `question: ${req.message.slice(0, 100)}`);
+      this.dbStatus(this.name, "waiting", `question: ${req.message.slice(0, 100)}`);
       this.emitEv({ type: "status", status: "waiting", note: `question: ${req.message.slice(0, 100)}` });
       try {
-        res = await this.opts.elicit(req, this.name);
+        const r = await this.withCancel(this.opts.elicit(req, this.name));
+        res = r === CANCELLED ? { action: "cancel" } : r;
       } catch {
         res = { action: "cancel" };
       }
-      this.db.setStatus(this.name, "working", "");
+      this.dbStatus(this.name, "working", "");
     }
     this.emitEv({ type: "elicitation", message: req.message, action: res.action });
-    this.db.log(this.name, "elicitation", { message: req.message, action: res.action });
+    this.dbLog(this.name, "elicitation", { message: req.message, action: res.action });
     return res;
   }
 
   private emitEv(e: SessionEvent) {
     this.emit("event", e);
+  }
+
+  /** DB writes never throw into a turn (db closed during shutdown, SQLITE_BUSY). */
+  private dbLog(agent: string, type: string, data: unknown) {
+    try {
+      if (this.db.db.open) this.db.log(agent, type, data);
+    } catch (e: any) {
+      this.emitEv({ type: "notice", text: `db log failed: ${e?.message ?? e}` });
+    }
+  }
+  private dbStatus(agent: string, status: Parameters<HiveDb["setStatus"]>[1], note = "") {
+    try {
+      if (this.db.db.open) this.db.setStatus(agent, status, note);
+    } catch {}
   }
 }
 
@@ -662,4 +770,16 @@ export function sliceLines(content: string, line?: number | null, limit?: number
   const start = Math.max(0, (line ?? 1) - 1);
   const end = limit == null ? lines.length : start + Math.max(0, limit);
   return lines.slice(start, end).join("\n");
+}
+
+/** JSON-RPC errors keep the useful part in `data` ("Internal error" + {details}). */
+export function errorText(e: unknown): string {
+  const err = e as { message?: string; data?: unknown };
+  let text = String(err?.message ?? e);
+  if (err?.data != null) {
+    const d = err.data as any;
+    const detail = typeof d === "string" ? d : (d.details ?? d.message ?? JSON.stringify(d));
+    if (detail && detail !== "{}") text += `: ${typeof detail === "string" ? detail : JSON.stringify(detail)}`;
+  }
+  return text.slice(0, 2000);
 }

@@ -8,6 +8,7 @@
  */
 import { parseArgs } from "node:util";
 import { createInterface } from "node:readline";
+import { execFileSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import type * as schema from "@agentclientprotocol/sdk";
@@ -16,6 +17,7 @@ import { AGENTS } from "../core/agents.js";
 import { POLICIES, type AgentSession, type SessionEvent } from "../core/session.js";
 import { Scheduler, describeSchedule, formatDuration } from "../core/scheduler.js";
 import { ROLES } from "../core/roles.js";
+import { defaultDb } from "../core/home.js";
 import { listWorktrees, mergeWorktree } from "../core/worktree.js";
 import type { AgentView, BackendEvent, ElicitationAsk, JobView, Layout, Methods, PermissionAsk, Request } from "./protocol.js";
 
@@ -25,12 +27,12 @@ console.log = (...a: unknown[]) => console.error(...a);
 
 const { values } = parseArgs({
   options: {
-    db: { type: "string", default: ".hive/hive.db" },
+    db: { type: "string" },
     cwd: { type: "string", default: process.cwd() },
     poll: { type: "string", default: "1000" },
   },
 });
-const dbPath = resolve(values.db!);
+const dbPath = resolve(values.db ?? defaultDb(values.cwd!));
 const layoutPath = join(dirname(dbPath), "ui.json");
 const defaultCwd = resolve(values.cwd!);
 
@@ -154,7 +156,9 @@ const scheduler = new Scheduler({
             ? `job ${e.job.id} ended: ${e.reason}`
             : e.type === "error"
               ? `job ${e.job.id}: ${e.error}`
-              : e.fired
+              : e.type === "paused"
+                ? `job ${e.job.id} paused (usage limit) until ${new Date(e.until).toLocaleTimeString()}`
+                : e.fired
                 ? `job ${e.job.id}: ${e.lines} changed lines → firing`
                 : "";
     if (text) send({ event: "job", text, jobId: e.job.id, agent: e.job.agent });
@@ -163,6 +167,17 @@ const scheduler = new Scheduler({
 });
 
 const policies = new Map<string, AgentView["policy"]>();
+const branches = new Map<string, { at: number; branch?: string }>();
+function branchOf(cwd: string): string | undefined {
+  const hit = branches.get(cwd);
+  if (hit && Date.now() - hit.at < 15_000) return hit.branch;
+  let branch: string | undefined;
+  try {
+    branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], windowsHide: true }).trim();
+  } catch {}
+  branches.set(cwd, { at: Date.now(), branch });
+  return branch;
+}
 
 function view(s: AgentSession): AgentView {
   const row = hub.db.getAgent(s.name);
@@ -191,6 +206,7 @@ function view(s: AgentSession): AgentView {
     })),
     auth: s.authStatus ? (s.authStatus.kind === "none" ? "not logged in" : (s.authStatus.label ?? s.authStatus.kind)) : undefined,
     jobs: hub.db.listJobs(false).filter((j) => j.agent === s.name).length,
+    branch: branchOf(s.cwd),
   };
 }
 

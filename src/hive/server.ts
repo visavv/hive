@@ -87,7 +87,7 @@ server.registerTool(
   },
   async ({ include_read }) => {
     const msgs = db.inbox(me, !include_read);
-    db.markRead(msgs.filter((m) => m.read_at == null).map((m) => m.id));
+    db.markRead(msgs.filter((m) => m.read_at == null).map((m) => m.id), me);
     const out = msgs.map((m) => ({
       id: m.id,
       at: new Date(m.ts).toISOString(),

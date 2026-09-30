@@ -142,6 +142,17 @@ const badId = hub.db.addJob({ agent: "ghost", agent_kind: "nope", cwd: work, pro
 await until(() => hub.db.getJob(badId)?.enabled === 0, 15_000, "bad job to fail");
 assert(hub.db.getJob(badId)!.ended_reason === "failed" && /could not start/.test(hub.db.getJob(badId)!.last_error ?? ""), "unstartable agent ends job as failed with error");
 
+// ---- usage limit: pause, don't fail or consume the iteration ----
+const rlId = hub.db.addJob({ agent: "limited", agent_kind: "mock", cwd: work, prompt: "ratelimit-once please", kind: "loop", remaining: 2 });
+await until(() => jobLog.some((e) => e.type === "paused" && e.job.id === rlId), 10_000, "pause");
+const paused = hub.db.getJob(rlId)!;
+assert(paused.enabled === 1 && paused.failures === 0 && paused.remaining === 2 && paused.next_run > Date.now(), "usage limit pauses the job without counting a failure or an iteration");
+assert(hub.db.jobRuns(rlId)[0].stop_reason === "rate_limited", "run recorded as rate_limited");
+await until(() => hub.db.getJob(rlId)?.enabled === 0, 15_000, "resume after reset");
+const rl = hub.db.getJob(rlId)!;
+assert(rl.ended_reason === "done" && hub.db.jobRuns(rlId).filter((r) => r.stop_reason === "end_turn").length === 2, "job resumed after the reset time and finished both iterations");
+assert(hub.db.jobRuns(rlId).some((r) => r.summary && /done/.test(r.summary)), "run summary stores the agent's reply");
+
 // ---- durations ----
 assert(parseDuration("10m") === 600_000 && parseDuration("1h30m") === 5_400_000 && parseDuration("500ms") === 500, "parseDuration");
 let threw = false;

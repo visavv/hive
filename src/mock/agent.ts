@@ -86,6 +86,7 @@ async function openSess(sessionId: string, cwd: string, servers: acp.McpServer[]
 const noResume = process.env.MOCK_NO_RESUME === "1";
 
 let n = 0;
+let rateLimited = false;
 acp
   .agent({ name: "mock-agent" })
   .onRequest("initialize", async (ctx) => {
@@ -140,6 +141,11 @@ acp
     const cx = ctx.client;
     const text = prompt.map((b) => (b.type === "text" ? b.text : "")).join("\n");
     const me = process.env.MOCK_NAME ?? "mock";
+    if (process.env.MOCK_FAIL === "1") throw new Error("mock adapter is broken");
+    if (/ratelimit-once/.test(text) && !rateLimited) {
+      rateLimited = true;
+      throw new Error("Claude usage limit reached. Your limit resets in 1 seconds.");
+    }
     sess.turns++;
     sess.cancelled = false;
     if (sess.turns === 1 && sess.how !== "new") await say(cx, sessionId, `(${sess.how} session ${sessionId})\n`);

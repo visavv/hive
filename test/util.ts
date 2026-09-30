@@ -2,6 +2,9 @@ import { rmSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { AGENTS, type AgentDef } from "../src/core/agents.js";
 
+// Keep per-user hive state (default dbs, worktrees) out of the real home dir.
+process.env.HIVE_HOME ??= resolve(".hive-test-home");
+
 let failed = false;
 
 export function assert(cond: unknown, msg: string) {

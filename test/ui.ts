@@ -8,8 +8,10 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { assert, finish, freshDir, sleep } from "./util.js";
+import { projectDir } from "../src/core/home.js";
 
 const dir = freshDir(".hive-test-ui");
+process.env.HIVE_HOME = freshDir(".hive-test-ui-home"); // fresh default db + ui.json per run
 const shots = resolve(process.env.SHOT_DIR ?? dir);
 const electronBin = resolve("node_modules/electron/dist/electron" + (process.platform === "win32" ? ".exe" : ""));
 
@@ -110,7 +112,7 @@ try {
   assert(true, "job scheduled from a pane runs and shows as done in the sidebar");
 
   await page.screenshot({ path: join(shots, "hive-ui.png") });
-  const layout = JSON.parse(readFileSync(join(dir, ".hive", "ui.json"), "utf8"));
+  const layout = JSON.parse(readFileSync(join(projectDir(dir), "ui.json"), "utf8"));
   assert(layout.panes.length === 2 && layout.columns === 2, "layout persisted to .hive/ui.json");
 
   // coder preset in a git repo → own worktree; merge it from the sidebar
@@ -125,7 +127,7 @@ try {
   await addAgent(page, "gamma", "ask", { cwd: repo, preset: "coder" });
   await pane(page, "gamma").locator(".branch", { hasText: "hive/gamma" }).waitFor({ timeout: 10_000 });
   assert(true, "coder preset puts the agent in its own worktree (branch shown in pane)");
-  const wt = join(repo, ".hive", "worktrees", "gamma");
+  const wt = g(["worktree", "list", "--porcelain"]).split("\n\n").find((b) => b.includes("refs/heads/hive/gamma"))!.match(/^worktree (.+)$/m)![1];
   writeFileSync(join(wt, "feature.txt"), "x\ny\n");
   g(["add", "."], wt);
   g(["commit", "-qm", "agent feature"], wt);

@@ -2,7 +2,9 @@
 import { AGENTS, spawnSpec, winQuote } from "../src/core/agents.js";
 import { sliceLines } from "../src/core/session.js";
 import { summarize } from "../src/core/doctor.js";
-import { assert, finish } from "./util.js";
+import { isRateLimit, resetTime } from "../src/core/scheduler.js";
+import { HiveDb } from "../src/hive/db.js";
+import { assert, finish, freshDir } from "./util.js";
 
 // spawnSpec
 const claudeWin = spawnSpec({ ...AGENTS.claude, command: "npx.cmd" }, "win32");
@@ -31,5 +33,23 @@ const s = summarize({
   agentInfo: { name: "x", version: "1" },
 } as any);
 assert(s.auth === "not reported" && s.features?.includes("resume") && s.features.includes("queueing"), "summarize: empty authStatus marker = not reported until pushed");
+
+// usage-limit detection
+assert(isRateLimit("Claude AI usage limit reached|1760000000") && isRateLimit("429 Too Many Requests") && !isRateLimit("file not found"), "isRateLimit");
+const now = 1_760_000_000_000;
+assert(resetTime("limit reached|1760003600", now) === 1_760_003_600_000 + 60_000, "resetTime from unix epoch");
+assert(resetTime("try again in 5 minutes", now) === now + 300_000 + 5_000, "resetTime from 'in N minutes'");
+assert(resetTime("nope", now) === undefined, "resetTime unknown");
+
+// broadcast read state is per agent
+const db = new HiveDb(`${freshDir(".hive-test-unit")}/h.db`);
+const bid = db.send("a", "*", "announce", "hello all");
+db.send("a", "b", "direct", "just b");
+assert(db.unreadCount("b") === 2 && db.unreadCount("c") === 1 && db.unreadCount("a") === 0, "broadcast counts for everyone but the sender");
+db.markRead(db.inbox("b").map((m) => m.id), "b");
+assert(db.unreadCount("b") === 0 && db.unreadCount("c") === 1, "b reading a broadcast doesn't mark it read for c");
+assert(db.inbox("c")[0]?.id === bid && db.inbox("c", false)[0].read_at == null, "c still sees the broadcast unread");
+assert(db.inbox("b", false).every((m) => m.read_at != null), "b's view shows both read");
+db.close();
 
 finish("unit");

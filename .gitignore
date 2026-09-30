@@ -5,3 +5,4 @@ dist
 *.db-*
 .hive-test*/
 dist-ui
+.hive-test-home/

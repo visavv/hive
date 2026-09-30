@@ -1,11 +1,13 @@
 /**
- * One git worktree per coding agent (design rule 4). Worktrees live in
- * <repo>/.hive/worktrees/<agent> on branch hive/<agent>; .hive/ ignores
- * itself so the main checkout never sees them as untracked files.
+ * One git worktree per coding agent (design rule 4), on branch hive/<agent>.
+ * Worktrees live outside the repo, in the per-user project dir (home.ts), so
+ * they don't nest inside the checkout. Any .hive/ dir hive creates in a repo
+ * ignores itself so the main checkout never sees it as untracked files.
  */
 import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { projectDir } from "./home.js";
 
 export interface WorktreeInfo {
   name: string;
@@ -55,13 +57,19 @@ export function selfIgnoreHiveDir(hiveDir: string) {
 export const branchFor = (name: string) => `hive/${name}`;
 
 /** Create (or reuse) the worktree for agent `name` off the repo containing `cwd`. */
-export async function ensureWorktree(cwd: string, name: string): Promise<{ path: string; branch: string; repo: string; created: boolean }> {
+export async function ensureWorktree(
+  cwd: string,
+  name: string,
+  baseDir?: string,
+): Promise<{ path: string; branch: string; repo: string; created: boolean }> {
   if (!/^[\w.-]+$/.test(name)) throw new Error(`bad worktree name "${name}"`);
   const repo = await repoRoot(cwd);
-  selfIgnoreHiveDir(join(repo, ".hive"));
-  const path = join(repo, ".hive", "worktrees", name);
   const branch = branchFor(name);
-  if (existsSync(join(path, ".git"))) return { path, branch, repo, created: false };
+  // Reuse the branch's existing worktree wherever it lives.
+  const existing = (await worktreeEntries(repo)).find((w) => w.branch === branch);
+  if (existing && existsSync(existing.path)) return { path: existing.path, branch, repo, created: false };
+  const path = join(baseDir ?? join(projectDir(repo), "worktrees"), name);
+  mkdirSync(dirname(path), { recursive: true });
   // Needs at least one commit to branch from.
   try {
     await git(["rev-parse", "--verify", "HEAD"], repo);
@@ -82,18 +90,25 @@ export async function baseBranch(repo: string): Promise<string> {
   return (await git(["rev-parse", "--abbrev-ref", "HEAD"], repo)).trim();
 }
 
-/** Status of every hive worktree in the repo containing `cwd`. */
+async function worktreeEntries(repo: string): Promise<{ path: string; branch: string }[]> {
+  const porcelain = await git(["worktree", "list", "--porcelain"], repo);
+  const out: { path: string; branch: string }[] = [];
+  for (const block of porcelain.split(/\n\n+/)) {
+    const path = block.match(/^worktree (.+)$/m)?.[1];
+    const branch = block.match(/^branch refs\/heads\/(.+)$/m)?.[1];
+    if (path && branch) out.push({ path: resolve(path), branch });
+  }
+  return out;
+}
+
+/** Status of every hive worktree (branch hive/*) in the repo containing `cwd`. */
 export async function listWorktrees(cwd: string): Promise<{ repo: string; base: string; worktrees: WorktreeInfo[] }> {
   const repo = await repoRoot(cwd);
   const base = await baseBranch(repo);
-  const prefix = join(repo, ".hive", "worktrees") + sep;
-  const porcelain = await git(["worktree", "list", "--porcelain"], repo);
   const out: WorktreeInfo[] = [];
-  for (const block of porcelain.split(/\n\n+/)) {
-    const path = block.match(/^worktree (.+)$/m)?.[1];
-    const ref = block.match(/^branch refs\/heads\/(.+)$/m)?.[1];
-    if (!path || !ref || !resolve(path).startsWith(prefix)) continue;
-    const name = resolve(path).slice(prefix.length);
+  for (const { path, branch: ref } of await worktreeEntries(repo)) {
+    if (!ref.startsWith("hive/") || path === repo) continue;
+    const name = ref.slice("hive/".length);
     const [behind, ahead] = (await git(["rev-list", "--left-right", "--count", `${base}...${ref}`], repo).catch(() => "0 0"))
       .trim()
       .split(/\s+/)
@@ -137,7 +152,8 @@ export async function mergeWorktree(cwd: string, name: string): Promise<{ ok: bo
 /** Remove the worktree (and its branch when `deleteBranch`). */
 export async function removeWorktree(cwd: string, name: string, opts: { force?: boolean; deleteBranch?: boolean } = {}) {
   const repo = await repoRoot(cwd);
-  const path = join(repo, ".hive", "worktrees", name);
-  await git(["worktree", "remove", ...(opts.force ? ["--force"] : []), path], repo);
+  const wt = (await worktreeEntries(repo)).find((w) => w.branch === branchFor(name));
+  if (!wt) throw new Error(`no worktree for ${branchFor(name)}`);
+  await git(["worktree", "remove", ...(opts.force ? ["--force"] : []), wt.path], repo);
   if (opts.deleteBranch) await git(["branch", opts.force ? "-D" : "-d", branchFor(name)], repo);
 }

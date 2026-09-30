@@ -17,7 +17,8 @@ const argVal = (flag: string) => {
   return i >= 0 ? args[i + 1] : undefined;
 };
 const workDir = resolve(argVal("--cwd") ?? process.env.HIVE_CWD ?? process.cwd());
-const dbPath = resolve(workDir, argVal("--db") ?? process.env.HIVE_DB_PATH ?? ".hive/hive.db");
+const dbArg = argVal("--db") ?? process.env.HIVE_DB_PATH;
+const dbPath = dbArg ? resolve(workDir, dbArg) : undefined; // backend picks the per-repo default
 
 let win: BrowserWindow | undefined;
 let backend: ChildProcess | undefined;
@@ -28,7 +29,7 @@ function startBackend() {
   const built = join(root, "dist", "ui", "backend.js");
   const src = join(root, "src", "ui", "backend.ts");
   const entry = existsSync(src) && !process.env.HIVE_UI_PROD ? [join(root, "node_modules", "tsx", "dist", "cli.mjs"), src] : [built];
-  backend = spawn(node, [...entry, "--db", dbPath, "--cwd", workDir], {
+  backend = spawn(node, [...entry, ...(dbPath ? ["--db", dbPath] : []), "--cwd", workDir], {
     cwd: workDir,
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,

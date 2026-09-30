@@ -19,6 +19,7 @@ g(["commit", "-qm", "init"]);
 
 const wt = await ensureWorktree(repo, "zucchini");
 assert(wt.created && existsSync(join(wt.path, "a.txt")) && wt.branch === "hive/zucchini", "worktree created on hive/<name>");
+assert(!wt.path.startsWith(repo), "default worktree location is outside the repo (per-user project dir)");
 assert(g(["status", "--porcelain"]) === "", ".hive/ ignores itself: main checkout stays clean");
 const again = await ensureWorktree(repo, "zucchini");
 assert(!again.created && again.path === wt.path, "ensureWorktree reuses an existing worktree");
@@ -52,7 +53,7 @@ g(["checkout", "a.txt"]);
 // hub: worktree option puts the agent in its worktree, and resume still matches
 const hub = new Hub({ hiveDb: join(repo, ".hive", "hive.db") });
 const s = await hub.add({ name: "bongo", agent: mock("bongo"), cwd: repo, worktree: true, policy: "allow-all", briefing: ROLES.coder.briefing });
-assert(s.cwd === join(repo, ".hive", "worktrees", "bongo"), "hub.add({worktree}) runs the agent in its worktree");
+assert(s.cwd === join(repo, ".hive", "worktrees", "bongo") && g(["rev-parse", "--abbrev-ref", "HEAD"], s.cwd) === "hive/bongo", "hub.add({worktree}) runs the agent in its worktree next to the hive db");
 const sid = s.sessionId;
 await hub.remove("bongo", false);
 const s2 = await hub.add({ name: "bongo", agent: mock("bongo"), cwd: repo, worktree: true, policy: "allow-all", resume: true });

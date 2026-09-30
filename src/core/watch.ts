@@ -12,7 +12,7 @@
 import { execFile } from "node:child_process";
 import { mkdir, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import chokidar, { type FSWatcher } from "chokidar";
 
 /** Paths watchers and snapshots always skip. */
@@ -54,10 +54,15 @@ export class ChangeCounter {
     );
   }
 
+  private snapshots = 0;
+
   /** Snapshot the watched tree; returns a git tree hash. */
   async snapshot(): Promise<string> {
     this.ready ??= this.init();
     await this.ready;
+    // Every snapshot writes blobs; collect the unreferenced ones now and then
+    // (the baseline is kept alive by refs/hive/base, see keep()).
+    if (++this.snapshots % 100 === 0) await this.git(["gc", "--prune=now", "--quiet"]).catch(() => {});
     await this.git(["add", "-A", "--ignore-errors", ...(this.pathspec.length ? this.pathspec : ["--", "."])]);
     return (await this.git(["write-tree"])).trim();
   }
@@ -79,6 +84,14 @@ export class ChangeCounter {
       files.push({ path: m[3], added, deleted });
     }
     return { lines, files };
+  }
+
+  /** Pin a tree (the baseline) so gc keeps it. */
+  async keep(tree: string) {
+    this.ready ??= this.init();
+    await this.ready;
+    const commit = (await this.git(["commit-tree", tree, "-m", "hive watch baseline"]).catch(() => "")).trim();
+    if (commit) await this.git(["update-ref", "refs/hive/base", commit]).catch(() => {});
   }
 
   /** True if `ref` is a tree this shadow repo still has. */
@@ -108,8 +121,10 @@ function git(args: string[], cwd: string, env: Record<string, string> = {}): Pro
 /** chokidar watcher that calls `onChange` (debounced) when anything under `path` changes. */
 export function watchTree(path: string, onChange: () => void, debounceMs = 500): FSWatcher {
   let t: NodeJS.Timeout | undefined;
-  const w = chokidar.watch(resolve(path), {
-    ignored: (p) => IGNORED.test(p),
+  const root = resolve(path);
+  const w = chokidar.watch(root, {
+    // Relative to the watched root, so watching e.g. .hive/worktrees/coder works.
+    ignored: (p) => IGNORED.test(relative(root, p)),
     ignoreInitial: true,
     awaitWriteFinish: false,
   });

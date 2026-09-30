@@ -38,6 +38,8 @@ export interface SchedulerOptions {
   retryMs?: number;
   /** Consecutive failures before a job is ended as 'failed'. */
   maxFailures?: number;
+  /** Wait after a usage/rate limit when the agent doesn't say when it resets. */
+  rateLimitWaitMs?: number;
   /** Close agents the scheduler started once none of their jobs remain. */
   closeIdleAgents?: boolean;
   onJob?: (e: JobEvent) => void;
@@ -48,7 +50,8 @@ export type JobEvent =
   | { type: "run_end"; job: JobRow; iteration: number; result: TurnResult }
   | { type: "job_end"; job: JobRow; reason: string }
   | { type: "watch"; job: JobRow; lines: number; fired: boolean }
-  | { type: "error"; job: JobRow; error: string };
+  | { type: "error"; job: JobRow; error: string }
+  | { type: "paused"; job: JobRow; until: number; reason: string };
 
 interface WatchState {
   counter: ChangeCounter;
@@ -72,9 +75,12 @@ const MAX_ERROR = 500;
 export class Scheduler {
   readonly owner: string;
   private timer?: NodeJS.Timeout;
+  private renewTimer?: NodeJS.Timeout;
   private running = new Map<number, AgentSession | null>();
   private watches = new Map<number, WatchState>();
   private startedAgents = new Set<string>();
+  /** Watch jobs paused by a usage limit (other kinds just wait on next_run). */
+  private pausedUntil = new Map<number, number>();
   private ticking = false;
   private stopped = false;
 
@@ -90,6 +96,13 @@ export class Scheduler {
     if (this.timer) return;
     this.stopped = false;
     this.timer = setInterval(() => void this.tick(), this.opts.tickMs ?? 1000);
+    // Renew leases independently of tick, which can be slow (first watch
+    // snapshot of a big tree); otherwise another scheduler could steal a
+    // job mid-run.
+    const lease = this.opts.leaseMs ?? 30_000;
+    this.renewTimer = setInterval(() => {
+      if (this.db.db.open) this.db.renewLeases(this.owner, lease);
+    }, Math.max(200, lease / 3));
     void this.tick();
   }
 
@@ -97,6 +110,7 @@ export class Scheduler {
   async stop() {
     this.stopped = true;
     if (this.timer) clearInterval(this.timer);
+    if (this.renewTimer) clearInterval(this.renewTimer);
     this.timer = undefined;
     for (const w of this.watches.values()) await w.watcher.close();
     this.watches.clear();
@@ -132,8 +146,11 @@ export class Scheduler {
         if (s && !live.has(id) && this.db.getJob(id)?.enabled === 0) void s.cancel().catch(() => {});
       }
       const now = Date.now();
+      const busyAgents = new Set(jobs.filter((j) => this.running.has(j.id)).map((j) => j.agent));
       for (const job of jobs) {
         if (this.running.has(job.id)) continue;
+        // One job at a time per agent: jobs on the same agent would share a context.
+        if (busyAgents.has(job.agent)) continue;
         if (job.until_ts != null && now >= job.until_ts) {
           this.end(job, "until");
           continue;
@@ -143,11 +160,20 @@ export class Scheduler {
           continue;
         }
         if (job.kind === "watch") {
+          if ((this.pausedUntil.get(job.id) ?? 0) > now) continue;
+          // Failure backoff (fail() pushes next_run into the future).
+          if (job.failures > 0 && job.next_run > now) continue;
           const extra = await this.watchReady(job);
-          if (extra) this.launch(job, extra);
+          if (extra) {
+            busyAgents.add(job.agent);
+            this.launch(job, extra);
+          }
           continue;
         }
-        if (job.next_run <= now) this.launch(job);
+        if (job.next_run <= now) {
+          busyAgents.add(job.agent);
+          this.launch(job);
+        }
       }
       if (this.opts.closeIdleAgents) await this.closeIdleAgents(jobs);
     } catch (e: any) {
@@ -186,20 +212,31 @@ export class Scheduler {
     // Someone is talking to this agent (or mail is being delivered): try next tick.
     if (session.busyNow) return;
     this.running.set(job.id, session);
-    extra?.commit();
     const iteration = job.runs + 1;
     let runId: number | undefined;
     try {
-      if (job.fresh_session && !session.pristine) await session.newSession();
-      runId = this.db.startRun(job.id, iteration, session.sessionId ?? null);
-      this.opts.onJob?.({ type: "run_start", job, iteration, sessionId: session.sessionId });
-      const result = await session.runOnce(this.buildPrompt(job, iteration, extra?.text));
-      this.db.endRun(runId, result);
+      runId = this.db.startRun(job.id, iteration, null);
+      this.opts.onJob?.({ type: "run_start", job, iteration });
+      // runOnce claims the agent and (for fresh jobs) switches session atomically.
+      const result = await session.runOnce(this.buildPrompt(job, iteration, extra?.text), { fresh: !!job.fresh_session });
+      if (result.error && isRateLimit(result.error)) {
+        this.db.endRun(runId, { ...result, stopReason: "rate_limited" });
+        this.opts.onJob?.({ type: "run_end", job, iteration, result: { ...result, stopReason: "rate_limited" } });
+        return this.pause(job, result.error);
+      }
+      this.db.endRun(runId, { ...result, summary: session.lastReply, sessionId: result.sessionId });
       this.opts.onJob?.({ type: "run_end", job, iteration, result });
-      if (result.error && result.stopReason === "error") throw new Error(result.error);
+      // Any error (including "closed") is a failed run, not a consumed iteration.
+      if (result.error) throw new Error(result.error);
+      // Only now is the watch change set reviewed: move the baseline.
+      extra?.commit();
       this.afterRun(job, iteration, extra?.tree);
     } catch (e: any) {
       const msg = String(e?.message ?? e).slice(0, MAX_ERROR);
+      if (isRateLimit(msg)) {
+        if (runId != null) this.db.endRun(runId, { stopReason: "rate_limited", error: msg });
+        return this.pause(job, msg);
+      }
       if (runId != null) this.db.endRun(runId, { stopReason: "error", error: msg });
       this.fail(job, msg, iteration);
     }
@@ -230,12 +267,29 @@ export class Scheduler {
         break;
       }
       case "watch":
-        if (tree) patch.watch_ref = tree;
+        if (tree) {
+          patch.watch_ref = tree;
+          void this.watches.get(job.id)?.counter.keep(tree);
+        }
         break;
     }
     if (cur.until_ts != null && now >= cur.until_ts) end ??= "until";
     this.db.updateJob(job.id, patch);
     if (end && cur.enabled) this.end({ ...cur, ...patch }, end);
+  }
+
+  /**
+   * Usage/rate limit (e.g. a subscription's 5-hour window): wait until the
+   * reset instead of counting a failure, so an overnight loop survives it.
+   * The iteration isn't consumed and a watch job keeps its pending changes.
+   */
+  private pause(job: JobRow, error: string) {
+    const until = resetTime(error) ?? Date.now() + (this.opts.rateLimitWaitMs ?? 30 * 60_000);
+    this.db.updateJob(job.id, { next_run: until, last_error: `paused (usage limit): ${error.slice(0, 300)}` });
+    const cur = this.db.getJob(job.id) ?? job;
+    if (cur.until_ts != null && until >= cur.until_ts) return this.end(cur, "until");
+    this.pausedUntil.set(job.id, until);
+    this.opts.onJob?.({ type: "paused", job: cur, until, reason: error });
   }
 
   private fail(job: JobRow, error: string, iteration?: number) {
@@ -349,6 +403,7 @@ export class Scheduler {
         baseline = await counter.snapshot();
         this.db.updateJob(job.id, { watch_ref: baseline });
       }
+      await counter.keep(baseline);
       const watcher = watchTree(job.watch_path, () => void this.recount(job.id), this.opts.watchDebounceMs ?? 500);
       const w: WatchState = { counter, watcher, baseline };
       this.watches.set(job.id, w);
@@ -447,6 +502,8 @@ export function formatDuration(ms: number): string {
 export function describeSchedule(j: JobRow): string {
   switch (j.kind) {
     case "loop":
+      if (j.enabled && j.last_error?.startsWith("paused") && j.next_run > Date.now())
+        return `paused until ${new Date(j.next_run).toLocaleTimeString()}`;
       return (
         [j.remaining != null ? `${j.remaining} left` : "", j.until_ts ? `until ${new Date(j.until_ts).toLocaleString()}` : ""]
           .filter(Boolean)
@@ -459,4 +516,26 @@ export function describeSchedule(j: JobRow): string {
     case "once":
       return new Date(j.next_run).toLocaleString();
   }
+}
+
+/** Does this error text look like a usage / rate limit rather than a real failure? */
+export function isRateLimit(msg: string): boolean {
+  return /rate.?limit|usage limit|limit reached|quota|too many requests|\b429\b|overloaded|try again (later|in)|resets? (at|in)/i.test(msg);
+}
+
+/** Pull a reset time out of a limit message: a unix timestamp or "in N minutes/hours". */
+export function resetTime(msg: string, now = Date.now()): number | undefined {
+  const epoch = msg.match(/\b(1[7-9]\d{8})\b/);
+  if (epoch) {
+    const t = Number(epoch[1]) * 1000;
+    if (t > now && t - now < 24 * 3_600_000) return t + 60_000;
+  }
+  const rel = msg.match(/in (\d+)\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?)\b/i);
+  if (rel) {
+    const n = Number(rel[1]);
+    const u = rel[2].toLowerCase();
+    const ms = u.startsWith("h") ? n * 3_600_000 : u.startsWith("m") ? n * 60_000 : n * 1000;
+    return now + ms + 5_000;
+  }
+  return undefined;
 }

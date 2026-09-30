@@ -42,6 +42,7 @@ import { POLICIES, type AgentSession, type PermissionPolicy, type SessionEvent }
 import { Scheduler, parseDuration, formatDuration, describeSchedule as schedule, type JobEvent } from "../core/scheduler.js";
 import { probe, installed } from "../core/doctor.js";
 import { ROLES, type RolePreset } from "../core/roles.js";
+import { defaultDb } from "../core/home.js";
 import { listWorktrees, mergeWorktree, removeWorktree } from "../core/worktree.js";
 import { HiveDb, type JobRow, type NewJob } from "../hive/db.js";
 
@@ -52,7 +53,7 @@ const { values, positionals } = parseArgs({
     cwd: { type: "string" },
     role: { type: "string" },
     policy: { type: "string" },
-    db: { type: "string", default: ".hive/hive.db" },
+    db: { type: "string" },
     quiet: { type: "boolean", short: "q", default: false },
     fresh: { type: "boolean", default: false },
     times: { type: "string" },
@@ -73,6 +74,8 @@ const { values, positionals } = parseArgs({
   },
 });
 const [cmd, ...rest] = positionals;
+// One hive per repo, kept outside the workspace (see core/home.ts).
+values.db = resolve(values.db ?? defaultDb(values.cwd ?? process.cwd()));
 
 const tty = process.stdout.isTTY;
 const color = (n: number) => (s: string) => (tty ? `\x1b[${n}m${s}\x1b[0m` : s);
@@ -106,7 +109,7 @@ const USAGE = `hive — local multi-agent harness
 agents:  ${Object.keys(AGENTS).join(", ")}
 presets: ${Object.values(ROLES).map((r) => r.id).join(", ")}  (--as: role + policy + briefing [+ worktree])
 options: --name N  --cwd DIR  --role R  --policy ${POLICIES.join("|")}  --worktree
-         --db PATH (default .hive/hive.db)  --keep-context  --detach  --quiet`;
+         --db PATH (default: per-repo hive in your user state dir)  --keep-context  --detach  --quiet`;
 
 // ---- one readline for the whole process (chat input, permission prompts, questions) ----
 
@@ -223,6 +226,9 @@ function renderJob(e: JobEvent) {
       break;
     case "error":
       say(red(e.error));
+      break;
+    case "paused":
+      say(yellow(`paused (usage limit) until ${new Date(e.until).toLocaleTimeString()}`));
       break;
   }
 }
