@@ -276,3 +276,31 @@ button.danger { border-color: #6b2f35; color: var(--red); }
 .budget-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; flex-wrap: wrap; }
 .budget-row code, .budget-row input:first-child { min-width: 170px; }
 .budget-row input { width: 110px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; }
+/* ---- ready (finished, not looked at yet) ---- */
+.pane.ready { border-color: var(--green); box-shadow: 0 0 0 2px color-mix(in srgb, var(--green) 55%, transparent); }
+.pane.ready .pane-head { background: color-mix(in srgb, var(--green) 14%, var(--bg3)); }
+.badge.ready { background: var(--green); color: #07210f; border-color: var(--green); font-weight: 700; }
+.agent-item.ready { background: color-mix(in srgb, var(--green) 12%, transparent); }
+.ready-btn { background: var(--green); color: #07210f; border-color: var(--green); font-weight: 700; white-space: nowrap; }
+.ready-btn:hover:not(:disabled) { background: #7ee0a4; border-color: #7ee0a4; }
+@media (prefers-reduced-motion: no-preference) {
+  .pane.ready { animation: ready-in 0.6s ease-out 2; }
+  @keyframes ready-in { 50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--green) 35%, transparent); } }
+}
+
+/* ---- vertical layout (9:16 monitors, side-of-screen use) ---- */
+.app.vertical { grid-template-rows: auto 1fr; }
+.app.vertical .topbar { flex-wrap: wrap; padding: 4px 8px; row-gap: 4px; }
+.app.vertical .broadcast { order: 20; flex: 1 1 100%; min-width: 0; }
+.app.vertical .toggle { display: none; }
+.topbar { min-height: 40px; }
+/* ---- long prompt editor ---- */
+.modal.wide { width: min(1100px, 96vw); max-height: 94vh; display: flex; flex-direction: column; gap: 8px; }
+.prompt-editor {
+  width: 100%; min-height: 50vh; flex: 1; resize: vertical; background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+  padding: 10px 12px; line-height: 1.5; font: 13px/1.5 var(--sans);
+}
+.prompt-editor:focus { outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: 0; }
+.composer .expand { align-self: flex-end; height: 30px; padding: 0 6px; color: var(--dim); }
+.save-skill { border-top: 1px solid var(--line); padding-top: 8px; }
+.hint { padding: 0 2px; }

@@ -5,6 +5,7 @@
  * every pane.
  */
 import { useSyncExternalStore } from "react";
+import { focus } from "./focus.js";
 import type { AgentView, BackendEvent, ElicitationAsk, JobView, Layout, OtherAgent, PermissionAsk, PresetView } from "../protocol.js";
 
 /** Every item has a stable id (React key) and a rev bumped on each mutation (memo key). */
@@ -57,6 +58,9 @@ class Store {
   db = "";
   layout: Layout = { panes: [], columns: 2, hoverFocus: true, sidebar: true, maximized: null };
   ready = false;
+  /** Panes whose agent finished a turn you haven't looked at yet (green until focused). */
+  readyAt = new Map<string, number>();
+  private turnStart = new Map<string, { at: number; mail: boolean }>();
   toasts: { id: number; text: string; level: "info" | "error" }[] = [];
   version = 0;
   private subs = new Set<() => void>();
@@ -118,6 +122,36 @@ class Store {
       this.changed();
     }, level === "error" ? 8000 : 4000);
     this.changed();
+  }
+
+  /** Open the Skills dialog on a skill with some values filled in. */
+  skillRequest: { name: string; vals: Record<string, string> } | null = null;
+  requestSkill(name: string, vals: Record<string, string>) {
+    this.skillRequest = { name, vals };
+    this.changed();
+  }
+
+  /** You looked at the pane (focus, click, typing): it's no longer "ready". */
+  clearReady(name: string) {
+    if (this.readyAt.delete(name)) this.changed();
+  }
+
+  /** A turn ended: mark the pane ready unless you're looking at it, ping, notify. */
+  private turnEnded(name: string, stopReason: string) {
+    const t = this.turnStart.get(name) ?? { at: Date.now(), mail: false };
+    this.turnStart.delete(name);
+    if (stopReason === "cancelled") return;
+    const watching = document.hasFocus() && focus.active === name;
+    if (watching) return;
+    this.readyAt.set(name, Date.now());
+    // Agents answering each other's mail get the green mark but no chime (that would never stop).
+    const long = Date.now() - t.at >= 4000;
+    if (this.layout.ping !== false && !t.mail && (long || !document.hasFocus())) ping();
+    if (!document.hasFocus()) {
+      const p = this.panes.get(name);
+      const last = [...(p?.items ?? [])].reverse().find((i) => i.k === "agent") as { text: string } | undefined;
+      notifyAttention(name, last?.text ?? "finished", "is ready");
+    }
   }
 
   /** Items that need the user (for the sidebar badge and title). */
@@ -215,7 +249,8 @@ class Store {
     switch (e.type) {
       case "prompt":
         this.push(name, { k: "user", text: e.text, ts: Date.now() });
-        return false;
+        if (!e.queued) this.turnStart.set(name, { at: Date.now(), mail: String(e.text).startsWith("You have ") });
+        return this.readyAt.delete(name);
       case "text":
         if (last?.k === "agent") {
           last.text += e.text;
@@ -273,7 +308,8 @@ class Store {
         return false;
       case "turn_end":
         this.push(name, { k: "turn", stopReason: e.stopReason, tokens: e.usage?.totalTokens, ts: Date.now() });
-        return false;
+        this.turnEnded(name, e.stopReason);
+        return true;
       case "session":
         // Tool ids restart per session in some agents.
         p.tools.clear();
@@ -345,6 +381,30 @@ export function useStore<T>(select: (s: Store) => T): T {
 export function usePane(name: string): PaneState {
   useSyncExternalStore(store.subscribe, () => store.pane(name).version);
   return store.pane(name);
+}
+
+let lastPing = 0;
+let audio: AudioContext | undefined;
+/** A short two-note chime (no audio files, works offline). */
+export function ping() {
+  if (Date.now() - lastPing < 1500) return;
+  lastPing = Date.now();
+  try {
+    audio ??= new AudioContext();
+    const t = audio.currentTime;
+    for (const [i, f] of [880, 1320].entries()) {
+      const o = audio.createOscillator();
+      const g = audio.createGain();
+      o.type = "sine";
+      o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t + i * 0.12);
+      g.gain.exponentialRampToValueAtTime(0.18, t + i * 0.12 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.12 + 0.25);
+      o.connect(g).connect(audio.destination);
+      o.start(t + i * 0.12);
+      o.stop(t + i * 0.12 + 0.3);
+    }
+  } catch {}
 }
 
 function notifyAttention(agent: string, what: string, verb = "needs you") {

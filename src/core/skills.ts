@@ -259,3 +259,27 @@ export function extractSkill(reply: string): string {
   if (!text.startsWith("---")) throw new Error("the agent didn't return a skill file");
   return text + "\n";
 }
+
+/**
+ * Build a skill file from a plain prompt: every {{name}} becomes a required
+ * text parameter. Returns the file text (validated by parseSkill).
+ */
+export function skillFromPrompt(name: string, description: string, body: string): { text: string; params: string[] } {
+  if (!/^[\w.-]{1,60}$/.test(name)) throw new Error("skill name: letters, digits, _ . - (max 60)");
+  if (!body.trim()) throw new Error("the prompt is empty");
+  const params = [...new Set([...body.matchAll(/\{\{(\w[\w-]*)\}\}/g)].map((m) => m[1]))].filter((p) => !p.startsWith("#"));
+  const esc = (s: string) => JSON.stringify(s.replace(/[\r\n]+/g, " ").trim());
+  const text = [
+    "---",
+    `name: ${name}`,
+    `description: ${esc(description || "Saved from the prompt editor")}`,
+    "agent: claude",
+    "policy: allow-reads",
+    ...(params.length ? ["params:", ...params.flatMap((p) => [`  - name: ${p}`, "    type: text", "    required: true"])] : []),
+    "---",
+    body.trim(),
+    "",
+  ].join("\n");
+  parseSkill(text, name + ".md");
+  return { text, params };
+}

@@ -5,6 +5,7 @@ import { renderMarkdown } from "./markdown.js";
 import { store, usePane, useStore, type Item } from "./store.js";
 import { focus } from "./focus.js";
 import { ctxPct, fmtIdle, statusLabel } from "./format.js";
+import { PromptEditor } from "./Extras.js";
 
 export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
   name: string;
@@ -18,16 +19,21 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
   const starting = useStore((s) => s.starting.get(name));
   const hoverFocus = useStore((s) => s.layout.hoverFocus);
   const waiting = useStore((s) => s.waitingOn(name));
+  const ready = useStore((s) => s.readyAt.has(name));
   // In the layout but not running (exited, closed by its job, backend restarted): stopped.
   const status = agent?.status ?? (starting ? (starting.error ? "error" : "starting") : "asleep");
 
   return (
     <section
-      className={`pane status-${status}${waiting ? " needs-you" : ""}`}
+      className={`pane status-${status}${waiting ? " needs-you" : ""}${ready && !waiting ? " ready" : ""}`}
       data-pane={name}
       onMouseEnter={() => hoverFocus && focus.hoverStart(name)}
       onMouseLeave={() => focus.hoverEnd()}
-      onMouseDown={() => focus.setActive(name)}
+      onMouseDown={() => {
+        focus.setActive(name);
+        store.clearReady(name);
+      }}
+      onFocusCapture={() => store.clearReady(name)}
     >
       <header className="pane-head" onDoubleClick={onMaximize} title="double-click to maximize">
         <input
@@ -43,6 +49,11 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
         <strong className="pname">{name}</strong>
         <span className="kind">{agent?.kind ?? starting?.kind}</span>
         {agent && <ConfigSelectors agent={agent} />}
+        {ready && !waiting && (
+          <span className="badge ready" role="status" title="finished — click or focus the pane to clear">
+            ✓ ready
+          </span>
+        )}
         <span className="spacer" />
         {agent?.ctx && <CtxMeter used={agent.ctx.used} size={agent.ctx.size} />}
         {agent && agent.queued > 0 && <span className="badge" title="prompts queued">{agent.queued} queued</span>}
@@ -430,12 +441,13 @@ function Composer({ name, agent }: { name: string; agent?: AgentView }) {
   const [text, setText] = useState("");
   const ref = useRef<HTMLTextAreaElement>(null);
   const histIdx = useRef<number | null>(null);
+  const [editing, setEditing] = useState(false);
   useEffect(() => {
     if (ref.current) focus.register(name, ref.current);
     return () => focus.unregister(name);
   }, [name]);
-  const send = () => {
-    const t = text.trim();
+  const send = (raw = text) => {
+    const t = raw.trim();
     if (!t || !agent) return;
     const p = store.pane(name);
     p.history.push(t);
@@ -445,6 +457,21 @@ function Composer({ name, agent }: { name: string; agent?: AgentView }) {
   };
   return (
     <div className="composer">
+      {editing && (
+        <PromptEditor
+          agent={name}
+          initial={text}
+          onClose={(draft) => {
+            setText(draft);
+            setEditing(false);
+            setTimeout(() => ref.current?.focus(), 0);
+          }}
+          onSend={(t) => {
+            setEditing(false);
+            send(t);
+          }}
+        />
+      )}
       <textarea
         ref={ref}
         value={text}
@@ -454,7 +481,10 @@ function Composer({ name, agent }: { name: string; agent?: AgentView }) {
         onFocus={() => focus.setActive(name)}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+          if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "e") {
+            e.preventDefault();
+            setEditing(true);
+          } else if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
             e.preventDefault();
             send();
           } else if (e.key === "Escape") {
@@ -476,7 +506,10 @@ function Composer({ name, agent }: { name: string; agent?: AgentView }) {
           }
         }}
       />
-      <button className="send" onClick={send} disabled={!agent || !text.trim()} title="send (Enter)">
+      <button className="ghost expand" onClick={() => setEditing(true)} disabled={!agent} title="open the big editor for long prompts (Ctrl+E)" aria-label="open prompt editor">
+        ⤢
+      </button>
+      <button className="send" onClick={() => send()} disabled={!agent || !text.trim()} title="send (Enter)">
         ➤
       </button>
     </div>

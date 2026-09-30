@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { JobView, Layout, PaneSpec, Policy, WorktreeView } from "../protocol.js";
 import { connect, hello, onEvent, onFocusLast, rpc } from "./bridge.js";
-import { store, useStore } from "./store.js";
+import { ping, store, useStore } from "./store.js";
 import { Pane } from "./Pane.js";
 import { Drawer } from "./Drawer.js";
 import { RecipesDialog, SkillsDialog } from "./Extras.js";
@@ -84,6 +84,7 @@ export function App() {
   const [drawer, setDrawer] = useState<false | "default" | "usage">(false);
   const [dialog, setDialog] = useState<"" | "recipes" | "skills">("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const skillReq = useStore((s) => s.skillRequest);
 
   const names = layout.panes.map((p) => p.name);
   const visible = layout.maximized && names.includes(layout.maximized) ? [layout.maximized] : names;
@@ -91,9 +92,17 @@ export function App() {
 
   // Title shows how many agents need you, so it's visible from the taskbar.
   const waitingTotal = useStore((s) => names.reduce((n, x) => n + s.waitingOn(x), 0));
+  const readyTotal = useStore((s) => names.filter((n) => s.readyAt.has(n)).length);
   useEffect(() => {
-    document.title = waitingTotal ? `(${waitingTotal}) hive — needs you` : "hive";
-  }, [waitingTotal]);
+    document.title = waitingTotal ? `(${waitingTotal}) hive — needs you` : readyTotal ? `✓${readyTotal} hive — ready` : "hive";
+  }, [waitingTotal, readyTotal]);
+
+  // 9:16 monitors: tall or narrow windows get one column and no sidebar (unless you choose otherwise).
+  const portrait = useMedia("(max-aspect-ratio: 4/5), (max-width: 820px)");
+  const orientation = layout.orientation ?? "auto";
+  const vertical = orientation === "vertical" || (orientation === "auto" && portrait);
+  const sidebar = vertical ? !!layout.vsidebar : layout.sidebar;
+  const columns = vertical ? (layout.vcolumns ?? 1) : layout.columns;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -117,7 +126,7 @@ export function App() {
         document.querySelector<HTMLInputElement>(".broadcast input")?.focus();
       } else if (mod && e.key === "\\") {
         e.preventDefault();
-        saveLayout({ sidebar: !store.layout.sidebar });
+        toggleSidebar();
       } else if (mod && (e.key === "=" || e.key === "+" || e.key === "-" || e.key === "0")) {
         e.preventDefault();
         const z = store.layout.zoom ?? 1;
@@ -146,7 +155,7 @@ export function App() {
   if (!ready) return <div className="boot">starting hive…</div>;
 
   return (
-    <div className={`app${layout.sidebar ? "" : " nosidebar"}`}>
+    <div className={`app${sidebar ? "" : " nosidebar"}${vertical ? " vertical" : ""}`}>
       <TopBar
         names={names}
         selected={selected}
@@ -156,8 +165,10 @@ export function App() {
         onUsage={() => setDrawer(drawer === "usage" ? false : "usage")}
         onRecipes={() => setDialog("recipes")}
         onSkills={() => setDialog("skills")}
+        vertical={vertical}
+        columns={columns}
       />
-      {layout.sidebar && <Sidebar names={names} onAdd={() => setAdding(true)} />}
+      {sidebar && <Sidebar names={names} onAdd={() => setAdding(true)} />}
       <main className="grid-wrap">
         {names.length === 0 ? (
           <div className="welcome">
@@ -173,7 +184,7 @@ export function App() {
             </p>
           </div>
         ) : (
-          <Grid names={visible} columns={layout.maximized ? 1 : layout.columns} widths={layout.maximized ? [1] : layout.widths}>
+          <Grid names={visible} columns={layout.maximized ? 1 : columns} widths={layout.maximized || vertical ? undefined : layout.widths} minRow={vertical ? 360 : 220}>
             {visible.map((n) => (
               <Pane
                 key={n}
@@ -197,7 +208,17 @@ export function App() {
       {jobFor && <JobDialog agent={jobFor} onClose={() => setJobFor(null)} />}
       {drawer && <Drawer key={drawer} initialTab={drawer === "usage" ? "usage" : undefined} onClose={() => setDrawer(false)} />}
       {dialog === "recipes" && <RecipesDialog onClose={() => setDialog("")} />}
-      {dialog === "skills" && <SkillsDialog onClose={() => setDialog("")} />}
+      {(dialog === "skills" || skillReq) && (
+        <SkillsDialog
+          key={skillReq ? `req-${skillReq.name}` : "skills"}
+          initial={skillReq}
+          onClose={() => {
+            setDialog("");
+            store.skillRequest = null;
+            store.changed();
+          }}
+        />
+      )}
       <div className="toasts">
         {toasts.map((t) => (
           <div key={t.id} className={`toast ${t.level}`}>{t.text}</div>
@@ -207,10 +228,30 @@ export function App() {
   );
 }
 
+function useMedia(q: string): boolean {
+  const [m, setM] = useState(() => window.matchMedia(q).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(q);
+    const f = () => setM(mq.matches);
+    mq.addEventListener("change", f);
+    return () => mq.removeEventListener("change", f);
+  }, [q]);
+  return m;
+}
+
+/** The sidebar switch remembers its state separately for the vertical layout. */
+function toggleSidebar() {
+  const vertical = document.querySelector(".app")?.classList.contains("vertical");
+  if (vertical) saveLayout({ vsidebar: !store.layout.vsidebar });
+  else saveLayout({ sidebar: !store.layout.sidebar });
+}
+
 // ---- top bar: broadcast + layout controls ----
 
-function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onRecipes, onSkills }: {
+function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onRecipes, onSkills, vertical, columns }: {
   onUsage: () => void;
+  vertical: boolean;
+  columns: number;
   names: string[];
   selected: Set<string>;
   setSelected: (s: Set<string>) => void;
@@ -232,10 +273,14 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onRecipe
     store.toast(`sent to ${to.join(", ")}`);
     setText("");
   };
-  const cols = layout.columns;
+  const cols = columns;
+  const setCols = (n: number) => saveLayout(vertical ? { vcolumns: n } : { columns: n, widths: undefined });
+  const readyNames = useStore((s) => names.filter((n) => s.readyAt.has(n)));
+  const orient = layout.orientation ?? "auto";
+  const nextOrient = orient === "auto" ? "vertical" : orient === "vertical" ? "horizontal" : "auto";
   return (
     <div className="topbar">
-      <button className="ghost" onClick={() => saveLayout({ sidebar: !layout.sidebar })} title="toggle sidebar (Ctrl+\)">☰</button>
+      <button className="ghost" onClick={toggleSidebar} title="toggle sidebar (Ctrl+\)" aria-label="toggle sidebar">☰</button>
       <span className="brand">hive</span>
       <div className="broadcast">
         <input
@@ -254,13 +299,45 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onRecipe
         )}
       </div>
       <span className="spacer" />
+      {readyNames.length > 0 && (
+        <button
+          className="ready-btn"
+          onClick={() => {
+            const n = readyNames[0];
+            if (layout.maximized && layout.maximized !== n) saveLayout({ maximized: null });
+            setTimeout(() => focus.to(n), 0);
+          }}
+          title={`finished: ${readyNames.join(", ")} — click to jump to the next one`}
+        >
+          ✓ {readyNames.length} ready
+        </button>
+      )}
+      <button
+        className="ghost"
+        onClick={() => saveLayout({ orientation: nextOrient })}
+        title={`layout: ${orient}${orient === "auto" ? ` (now ${vertical ? "vertical" : "horizontal"})` : ""} — click for ${nextOrient}. Auto goes vertical on tall/narrow windows (9:16 monitors).`}
+        aria-label={`layout ${orient}`}
+      >
+        {orient === "auto" ? (vertical ? "▯ auto" : "▭ auto") : orient === "vertical" ? "▯ vertical" : "▭ horizontal"}
+      </button>
+      <button
+        className="ghost"
+        onClick={() => {
+          saveLayout({ ping: layout.ping === false });
+          if (layout.ping === false) ping();
+        }}
+        title={layout.ping === false ? "sound off — click to chime when an agent finishes" : "chime when an agent finishes (click to mute)"}
+        aria-label={layout.ping === false ? "finish sound off" : "finish sound on"}
+      >
+        {layout.ping === false ? "🔕" : "🔔"}
+      </button>
       <label className="toggle" title="hovering a pane focuses its input (for Handy / voice typing)">
         <input type="checkbox" checked={layout.hoverFocus} onChange={(e) => saveLayout({ hoverFocus: e.target.checked })} /> hover focus
       </label>
       <span className="cols" title="panes per row">
-        <button className="ghost" disabled={cols <= 1} onClick={() => saveLayout({ columns: cols - 1, widths: undefined })}>−</button>
+        <button className="ghost" disabled={cols <= 1} onClick={() => setCols(cols - 1)} aria-label="fewer columns">−</button>
         {cols} cols
-        <button className="ghost" disabled={cols >= 8} onClick={() => saveLayout({ columns: cols + 1, widths: undefined })}>+</button>
+        <button className="ghost" disabled={cols >= 8} onClick={() => setCols(cols + 1)} aria-label="more columns">+</button>
       </span>
       <UsageChip onClick={onUsage} />
       <button className="ghost" onClick={onSkills} title="reusable prompts with parameters (Ctrl+K)">
@@ -305,7 +382,7 @@ function UsageChip({ onClick }: { onClick: () => void }) {
 
 // ---- resizable grid ----
 
-function Grid({ names, columns, widths, children }: { names: string[]; columns: number; widths?: number[]; children: React.ReactNode }) {
+function Grid({ names, columns, widths, minRow, children }: { names: string[]; columns: number; widths?: number[]; minRow: number; children: React.ReactNode }) {
   const cols = Math.max(1, Math.min(columns, names.length));
   const w = widths && widths.length === cols ? widths : Array(cols).fill(1);
   const rows = Math.ceil(names.length / cols);
@@ -341,7 +418,7 @@ function Grid({ names, columns, widths, children }: { names: string[]; columns: 
     <div
       className="grid"
       ref={ref}
-      style={{ gridTemplateColumns: w.map((x) => `minmax(0, ${x}fr)`).join(" "), gridTemplateRows: `repeat(${rows}, minmax(220px, 1fr))` }}
+      style={{ gridTemplateColumns: w.map((x) => `minmax(0, ${x}fr)`).join(" "), gridTemplateRows: `repeat(${rows}, minmax(${minRow}px, 1fr))` }}
     >
       {children}
       {w.slice(0, -1).map((x, i) => {
@@ -388,7 +465,7 @@ function Sidebar({ names, onAdd }: { names: string[]; onAdd: () => void }) {
           return (
             <li
               key={n}
-              className={`agent-item${layout.maximized === n ? " max" : ""}`}
+              className={`agent-item${layout.maximized === n ? " max" : ""}${store.readyAt.has(n) ? " ready" : ""}`}
               onClick={() => {
                 if (layout.maximized && layout.maximized !== n) saveLayout({ maximized: null });
                 setTimeout(() => focus.to(n), 0);
@@ -400,6 +477,7 @@ function Sidebar({ names, onAdd }: { names: string[]; onAdd: () => void }) {
                 <span className="kind">{a?.kind ?? st?.kind}</span>
                 <span className="spacer" />
                 {waiting > 0 && <span className="badge alert" title="waiting for your answer">!</span>}
+                {!waiting && store.readyAt.has(n) && <span className="badge ready" title="finished; not looked at yet">✓</span>}
                 {a && a.unread > 0 && <span className="badge" title="unread hive mail">✉{a.unread}</span>}
                 {i < 9 && <span className="key">^{i + 1}</span>}
               </div>
@@ -594,7 +672,7 @@ function labelOf(o: { currentValue: string | boolean; options?: { value: string;
 
 // ---- dialogs ----
 
-export function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
   useEffect(() => {
     const k = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", k);
@@ -602,7 +680,7 @@ export function Modal({ title, onClose, children }: { title: string; onClose: ()
   }, [onClose]);
   return (
     <div className="modal-back" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal" role="dialog" aria-label={title}>
+      <div className={`modal${wide ? " wide" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
         <h2>{title}</h2>
         {children}
       </div>

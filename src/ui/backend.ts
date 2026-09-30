@@ -21,7 +21,7 @@ import { defaultDb } from "../core/home.js";
 import { listWorktrees, mergeWorktree } from "../core/worktree.js";
 import { buildReport } from "../core/report.js";
 import { RECIPES, applyRecipe } from "../core/recipes.js";
-import { findSkill, listSkills, renderSkill } from "../core/skills.js";
+import { findSkill, listSkills, renderSkill, skillFromPrompt, userSkillsDir } from "../core/skills.js";
 import { runSkill, skillAgentName } from "../core/skill-run.js";
 import { BB_PREFIX, BRANCHES } from "../core/watch.js";
 import { setBudget, usageSummary } from "../core/budget.js";
@@ -541,6 +541,15 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
   },
   usage() {
     return usageSummary(hub.db);
+  },
+  saveSkill({ name, description, body, overwrite }) {
+    const { text, params } = skillFromPrompt(need(name, "name").trim(), description ?? "", need(body, "prompt"));
+    const dir = userSkillsDir();
+    const path = join(dir, `${name.trim()}.md`);
+    if (existsSync(path) && !overwrite) throw new Error(`a skill named ${name} already exists (${path})`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path, text);
+    return { path, params };
   },
   setBudget({ key, value }) {
     setBudget(hub.db, need(key, "key"), String(value ?? ""));
