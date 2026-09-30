@@ -9,13 +9,19 @@
  *    replies via hive_send; if the prompt contains "send <name>: <text>" it
  *    sends that; if it contains "bb <k>=<v>" it writes the blackboard;
  *    streams a short text reply; asks permission for one fake write.
+ *  - "slow" waits up to 10 s, or until session/cancel → stopReason "cancelled"
+ *  - "ask?" sends elicitation/create and reports the answer
+ *  - "Read and update <file>.md" (the scheduler's notes line) reads the file
+ *    through the client's fs/read_text_file and appends one line with
+ *    fs/write_text_file, so notes persistence is tested end to end
+ *  - supports session/load, session/resume and session/close
  */
 import * as acp from "@agentclientprotocol/sdk";
 import { Readable, Writable } from "node:stream";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
-type Sess = { mcp: Client[]; cwd: string };
+type Sess = { mcp: Client[]; cwd: string; turns: number; cancelled: boolean; how: string; wake?: () => void };
 const sessions = new Map<string, Sess>();
 
 async function connectMcp(servers: acp.McpServer[]): Promise<Client[]> {
@@ -56,19 +62,76 @@ const toolCall = (cx: acp.AgentContext, sessionId: string, id: string, title: st
     update: { sessionUpdate: "tool_call", toolCallId: id, title, kind, status },
   });
 
+const configOptions = [
+  {
+    id: "model",
+    name: "Model",
+    type: "select" as const,
+    currentValue: "mock-small",
+    options: [
+      { value: "mock-small", name: "Mock Small" },
+      { value: "mock-large", name: "Mock Large" },
+    ],
+  },
+];
+
+async function openSess(sessionId: string, cwd: string, servers: acp.McpServer[], how: string) {
+  const old = sessions.get(sessionId);
+  if (old) for (const c of old.mcp) await c.close().catch(() => {});
+  const mcp = await connectMcp(servers);
+  sessions.set(sessionId, { mcp, cwd, turns: 0, cancelled: false, how });
+}
+
+// MOCK_NO_RESUME=1 → advertise only session/load (tests the replay path).
+const noResume = process.env.MOCK_NO_RESUME === "1";
+
 let n = 0;
 acp
   .agent({ name: "mock-agent" })
-  .onRequest("initialize", async () => ({
+  .onRequest("initialize", async (ctx) => {
+    // like claude-agent-acp: push identity shortly after initialize
+    setTimeout(() => void ctx.client.notify("_auth/status_update", { authStatus: { kind: "mock", label: "Mock login" } }), 50);
+    return {
     protocolVersion: acp.PROTOCOL_VERSION,
-    agentCapabilities: { loadSession: false, mcpCapabilities: { http: false, sse: false } },
-  }))
+    agentCapabilities: {
+      loadSession: true,
+      mcpCapabilities: { http: false, sse: false },
+      sessionCapabilities: { close: {}, ...(noResume ? {} : { resume: {} }) },
+      _meta: { authStatus: {} },
+    },
+    agentInfo: { name: "mock-agent", version: "0.0.1" },
+    };
+  })
   .onRequest("authenticate", async () => ({}))
   .onRequest("session/new", async (ctx) => {
     const sessionId = `mock-${Date.now().toString(36)}-${++n}`;
-    const mcp = await connectMcp(ctx.params.mcpServers ?? []);
-    sessions.set(sessionId, { mcp, cwd: ctx.params.cwd });
-    return { sessionId };
+    await openSess(sessionId, ctx.params.cwd, ctx.params.mcpServers ?? [], "new");
+    return { sessionId, configOptions };
+  })
+  .onRequest("session/resume", async (ctx) => {
+    await openSess(ctx.params.sessionId, ctx.params.cwd, ctx.params.mcpServers ?? [], "resumed");
+    return { configOptions };
+  })
+  .onRequest("session/load", async (ctx) => {
+    const { sessionId } = ctx.params;
+    await openSess(sessionId, ctx.params.cwd, ctx.params.mcpServers ?? [], "loaded");
+    // replay a bit of "history", as real agents do
+    await ctx.client.notify(acp.methods.client.session.update, {
+      sessionId,
+      update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "(replayed history)" } },
+    });
+    return { configOptions };
+  })
+  .onRequest("session/close", async (ctx) => {
+    const s = sessions.get(ctx.params.sessionId);
+    if (s) for (const c of s.mcp) await c.close().catch(() => {});
+    sessions.delete(ctx.params.sessionId);
+    return {};
+  })
+  .onRequest("session/set_config_option", async (ctx) => {
+    const p = ctx.params as any;
+    configOptions[0].currentValue = String(p.value);
+    return { configOptions };
   })
   .onRequest("session/set_mode", async () => ({}))
   .onRequest("session/prompt", async (ctx) => {
@@ -77,6 +140,9 @@ acp
     const cx = ctx.client;
     const text = prompt.map((b) => (b.type === "text" ? b.text : "")).join("\n");
     const me = process.env.MOCK_NAME ?? "mock";
+    sess.turns++;
+    sess.cancelled = false;
+    if (sess.turns === 1 && sess.how !== "new") await say(cx, sessionId, `(${sess.how} session ${sessionId})\n`);
 
     // 1. inbox
     await toolCall(cx, sessionId, `t${++n}`, "hive_inbox", "pending", "fetch");
@@ -131,9 +197,58 @@ acp
       await say(cx, sessionId, ok ? "edit allowed, wrote file\n" : "edit rejected\n");
     }
 
+    // 4. a structured question to the user
+    if (/ask\?/.test(text)) {
+      const r: any = await cx.request(acp.methods.client.elicitation.create, {
+        sessionId,
+        mode: "form",
+        message: "What is the answer?",
+        requestedSchema: { type: "object", properties: { answer: { type: "string" } }, required: ["answer"] },
+      } as any);
+      await say(cx, sessionId, `elicit: ${r.action} ${JSON.stringify((r as any).content ?? null)}\n`);
+    }
+
+    // 5. scheduler notes file: read it through the client and append a line
+    const notesM = text.match(/Read and update (\S+\.md)/);
+    if (notesM) {
+      const path = notesM[1];
+      const head = await cx.request(acp.methods.client.fs.readTextFile, { sessionId, path, line: 1, limit: 1 });
+      const all = await cx.request(acp.methods.client.fs.readTextFile, { sessionId, path });
+      await cx.request(acp.methods.client.fs.writeTextFile, {
+        sessionId,
+        path,
+        content: all.content.trimEnd() + `\n- iteration by ${sessionId} (turn ${sess.turns})\n`,
+      });
+      await say(cx, sessionId, `notes head: ${head.content}\n`);
+    }
+
+    // 6. a long turn that honours session/cancel
+    if (/\bslow\b/.test(text)) {
+      await say(cx, sessionId, "working slowly…\n");
+      await new Promise<void>((r) => {
+        const t = setTimeout(r, 10_000);
+        sess.wake = () => {
+          clearTimeout(t);
+          r();
+        };
+      });
+      sess.wake = undefined;
+      if (sess.cancelled) return { stopReason: "cancelled" };
+    }
+
+    await cx.notify(acp.methods.client.session.update, {
+      sessionId,
+      update: { sessionUpdate: "usage_update", used: 1000 * sess.turns, size: 200_000 },
+    });
+
     await callTool(sess, "hive_status", { status: "idle", note: `done: ${text.slice(0, 40)}` });
     await say(cx, sessionId, `[${me}] done.`);
     return { stopReason: "end_turn", usage: { totalTokens: 100, inputTokens: 80, outputTokens: 20 } };
   })
-  .onNotification("session/cancel", async () => {})
+  .onNotification("session/cancel", async (ctx) => {
+    const s = sessions.get(ctx.params.sessionId);
+    if (!s) return;
+    s.cancelled = true;
+    s.wake?.();
+  })
   .connect(acp.ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>));

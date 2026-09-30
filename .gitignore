@@ -3,3 +3,4 @@ dist
 .hive/
 *.db
 *.db-*
+.hive-test*/
