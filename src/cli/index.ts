@@ -319,6 +319,23 @@ function policyArg(def: PermissionPolicy): PermissionPolicy {
   return p;
 }
 
+/**
+ * Path to the Electron binary, downloading it if npm skipped electron's
+ * postinstall (happens with some npm setups / npm ci).
+ */
+function ensureElectron(): string {
+  const req = createRequire(import.meta.url);
+  let bin = req("electron") as unknown as string;
+  if (!existsSync(bin)) {
+    console.log(dim("downloading Electron (first run)…"));
+    const r = spawnSync(process.execPath, [req.resolve("electron/install.js")], { stdio: "inherit" });
+    if (r.status !== 0) throw new Error("electron download failed");
+    bin = req("electron") as unknown as string;
+    if (!existsSync(bin)) throw new Error(`electron binary still missing at ${bin}`);
+  }
+  return bin;
+}
+
 /** Coders work on hive/* branches in their own worktrees; a watcher should follow those. */
 async function hasAgentBranches(cwd: string): Promise<boolean> {
   try {
@@ -722,9 +739,9 @@ async function main() {
       } else if (!existsSync(main)) die(`UI not built: ${main} missing`);
       let electronBin: string;
       try {
-        electronBin = createRequire(import.meta.url)("electron") as unknown as string;
-      } catch {
-        die("electron is not installed (npm install in the hive checkout)");
+        electronBin = ensureElectron();
+      } catch (e: any) {
+        die(`electron is not available: ${e?.message ?? e} (run npm install in the hive checkout)`);
       }
       const cwd = resolve(values.cwd ?? process.cwd());
       const args = [main, "--cwd", cwd, ...(values.db !== resolve(defaultDb(cwd)) ? ["--db", values.db!] : [])];

@@ -238,6 +238,7 @@ export class Scheduler {
     try {
       if (job.fresh_session && job.kind !== "once") session.allowedPaths.add(this.notesPath(job));
       runId = this.db.startRun(job.id, iteration, null);
+      const startedAt = Date.now();
       this.opts.onJob?.({ type: "run_start", job, iteration });
       // runOnce claims the agent and (for fresh jobs) switches session atomically.
       const result = await session.runOnce(this.buildPrompt(job, iteration, extra?.text), { fresh: !!job.fresh_session });
@@ -252,7 +253,7 @@ export class Scheduler {
       if (result.error) throw new Error(result.error);
       // Only now is the watch change set reviewed: move the baseline.
       extra?.commit();
-      this.afterRun(job, iteration, extra?.tree);
+      this.afterRun(job, iteration, extra?.tree, startedAt);
     } catch (e: any) {
       const msg = String(e?.message ?? e).slice(0, MAX_ERROR);
       if (isRateLimit(msg)) {
@@ -264,7 +265,7 @@ export class Scheduler {
     }
   }
 
-  private afterRun(job: JobRow, iteration: number, tree?: string) {
+  private afterRun(job: JobRow, iteration: number, tree?: string, startedAt = Date.now()) {
     const cur = this.db.getJob(job.id);
     if (!cur) return;
     const now = Date.now();
@@ -284,7 +285,9 @@ export class Scheduler {
         break;
       case "interval": {
         const every = Math.max(1000, cur.every_ms ?? 60_000);
-        let next = cur.next_run + every;
+        // On schedule: keep the grid (no drift). Started late (slow agent start,
+        // busy agent): never run again sooner than `every` after this run began.
+        let next = Math.max(cur.next_run + every, startedAt + every);
         while (next <= now) next += every; // skip missed slots
         patch.next_run = next;
         break;
