@@ -185,6 +185,8 @@ acp
       await callTool(sess, "hive_bb_set", { key: bbM[1], value: bbM[2] });
       await say(cx, sessionId, `blackboard ${bbM[1]} set\n`);
     }
+    const diffM = text.match(/hivediff (\w+)/);
+    if (diffM) await say(cx, sessionId, (await callTool(sess, "hive_diff", { agent: diffM[1], stat_only: true })) + "\n");
     if (/agents\?/.test(text)) {
       await say(cx, sessionId, (await callTool(sess, "hive_agents", {})) + "\n");
     }

@@ -9,6 +9,9 @@
  */
 import { nodeEntry } from "./paths.js";
 import { spawnSync, type ChildProcess } from "node:child_process";
+import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 export interface AgentDef {
   /** Short id used in config and hive addressing, e.g. "claude". */
@@ -25,22 +28,38 @@ export interface AgentDef {
 }
 
 const npx = process.platform === "win32" ? "npx.cmd" : "npx";
+const require = createRequire(import.meta.url);
+
+/**
+ * Run an ACP adapter from our own node_modules (version pinned in
+ * package.json, no network on spawn, no shell on Windows); fall back to npx
+ * only if it isn't installed.
+ */
+function pinned(pkg: string): { command: string; args: string[] } {
+  try {
+    const pj = require.resolve(`${pkg}/package.json`);
+    const meta = JSON.parse(readFileSync(pj, "utf8")) as { bin?: string | Record<string, string> };
+    const bin = typeof meta.bin === "string" ? meta.bin : Object.values(meta.bin ?? {})[0];
+    if (bin) return { command: process.execPath, args: [join(dirname(pj), bin)] };
+  } catch {}
+  return { command: npx, args: ["-y", pkg] };
+}
+const claudeAcp = pinned("@agentclientprotocol/claude-agent-acp");
+const codexAcp = pinned("@agentclientprotocol/codex-acp");
 const mockEntry = nodeEntry("mock/agent");
 
 export const AGENTS: Record<string, AgentDef> = {
   claude: {
     id: "claude",
     label: "Claude Code",
-    command: npx,
-    args: ["-y", "@agentclientprotocol/claude-agent-acp"],
+    ...claudeAcp,
     install:
       "Auth via `claude login` (Max/Pro) or ANTHROPIC_API_KEY. Uses the Claude Agent SDK under the hood.",
   },
   codex: {
     id: "codex",
     label: "Codex",
-    command: npx,
-    args: ["-y", "@agentclientprotocol/codex-acp"],
+    ...codexAcp,
     install:
       "Auth via `codex login` (ChatGPT subscription) or OPENAI_API_KEY. Wraps the Codex App Server.",
   },

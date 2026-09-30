@@ -324,7 +324,7 @@ function ago(ts: number | null): string {
 
 /** Run jobs in this process until they end; Ctrl-C stops them. */
 async function runJobsForeground(hub: Hub, jobIds: number[]) {
-  const sched = new Scheduler({ hub, jobIds, onJob: renderJob, closeIdleAgents: true });
+  const sched = new Scheduler({ hub, jobIds, onJob: renderJob, closeIdleAgents: true, owner: fgOwner });
   hub.run();
   let stopping = false;
   const stop = async () => {
@@ -360,6 +360,8 @@ async function submitJob(j: Omit<NewJob, "agent" | "cwd" | "policy" | "role" | "
     briefing: r?.briefing ?? "",
     worktree: values.worktree || r?.worktree ? 1 : 0,
     fresh_session: values["keep-context"] ? 0 : 1,
+    // A foreground job is ours from the start, so a running `hive serve` can't grab it.
+    ...(values.detach ? {} : { owner: fgOwner, lease_until: Date.now() + 30_000 }),
   });
   if (!values.name) db.updateJob(id, { agent: `${j.agent_kind}-${id}` });
   const job = db.getJob(id)!;
@@ -371,6 +373,7 @@ async function submitJob(j: Omit<NewJob, "agent" | "cwd" | "policy" | "role" | "
   }
   await runJobsForeground(newHub(), [id]);
 }
+const fgOwner = `fg-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
 
 // ---- commands ----
 

@@ -18,7 +18,7 @@
 import { mkdirSync, existsSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import type { FSWatcher } from "chokidar";
-import type { Hub } from "./hub.js";
+import { AgentElsewhereError, type Hub } from "./hub.js";
 import type { AgentSession, PermissionPolicy, TurnResult } from "./session.js";
 import type { JobRow } from "../hive/db.js";
 import { ChangeCounter, describeDiff, watchTree, type DiffStat } from "./watch.js";
@@ -81,6 +81,8 @@ export class Scheduler {
   private startedAgents = new Set<string>();
   /** Watch jobs paused by a usage limit (other kinds just wait on next_run). */
   private pausedUntil = new Map<number, number>();
+  /** Jobs whose agent lives in another process; don't reclaim them for a while. */
+  private handOff = new Map<number, number>();
   private ticking = false;
   private stopped = false;
 
@@ -133,7 +135,9 @@ export class Scheduler {
     if (this.ticking || this.stopped || !this.db.db.open) return;
     this.ticking = true;
     try {
-      const jobs = this.db.claimJobs(this.owner, this.opts.leaseMs ?? 30_000, this.opts.jobIds);
+      const nowT = Date.now();
+      for (const [id, t] of this.handOff) if (t < nowT) this.handOff.delete(id);
+      const jobs = this.db.claimJobs(this.owner, this.opts.leaseMs ?? 30_000, this.opts.jobIds, [...this.handOff.keys()]);
       const live = new Set(jobs.map((j) => j.id));
       // Jobs stopped (or claimed away) while we were watching or running them.
       for (const [id, w] of this.watches) {
@@ -207,6 +211,12 @@ export class Scheduler {
       });
       if (!existed) this.startedAgents.add(job.agent);
     } catch (e: any) {
+      if (e instanceof AgentElsewhereError) {
+        // Another process runs this agent: hand the job over to it.
+        this.handOff.set(job.id, Date.now() + 15_000);
+        this.db.updateJob(job.id, { owner: null, lease_until: null });
+        return;
+      }
       return this.fail(job, `could not start agent ${job.agent}: ${e?.message ?? e}`);
     }
     // Someone is talking to this agent (or mail is being delivered): try next tick.
@@ -399,16 +409,17 @@ export class Scheduler {
     const counter = new ChangeCounter(job.watch_path, gitDir);
     try {
       let baseline = job.watch_ref ?? undefined;
-      if (!baseline || !(await counter.has(baseline))) {
-        baseline = await counter.snapshot();
-        this.db.updateJob(job.id, { watch_ref: baseline });
-      }
-      await counter.keep(baseline);
-      const watcher = watchTree(job.watch_path, () => void this.recount(job.id), this.opts.watchDebounceMs ?? 500);
-      const w: WatchState = { counter, watcher, baseline };
+      const fresh = !baseline || !(await counter.has(baseline));
+      if (fresh) baseline = await counter.snapshot();
+      await counter.keep(baseline!);
+      const w: WatchState = { counter, watcher: undefined as unknown as FSWatcher, baseline };
+      w.watcher = watchTree(job.watch_path, () => void this.recount(job.id), this.opts.watchDebounceMs ?? 500);
       this.watches.set(job.id, w);
-      // Count what changed while no scheduler was watching.
-      if (job.watch_ref) void this.recount(job.id);
+      // Anything written between the snapshot and the watcher being ready
+      // (or while no scheduler was watching) is caught by one recount.
+      await new Promise<void>((r) => w.watcher.once("ready", () => r()));
+      if (fresh) this.db.updateJob(job.id, { watch_ref: baseline });
+      void this.recount(job.id);
       return w;
     } catch (e: any) {
       this.fail(job, `watch setup failed: ${e?.message ?? e}`);
@@ -455,7 +466,9 @@ export class Scheduler {
       const s = this.opts.hub.sessions.get(name);
       if (s && !s.busyNow) {
         this.startedAgents.delete(name);
-        await this.opts.hub.remove(name, false);
+        // No job left for it: drop it from the agents list too (it only existed for jobs).
+        const forget = !this.db.listJobs(false).some((j) => j.agent === name) && this.db.unreadCount(name) === 0;
+        await this.opts.hub.remove(name, forget);
       }
     }
   }

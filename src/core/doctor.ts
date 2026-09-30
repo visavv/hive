@@ -25,7 +25,7 @@ export interface ProbeResult {
 /** Cheap PATH check; npx-launched adapters are fetched on demand. */
 export function installed(def: AgentDef): ProbeResult["installed"] {
   if (/^npx(\.cmd)?$/.test(def.command)) return "npx";
-  if (/[\\/]/.test(def.command)) return "ok"; // absolute path (e.g. node for the mock)
+  if (/[\\/]/.test(def.command)) return "ok"; // absolute path (node running a pinned adapter / the mock)
   const r = spawnSync(process.platform === "win32" ? "where" : "which", [def.command]);
   return r.status === 0 ? "ok" : "missing";
 }

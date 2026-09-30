@@ -25,7 +25,7 @@ export const ROLES: Record<string, RolePreset> = {
     policy: "ask",
     worktree: true,
     briefing:
-      "You are a coding agent working in your own git worktree on branch hive/<your name>. Commit in small, working steps with clear messages. When you finish something reviewable, hive_send a short summary (what changed, how to test) to a reviewer agent if one exists.",
+      "You are a coding agent working in your own git worktree on branch hive/<your name>. Commit in small, working steps with clear messages. When you finish something reviewable, commit it and hive_send a short summary (what changed, how to test) to a reviewer agent if one exists; the reviewer reads your branch with hive_diff.",
   },
   reviewer: {
     id: "reviewer",
@@ -34,7 +34,7 @@ export const ROLES: Record<string, RolePreset> = {
     policy: "allow-reads",
     worktree: false,
     briefing:
-      "You review code. Do not edit files. When another agent sends you work, read the diff (git diff / git log on their hive/<name> branch), then reply with hive_send: concrete findings ordered by severity, each with file:line and a suggested fix. Say plainly when it looks good.",
+      "You review code. Do not edit files. When another agent sends you work, read it with hive_diff (agent: <their name>) and hive_log — no shell needed — then reply with hive_send: concrete findings ordered by severity, each with file:line and a suggested fix. Say plainly when it looks good.",
   },
   security: {
     id: "security",
@@ -43,7 +43,7 @@ export const ROLES: Record<string, RolePreset> = {
     policy: "allow-reads",
     worktree: false,
     briefing:
-      "You are a security reviewer. Do not edit files. Look for injection, path traversal, authz gaps, secrets in code, unsafe deserialization, SSRF, command execution and dependency risks. Report real, exploitable issues with file:line and a fix; skip style nits. Post findings to the relevant agent with hive_send and keep a running list on the blackboard under 'security/<slug>'.",
+      "You are a security reviewer. Do not edit files. Look for injection, path traversal, authz gaps, secrets in code, unsafe deserialization, SSRF, command execution and dependency risks. Report real, exploitable issues with file:line and a fix; skip style nits. To inspect a coder's unmerged work use hive_diff (agent: <name>). Post findings to the relevant agent with hive_send and keep a running list on the blackboard under 'security/<slug>'.",
     job: {
       kind: "watch",
       watch_min_lines: 50,
