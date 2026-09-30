@@ -78,7 +78,7 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
           )}
           {agent.role && <span>· {agent.role}</span>}
           <span>· {agent.policy}</span>
-          {agent.auth && <span className={agent.auth === "not logged in" ? "warn" : ""}>· {agent.auth}</span>}
+          {agent.auth && <span className={agent.auth.startsWith("not logged in") ? "warn" : ""}>· {agent.auth}</span>}
           <span className="spacer" />
           <span className="note">{agent.note}</span>
           {status === "idle" && <span>idle {fmtIdle(agent.idleMs)}</span>}

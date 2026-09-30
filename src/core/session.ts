@@ -253,7 +253,7 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
           const a = c.params.authStatus;
           if (!a) return;
           this.authStatus = a;
-          this.emitEv({ type: "auth", status: a, label: a.kind === "none" ? "not logged in" : authLabel(a) });
+          this.emitEv({ type: "auth", status: a, label: a.kind === "none" ? `not logged in${a.detail ? ` · ${a.detail}` : ""}` : authLabel(a) });
         })
         .onRequest(acp.methods.client.fs.readTextFile, async (c) => ({
           content: sliceLines(await readFile(this.checkPath(c.params.path), "utf8"), c.params.line, c.params.limit),

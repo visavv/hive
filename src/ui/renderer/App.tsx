@@ -657,10 +657,23 @@ function AddAgentDialog({ onClose }: { onClose: () => void }) {
           <span>Agent</span>
           <select value={kind} onChange={(e) => setKind(e.target.value)} autoFocus>
             {kinds.map((k) => (
-              <option key={k.id} value={k.id}>{k.label}</option>
+              <option key={k.id} value={k.id}>
+                {k.label}
+                {k.missing ? ` (set ${k.missing})` : ""}
+              </option>
             ))}
           </select>
         </label>
+        {(() => {
+          const k = kinds.find((x) => x.id === kind);
+          if (!k?.missing && !k?.api) return null;
+          return (
+            <div className={`hint small ${k.missing ? "warn" : "dim"}`}>
+              {k.missing ? `${k.missing} is not set. ` : "Billed per token to your API key. "}
+              {k.install}
+            </div>
+          );
+        })()}
         <label>
           <span>Name</span>
           <input value={name} onChange={(e) => setName(e.target.value)} />

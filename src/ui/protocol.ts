@@ -24,6 +24,16 @@ export interface PaneSpec {
   worktree?: boolean;
 }
 
+export interface KindView {
+  id: string;
+  label: string;
+  /** Pay-per-token API model (vs a CLI using your subscription). */
+  api?: boolean;
+  /** Env var it needs that isn't set. */
+  missing?: string;
+  install?: string;
+}
+
 export interface PresetView {
   id: string;
   label: string;
@@ -135,7 +145,7 @@ export interface ElicitationAsk {
 
 /** Backend → UI */
 export type BackendEvent =
-  | { event: "ready"; kinds: { id: string; label: string }[]; presets: PresetView[]; cwd: string; layout: Layout; db: string }
+  | { event: "ready"; kinds: KindView[]; presets: PresetView[]; cwd: string; layout: Layout; db: string }
   | { event: "agent"; agent: string; e: SessionEvent | { type: "prompt"; text: string; queued?: boolean } }
   | { event: "agents"; agents: AgentView[]; others?: OtherAgent[] }
   | { event: "jobs"; jobs: JobView[] }
