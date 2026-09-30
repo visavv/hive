@@ -43,6 +43,7 @@ import { Scheduler, parseDuration, formatDuration, describeSchedule as schedule,
 import { probe, installed } from "../core/doctor.js";
 import { ROLES, type RolePreset } from "../core/roles.js";
 import { defaultDb } from "../core/home.js";
+import { buildReport, renderReport } from "../core/report.js";
 import { listWorktrees, mergeWorktree, removeWorktree } from "../core/worktree.js";
 import { HiveDb, type JobRow, type NewJob } from "../hive/db.js";
 
@@ -68,6 +69,8 @@ const { values, positionals } = parseArgs({
     all: { type: "boolean", default: false },
     quick: { type: "boolean", default: false },
     as: { type: "string" },
+    since: { type: "string" },
+    subject: { type: "string" },
     worktree: { type: "boolean", default: false },
     force: { type: "boolean", default: false },
     help: { type: "boolean", short: "h", default: false },
@@ -101,6 +104,11 @@ const USAGE = `hive — local multi-agent harness
   hive job stop|start|runs|rm <id>
   hive serve                              run all jobs + mail delivery until Ctrl-C
   hive start <agent> --as security|scout|bughunter    run a preset's default job
+
+  hive report [--since 12h]               what happened: job runs + summaries, commits, mail to you
+  hive inbox [--all]                      mail agents sent to you ("owner")
+  hive send <agent|*> "text"              message an agent as the owner (it's woken to read it)
+  hive bb [prefix] · hive bb rm <key>     the shared blackboard (ideas/, security/, claim/…)
 
   hive worktrees                          agent branches: ahead/behind, diffstat, dirty
   hive merge <name>                       merge hive/<name> into the main checkout
@@ -604,6 +612,54 @@ async function main() {
         watch_path: r.job.kind === "watch" ? cwd : null,
         watch_min_lines: values["min-lines"] ? positiveInt(values["min-lines"], "--min-lines") : (r.job.watch_min_lines ?? null),
       });
+    }
+
+    case "report": {
+      const since = Date.now() - (values.since ? duration(values.since, "--since") : 12 * 3_600_000);
+      const db = new HiveDb(values.db!);
+      const cwds = [values.cwd ?? process.cwd(), ...db.listAgents().map((a) => a.cwd).filter(Boolean)];
+      console.log(renderReport(await buildReport(db, since, cwds)));
+      db.close();
+      return;
+    }
+
+    case "inbox": {
+      const db = new HiveDb(values.db!);
+      const msgs = db.inbox("owner", !values.all, 100);
+      if (!msgs.length) console.log(dim(values.all ? "no mail" : "no unread mail (--all for history)"));
+      for (const m of [...msgs].reverse())
+        console.log(`${cyan(m.from_agent)} ${dim(new Date(m.ts).toLocaleString())} ${m.to_agent === "*" ? dim("(to all) ") : ""}${m.subject}\n  ${m.body.replace(/\n/g, "\n  ")}\n`);
+      db.markRead(msgs.filter((m) => m.read_at == null).map((m) => m.id), "owner");
+      db.close();
+      return;
+    }
+
+    case "send": {
+      const [to, ...words] = rest;
+      if (!to) die(`usage: hive send <agent|*> "text" [--subject S]`);
+      const body = prompt(words);
+      const db = new HiveDb(values.db!);
+      if (to !== "*" && !db.getAgent(to)) die(`no agent "${to}" (known: ${db.listAgents().map((a) => a.name).join(", ") || "none"})`);
+      const id = db.send("owner", to, values.subject ?? body.split("\n")[0].slice(0, 80), body);
+      const a = to === "*" ? undefined : db.getAgent(to);
+      console.log(`sent #${id} to ${to}${a && a.status === "asleep" ? dim(` (${to} is asleep; it gets this when it next runs)`) : ""}`);
+      db.close();
+      return;
+    }
+
+    case "bb": {
+      const db = new HiveDb(values.db!);
+      if (rest[0] === "rm") {
+        if (!rest[1]) die("usage: hive bb rm <key>");
+        db.bbDelete(rest[1]);
+        console.log(`deleted ${rest[1]}`);
+      } else {
+        const rows = db.bbList(rest[0] ?? "");
+        if (!rows.length) console.log(dim("blackboard is empty"));
+        for (const e of rows) console.log(`${cyan(e.key)} ${dim(`${e.updated_by} · ${ago(e.updated_at)}`)}\n  ${e.value.replace(/\n/g, "\n  ")}`);
+      }
+      db.close();
+      return;
     }
 
     case "worktrees": {

@@ -18,7 +18,8 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
   const starting = useStore((s) => s.starting.get(name));
   const hoverFocus = useStore((s) => s.layout.hoverFocus);
   const waiting = useStore((s) => s.waitingOn(name));
-  const status = agent?.status ?? (starting?.error ? "error" : "starting");
+  // In the layout but not running (exited, closed by its job, backend restarted): stopped.
+  const status = agent?.status ?? (starting ? (starting.error ? "error" : "starting") : "asleep");
 
   return (
     <section
@@ -88,6 +89,11 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
           Could not start: {starting.error}
           <button onClick={() => retry(name)}>Retry</button>
         </div>
+      ) : !agent && !starting ? (
+        <div className="pane-error stopped">
+          Agent is not running.
+          <button onClick={() => retry(name)}>Restart (resumes the session)</button>
+        </div>
       ) : (
         <Composer name={name} agent={agent} />
       )}
@@ -96,28 +102,30 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
 }
 
 function closePane(name: string) {
+  const jobs = store.agents.get(name)?.jobs ?? 0;
+  if (jobs && !confirm(`${name} has ${jobs} scheduled job${jobs === 1 ? "" : "s"}. Close the pane and stop ${jobs === 1 ? "it" : "them"}?`)) return;
   const l = store.layout;
   store.layout = { ...l, panes: l.panes.filter((p) => p.name !== name), maximized: l.maximized === name ? null : l.maximized };
   store.starting.delete(name);
   store.panes.delete(name);
-  store.bump();
+  store.changed();
   void rpc("saveLayout", store.layout);
-  void rpc("removeAgent", { name }).catch(() => {});
+  void rpc("removeAgent", { name, stopJobs: true }).catch(() => {});
 }
 
 function retry(name: string) {
   const spec = store.layout.panes.find((p) => p.name === name);
   if (!spec) return;
   store.starting.set(name, { kind: spec.kind });
-  store.bump();
+  store.changed();
   rpc("addAgent", { ...spec, resume: true })
     .then(() => {
       store.starting.delete(name);
-      store.bump();
+      store.changed();
     })
     .catch((e) => {
       store.starting.set(name, { kind: spec.kind, error: e.message });
-      store.bump();
+      store.changed();
     });
 }
 
@@ -183,32 +191,14 @@ const Transcript = memo(function Transcript({ name }: { name: string }) {
       }}
     >
       {pane.items.length === 0 && <div className="empty">Type below to talk to {name}. Esc cancels a turn; ↑ recalls your last prompt.</div>}
-      {pane.items.map((it, i) => (
-        <ItemView key={i} item={it} v={itemVersion(it)} />
+      {pane.items.map((it) => (
+        <ItemView key={it.id} item={it} rev={it.rev} name={name} />
       ))}
     </div>
   );
 });
 
-function itemVersion(it: Item): string {
-  switch (it.k) {
-    case "agent":
-    case "thought":
-      return String(it.text.length);
-    case "tool":
-      return `${it.status}:${it.content.length}:${it.title}`;
-    case "plan":
-      return JSON.stringify(it.entries.map((e) => e.status));
-    case "permission":
-      return it.decided ?? "";
-    case "elicitation":
-      return it.done ?? "";
-    default:
-      return "";
-  }
-}
-
-const ItemView = memo(function ItemView({ item }: { item: Item; v: string }) {
+const ItemView = memo(function ItemView({ item, name }: { item: Item; rev: number; name: string }) {
   switch (item.k) {
     case "user":
       return <div className={`msg user${item.text.startsWith("You have ") || item.text.startsWith("[hive job") ? " auto" : ""}`}>{item.text}</div>;
@@ -235,9 +225,27 @@ const ItemView = memo(function ItemView({ item }: { item: Item; v: string }) {
         </ul>
       );
     case "permission":
-      return <PermissionCard ask={item.ask} decided={item.decided} onDecide={(d) => (item.decided = d)} />;
+      return (
+        <PermissionCard
+          ask={item.ask}
+          decided={item.decided}
+          onDecide={(d) => {
+            item.decided = d;
+            store.touch(name, item);
+          }}
+        />
+      );
     case "elicitation":
-      return <ElicitationCard ask={item.ask} done={item.done} onDone={(d) => (item.done = d)} />;
+      return (
+        <ElicitationCard
+          ask={item.ask}
+          done={item.done}
+          onDone={(d) => {
+            item.done = d;
+            store.touch(name, item);
+          }}
+        />
+      );
     case "notice":
       return <div className={`notice ${item.level ?? ""}`}>{item.text}</div>;
     case "turn":
@@ -248,7 +256,7 @@ const ItemView = memo(function ItemView({ item }: { item: Item; v: string }) {
         </div>
       );
     case "session":
-      return <div className="notice">session {item.how} · {item.id.slice(0, 18)}</div>;
+      return <div className="notice">session {item.how} · {item.sessionId.slice(0, 18)}</div>;
   }
 });
 
@@ -332,7 +340,7 @@ function PermissionCard({ ask, decided, onDecide }: { ask: PermissionAsk; decide
   const choose = (optionId: string, label: string) => {
     onDecide(label);
     setDone(label);
-    void rpc("answerPermission", { reqId: ask.reqId, optionId });
+    void rpc("answerPermission", { reqId: ask.reqId, optionId }).catch((e) => store.toast(e.message, "error"));
   };
   return (
     <div className={`ask perm${done ? " done" : ""}`}>
@@ -356,6 +364,7 @@ function PermissionCard({ ask, decided, onDecide }: { ask: PermissionAsk; decide
 function ElicitationCard({ ask, done, onDone }: { ask: ElicitationAsk; done?: string; onDone: (d: string) => void }) {
   const [vals, setVals] = useState<Record<string, string | boolean>>({});
   const [fin, setFin] = useState(done);
+  useEffect(() => setFin(done), [done]);
   const finish = (action: "accept" | "decline" | "cancel") => {
     const content: Record<string, unknown> = {};
     for (const f of ask.fields) {

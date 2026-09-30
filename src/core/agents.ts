@@ -137,10 +137,24 @@ export function winQuote(a: string): string {
  * adapter is cmd.exe → npx → node → claude; kill() would only end cmd.exe.
  */
 export function killTree(proc: ChildProcess | undefined) {
-  if (!proc || proc.exitCode !== null || proc.pid == null) return;
+  if (!proc || proc.exitCode !== null || proc.signalCode !== null || proc.pid == null) return;
   if (process.platform === "win32") {
     spawnSync("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { windowsHide: true });
-  } else {
+    return;
+  }
+  // Agents are spawned as process-group leaders (spawnOptions): signal the group.
+  try {
+    process.kill(-proc.pid, "SIGTERM");
+  } catch {
     proc.kill();
   }
+  const pid = proc.pid;
+  setTimeout(() => {
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {}
+  }, 3000).unref();
 }
+
+/** Spawn options that let killTree reach everything an agent starts. */
+export const groupSpawn = process.platform === "win32" ? {} : { detached: true };

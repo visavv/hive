@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Layout, PaneSpec, Policy, WorktreeView } from "../protocol.js";
-import { connect, onEvent, onFocusLast, rpc } from "./bridge.js";
+import { connect, hello, onEvent, onFocusLast, rpc } from "./bridge.js";
 import { store, useStore } from "./store.js";
 import { Pane } from "./Pane.js";
 import { focus } from "./focus.js";
@@ -10,14 +10,14 @@ const POLICIES: Policy[] = ["ask", "allow-reads", "allow-all", "reject-all"];
 
 function saveLayout(patch: Partial<Layout>) {
   store.layout = { ...store.layout, ...patch };
-  store.bump();
+  store.changed();
   void rpc("saveLayout", store.layout);
 }
 
 async function openPane(spec: PaneSpec, persist = true, startJob = false) {
   if (persist && !store.layout.panes.some((p) => p.name === spec.name)) saveLayout({ panes: [...store.layout.panes, spec] });
   store.starting.set(spec.name, { kind: spec.kind });
-  store.bump();
+  store.changed();
   try {
     await rpc("addAgent", { ...spec, resume: true, startJob });
     store.starting.delete(spec.name);
@@ -26,7 +26,33 @@ async function openPane(spec: PaneSpec, persist = true, startJob = false) {
   } catch (e: any) {
     store.starting.set(spec.name, { kind: spec.kind, error: e.message });
   }
-  store.bump();
+  store.changed();
+}
+
+/** Pull the backend's full state and (re)open every pane in the layout. */
+let syncing: Promise<void> | undefined;
+function sync() {
+  syncing ??= (async () => {
+    try {
+      const st = await rpc("getState", {});
+      store.applyState(st);
+      for (const p of store.layout.panes) void openPane(p, false);
+    } catch (e: any) {
+      store.toast(`could not load hive state: ${e.message}`, "error");
+    } finally {
+      syncing = undefined;
+    }
+  })();
+  return syncing;
+}
+
+/** An agent not on screen needs the user (e.g. a job's permission ask): give it a pane. */
+function adoptPane(name: string) {
+  if (store.layout.panes.some((p) => p.name === name)) return;
+  const a = store.agents.get(name);
+  if (!a) return;
+  saveLayout({ panes: [...store.layout.panes, { name, kind: a.kind, cwd: a.cwd, role: a.role, policy: a.policy }] });
+  store.toast(`${name} needs you — opened its pane`);
 }
 
 let booted = false;
@@ -34,11 +60,15 @@ function boot() {
   if (booted) return;
   booted = true;
   onEvent((ev) => {
-    const first = ev.event === "ready" && !store.ready;
     store.apply(ev);
-    if (first) for (const p of store.layout.panes) void openPane(p, false);
+    if (ev.event === "ready") void sync(); // backend (re)started
+    if (ev.event === "permission" || ev.event === "elicitation") adoptPane(ev.ask.agent);
   });
   connect();
+  // Renderer reload with the backend already running: fetch state now.
+  void hello().then((up) => {
+    if (up) void sync();
+  });
   onFocusLast(() => focus.last());
 }
 
@@ -66,8 +96,12 @@ export function App() {
       const mod = e.ctrlKey || e.metaKey;
       if (mod && /^[1-9]$/.test(e.key)) {
         e.preventDefault();
-        if (layout.maximized) saveLayout({ maximized: null });
-        focus.nth(Number(e.key) - 1);
+        const i = Number(e.key) - 1;
+        if (layout.maximized && layout.maximized !== names[i]) {
+          saveLayout({ maximized: null });
+          // the target pane mounts on the next frame
+          requestAnimationFrame(() => requestAnimationFrame(() => focus.nth(i)));
+        } else focus.nth(i);
       } else if (e.ctrlKey && e.key === "Tab") {
         e.preventDefault();
         focus.cycle(e.shiftKey ? -1 : 1);
@@ -216,7 +250,7 @@ function Grid({ names, columns, widths, children }: { names: string[]; columns: 
       next[i] = start[i] + start[i + 1] - b;
       next[i + 1] = b;
       store.layout = { ...store.layout, widths: next };
-      store.bump();
+      store.changed();
     };
     const up = () => {
       window.removeEventListener("pointermove", move);

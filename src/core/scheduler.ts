@@ -119,6 +119,11 @@ export class Scheduler {
     if (this.db.db.open) this.db.releaseJobs(this.owner);
   }
 
+  /** Someone else (a UI pane) now owns this agent: never auto-close it. */
+  adopt(name: string) {
+    this.startedAgents.delete(name);
+  }
+
   /** True while any of `ids` (default: all known) is still enabled or running. */
   active(ids = this.opts.jobIds): boolean {
     if (this.running.size) return true;

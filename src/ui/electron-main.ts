@@ -3,11 +3,12 @@
  * owns the Hub) and pipes NDJSON between it and the renderer over IPC.
  * No HTTP server, no remote content, no node in the renderer.
  */
-import { app, BrowserWindow, ipcMain, globalShortcut, shell, dialog, Menu } from "electron";
+import { app, BrowserWindow, ipcMain, globalShortcut, shell, dialog, Menu, session } from "electron";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import { existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // Bundled to dist-ui/main.cjs; the repo root is one level up.
 const root = resolve(__dirname, "..");
@@ -22,30 +23,59 @@ const dbPath = dbArg ? resolve(workDir, dbArg) : undefined; // backend picks the
 
 let win: BrowserWindow | undefined;
 let backend: ChildProcess | undefined;
-let lastReady: string | undefined;
+let backendReady = false;
+let quitting = false;
+let restarts: number[] = [];
+
+const toRenderer = (msg: object | string) => win?.webContents.send("hive:msg", typeof msg === "string" ? msg : JSON.stringify(msg));
 
 function startBackend() {
   const node = process.env.HIVE_NODE ?? (process.platform === "win32" ? "node.exe" : "node");
   const built = join(root, "dist", "ui", "backend.js");
   const src = join(root, "src", "ui", "backend.ts");
   const entry = existsSync(src) && !process.env.HIVE_UI_PROD ? [join(root, "node_modules", "tsx", "dist", "cli.mjs"), src] : [built];
-  backend = spawn(node, [...entry, ...(dbPath ? ["--db", dbPath] : []), "--cwd", workDir], {
+  backendReady = false;
+  const proc = spawn(node, [...entry, ...(dbPath ? ["--db", dbPath] : []), "--cwd", workDir, "--owner-pid", String(process.pid)], {
     cwd: workDir,
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
   });
-  backend.on("error", (e) => {
+  backend = proc;
+  proc.on("error", (e) => {
     dialog.showErrorBox("hive", `Could not start the hive backend with "${node}": ${e.message}\nSet HIVE_NODE to your node binary.`);
     app.quit();
   });
-  backend.stderr?.on("data", (d) => process.stderr.write(`[backend] ${d}`));
-  backend.on("exit", (code) => {
-    if (!quitting) win?.webContents.send("hive:msg", JSON.stringify({ event: "error", text: `backend exited (${code})` }));
+  proc.stderr?.on("data", (d) => process.stderr.write(`[backend] ${d}`));
+  let fatal = "";
+  proc.on("exit", (code) => {
+    if (backend === proc) backend = undefined;
+    if (quitting) return;
+    if (fatal) {
+      dialog.showErrorBox("hive", fatal);
+      app.quit();
+      return;
+    }
+    // Pending renderer requests will never be answered: let it reject them.
+    toRenderer({ event: "backend_down", text: `backend exited (${code}); restarting…` });
+    const now = Date.now();
+    restarts = restarts.filter((t) => now - t < 60_000);
+    if (restarts.length >= 5) {
+      dialog.showErrorBox("hive", "The hive backend keeps crashing (5 times in a minute). See the terminal output for details.");
+      return;
+    }
+    restarts.push(now);
+    setTimeout(startBackend, 500 * restarts.length);
   });
-  const rl = createInterface({ input: backend.stdout! });
+  const rl = createInterface({ input: proc.stdout! });
   rl.on("line", (line) => {
-    if (line.startsWith('{"event":"ready"')) lastReady = line;
-    win?.webContents.send("hive:msg", line);
+    if (line.startsWith('{"event":"fatal"')) {
+      try {
+        fatal = JSON.parse(line).text;
+      } catch {}
+      return;
+    }
+    if (line.startsWith('{"event":"ready"')) backendReady = true;
+    toRenderer(line);
   });
 }
 
@@ -69,32 +99,79 @@ function createWindow() {
     return { action: "deny" };
   });
   win.webContents.on("will-navigate", (e) => e.preventDefault());
+  // A crashed renderer comes back by itself; it re-syncs from the backend.
+  win.webContents.on("render-process-gone", () => setTimeout(() => win?.webContents.reload(), 500));
+  // Ctrl+Shift+R reloads the renderer (there is no menu).
+  win.webContents.on("before-input-event", (e, input) => {
+    if (input.type === "keyDown" && input.control && input.shift && input.key.toLowerCase() === "r") {
+      e.preventDefault();
+      win?.webContents.reload();
+    }
+  });
   void win.loadFile(join(__dirname, "index.html"));
   win.on("closed", () => (win = undefined));
 }
 
-let quitting = false;
-app.on("before-quit", () => {
+app.on("before-quit", (e) => {
+  if (quitting || !backend) return;
+  // Let the backend close its agents (on Windows kill() would skip that and
+  // leave adapter processes behind), then quit for real.
+  e.preventDefault();
   quitting = true;
-  backend?.stdin?.end();
-  backend?.kill();
+  const proc = backend;
+  const done = () => app.quit();
+  proc.once("exit", done);
+  proc.stdin?.end();
+  setTimeout(() => {
+    proc.kill();
+    done();
+  }, 6000).unref();
 });
 
 app.whenReady().then(() => {
+  if (process.platform === "win32") app.setAppUserModelId("hive");
   Menu.setApplicationMenu(null);
+  // Agent markdown can reference file: URLs (on Windows //host/x is an SMB
+  // share and leaks NTLM hashes). Only the app's own files may load.
+  const appDir = resolve(__dirname) + sep;
+  session.defaultSession.webRequest.onBeforeRequest((details, cb) => {
+    if (details.url.startsWith("file:")) {
+      let p = "";
+      try {
+        p = resolve(fileURLToPath(details.url));
+      } catch {}
+      return cb({ cancel: !p.startsWith(appDir) });
+    }
+    if (details.url.startsWith("devtools:") || details.url.startsWith("data:")) return cb({});
+    cb({ cancel: true }); // no network from the renderer
+  });
   startBackend();
-  ipcMain.on("hive:send", (_e, line: string) => backend?.stdin?.write(line + "\n"));
-  // A reload re-requests the ready event instead of waiting for a new backend.
-  ipcMain.handle("hive:hello", () => lastReady ?? null);
+  ipcMain.on("hive:send", (_e, line: string) => {
+    if (backend?.stdin?.writable) backend.stdin.write(line + "\n");
+    else {
+      // Answer the request now instead of leaving it hanging.
+      try {
+        const { id } = JSON.parse(line);
+        if (typeof id === "number") toRenderer({ id, error: "hive backend is restarting" });
+      } catch {}
+    }
+  });
+  // A (re)loaded renderer asks whether the backend is up; if so it fetches state.
+  ipcMain.handle("hive:hello", () => backendReady);
   createWindow();
   // Global hotkey: bring hive to front and focus the last active pane (Handy then types there).
-  globalShortcut.register(process.env.HIVE_HOTKEY ?? "CommandOrControl+Alt+H", () => {
+  const hotkey = process.env.HIVE_HOTKEY ?? "CommandOrControl+Alt+H";
+  const ok = globalShortcut.register(hotkey, () => {
     if (!win) return;
     if (win.isMinimized()) win.restore();
     win.show();
     win.focus();
     win.webContents.send("hive:focus-last");
   });
+  if (!ok)
+    win?.webContents.once("did-finish-load", () =>
+      toRenderer({ event: "error", text: `global hotkey ${hotkey} is taken by another app; set HIVE_HOTKEY to change it` }),
+    );
 });
 app.on("will-quit", () => globalShortcut.unregisterAll());
 app.on("window-all-closed", () => app.quit());

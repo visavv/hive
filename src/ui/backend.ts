@@ -10,7 +10,7 @@ import { parseArgs } from "node:util";
 import { createInterface } from "node:readline";
 import { execFileSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import type * as schema from "@agentclientprotocol/sdk";
 import { Hub } from "../core/hub.js";
 import { AGENTS } from "../core/agents.js";
@@ -30,6 +30,8 @@ const { values } = parseArgs({
     db: { type: "string" },
     cwd: { type: "string", default: process.cwd() },
     poll: { type: "string", default: "1000" },
+    // The Electron main process; stable across backend restarts.
+    "owner-pid": { type: "string" },
   },
 });
 const dbPath = resolve(values.db ?? defaultDb(values.cwd!));
@@ -40,11 +42,37 @@ function send(e: BackendEvent) {
   out(JSON.stringify(e) + "\n");
 }
 
+// One UI per hive: a second window on the same project would fight over agents.
+const lockPath = join(dirname(dbPath), "ui.lock");
+function pidAlive(pid: number) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e: any) {
+    return e?.code === "EPERM";
+  }
+}
+mkdirSync(dirname(lockPath), { recursive: true });
+const ownerPid = Number(values["owner-pid"] ?? process.pid);
+try {
+  const other = Number(readFileSync(lockPath, "utf8"));
+  if (other && other !== ownerPid && pidAlive(other)) {
+    send({ event: "fatal", text: `Another hive window is already open on this project (pid ${other}). Close it first.` });
+    process.exit(3);
+  }
+} catch {}
+writeFileSync(lockPath, String(ownerPid));
+process.on("exit", () => {
+  try {
+    if (readFileSync(lockPath, "utf8") === String(ownerPid)) rmSync(lockPath);
+  } catch {}
+});
+
 // ---- pending interactive requests (permission / elicitation) ----
 
 let seq = 0;
-const pendingPerm = new Map<string, { agent: string; resolve: (optionId: string) => void; reject: string }>();
-const pendingElicit = new Map<string, { agent: string; resolve: (r: schema.CreateElicitationResponse) => void }>();
+const pendingPerm = new Map<string, { agent: string; resolve: (optionId: string) => void; reject: string; ask: PermissionAsk }>();
+const pendingElicit = new Map<string, { agent: string; resolve: (r: schema.CreateElicitationResponse) => void; ask: ElicitationAsk }>();
 
 function toolDetail(req: schema.RequestPermissionRequest): string | undefined {
   const tc = req.toolCall as any;
@@ -80,7 +108,7 @@ async function askPermission(req: schema.RequestPermissionRequest, agent: string
     detail: toolDetail(req),
   };
   return new Promise((res) => {
-    pendingPerm.set(reqId, { agent, resolve: res, reject });
+    pendingPerm.set(reqId, { agent, resolve: res, reject, ask });
     send({ event: "permission", ask });
   });
 }
@@ -105,7 +133,7 @@ async function elicit(req: schema.CreateElicitationRequest, agent: string): Prom
     })),
   };
   return new Promise((res) => {
-    pendingElicit.set(reqId, { agent, resolve: res });
+    pendingElicit.set(reqId, { agent, resolve: res, ask });
     send({ event: "elicitation", ask });
   });
 }
@@ -115,13 +143,13 @@ function dropPending(agent: string) {
     if (p.agent === agent) {
       p.resolve(p.reject);
       pendingPerm.delete(id);
-      send({ event: "permission_done", reqId: id });
+      send({ event: "permission_done", reqId: id, outcome: "auto-rejected (agent stopped)" });
     }
   for (const [id, p] of pendingElicit)
     if (p.agent === agent) {
       p.resolve({ action: "cancel" });
       pendingElicit.delete(id);
-      send({ event: "elicitation_done", reqId: id });
+      send({ event: "elicitation_done", reqId: id, outcome: "cancelled (agent stopped)" });
     }
 }
 
@@ -134,6 +162,8 @@ const schedulePush = () => {
 
 const hub = new Hub({
   hiveDb: dbPath,
+  // Same id after a backend restart, so this window reclaims its agents at once.
+  id: `ui-${ownerPid}`,
   pollMs: Number(values.poll),
   defaults: { askPermission, elicit },
   onEvent: (agent: string, e: SessionEvent) => {
@@ -252,7 +282,20 @@ function session(name: string): AgentSession {
   return s;
 }
 
+const handlersExtra = {
+  /** Everything a (re)loaded renderer needs: layout from disk, running agents, pending asks. */
+  getState() {
+    return {
+      ready: readyEvent(),
+      agents: [...hub.sessions.values()].map(view),
+      permissions: [...pendingPerm.values()].map((p) => p.ask),
+      elicitations: [...pendingElicit.values()].map((p) => p.ask),
+    };
+  },
+};
+
 const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promise<ReturnType<Methods[K]>> | ReturnType<Methods[K]> } = {
+  getState: () => handlersExtra.getState(),
   async addAgent(p) {
     const name = need(p.name, "name").trim();
     if (!/^[\w.-]{1,40}$/.test(name)) throw new Error(`name must be letters, digits, _ . - (got "${name}")`);
@@ -264,6 +307,7 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
     const cwd = resolve(p.cwd || defaultCwd);
     if (!existsSync(cwd)) throw new Error(`folder does not exist: ${cwd}`);
     policies.set(name, policy);
+    scheduler.adopt(name); // a pane owns it now: the scheduler must not close it when its jobs end
     const s = await hub.ensure({
       name,
       agent: p.kind,
@@ -312,8 +356,11 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
   async mergeWorktree({ name, repo }) {
     return mergeWorktree(repo, name);
   },
-  async removeAgent({ name, forget }) {
+  async removeAgent({ name, forget, stopJobs }) {
     dropPending(name);
+    // Jobs would otherwise bring the agent straight back, headless.
+    if (stopJobs ?? true) for (const j of hub.db.listJobs(false)) if (j.agent === name) hub.db.endJob(j.id, "stopped");
+    pushJobs();
     await hub.remove(name, forget ?? false);
     policies.delete(name);
     schedulePush();
@@ -328,6 +375,7 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
   },
   async cancel({ name }) {
     await session(name).cancel();
+    dropPending(name);
   },
   async newSession({ name }) {
     await session(name).newSession();
@@ -340,6 +388,7 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
   answerPermission({ reqId, optionId }) {
     const p = pendingPerm.get(reqId);
     if (!p) return;
+    if (!p.ask.options.some((o) => o.optionId === optionId)) throw new Error(`not an option of this request: ${optionId}`);
     pendingPerm.delete(reqId);
     p.resolve(optionId);
     send({ event: "permission_done", reqId });
@@ -396,6 +445,32 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
   },
 };
 
+function readyEvent(): Extract<BackendEvent, { event: "ready" }> {
+  return {
+    event: "ready",
+    kinds: Object.values(AGENTS).map((a) => ({ id: a.id, label: a.label })),
+    presets: Object.values(ROLES).map((r) => ({
+      id: r.id,
+      label: r.label,
+      role: r.role,
+      policy: r.policy,
+      worktree: r.worktree,
+      job: r.job
+        ? r.job.kind === "interval"
+          ? `every ${formatDuration(r.job.every_ms ?? 0)}`
+          : r.job.kind === "watch"
+            ? `when ≥${r.job.watch_min_lines ?? 50} lines change`
+            : r.job.kind === "loop"
+              ? `loop ${r.job.remaining ?? ""}×`
+              : r.job.kind
+        : undefined,
+    })),
+    cwd: defaultCwd,
+    layout: loadLayout(), // fresh from disk, so a renderer reload sees the current layout
+    db: dbPath,
+  };
+}
+
 // ---- main loop ----
 
 const rl = createInterface({ input: process.stdin });
@@ -433,27 +508,5 @@ hub.run();
 scheduler.start();
 setInterval(pushAgents, 1000).unref();
 setInterval(pushJobs, 5000).unref();
-send({
-  event: "ready",
-  kinds: Object.values(AGENTS).map((a) => ({ id: a.id, label: a.label })),
-  presets: Object.values(ROLES).map((r) => ({
-    id: r.id,
-    label: r.label,
-    role: r.role,
-    policy: r.policy,
-    worktree: r.worktree,
-    job: r.job
-      ? r.job.kind === "interval"
-        ? `every ${formatDuration(r.job.every_ms ?? 0)}`
-        : r.job.kind === "watch"
-          ? `when ≥${r.job.watch_min_lines ?? 50} lines change`
-          : r.job.kind === "loop"
-            ? `loop ${r.job.remaining ?? ""}×`
-            : r.job.kind
-      : undefined,
-  })),
-  cwd: defaultCwd,
-  layout: loadLayout(),
-  db: dbPath,
-});
+send(readyEvent());
 pushJobs();

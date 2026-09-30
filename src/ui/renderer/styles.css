@@ -218,3 +218,5 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 .check { display: flex; align-items: center; gap: 6px; color: var(--fg); font-size: 12px; }
 .check input { margin: 0; }
 .branch { color: var(--blue); font-family: var(--mono); }
+.img-blocked { color: var(--dim); font-style: italic; }
+.pane-error.stopped { color: var(--dim); }

@@ -9,6 +9,7 @@ import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs
 import { join } from "node:path";
 import { Hub } from "../src/core/hub.js";
 import { Scheduler, parseDuration, formatDuration, type JobEvent } from "../src/core/scheduler.js";
+import { buildReport, renderReport } from "../src/core/report.js";
 import type { SessionEvent } from "../src/core/session.js";
 import { assert, finish, freshDir, sleep, until } from "./util.js";
 
@@ -152,6 +153,13 @@ await until(() => hub.db.getJob(rlId)?.enabled === 0, 15_000, "resume after rese
 const rl = hub.db.getJob(rlId)!;
 assert(rl.ended_reason === "done" && hub.db.jobRuns(rlId).filter((r) => r.stop_reason === "end_turn").length === 2, "job resumed after the reset time and finished both iterations");
 assert(hub.db.jobRuns(rlId).some((r) => r.summary && /done/.test(r.summary)), "run summary stores the agent's reply");
+
+// ---- report ----
+const rep = await buildReport(hub.db, 0, [work]);
+const loopRep = rep.jobs.find((j) => j.id === loopId)!;
+assert(loopRep.runs === 3 && loopRep.ok === 3 && loopRep.tokens === 300 && /done/.test(loopRep.lastSummary ?? ""), "report: per-job runs, tokens, last summary");
+assert(rep.jobs.some((j) => j.limited === 1), "report: usage-limit pauses counted");
+assert(/JOBS/.test(renderReport(rep)), "report renders as text");
 
 // ---- durations ----
 assert(parseDuration("10m") === 600_000 && parseDuration("1h30m") === 5_400_000 && parseDuration("500ms") === 500, "parseDuration");

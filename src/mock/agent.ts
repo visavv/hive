@@ -173,7 +173,9 @@ acp
     }
 
     // 2. scripted commands in the prompt
-    const sendM = text.match(/send (\w+|\*): (.+)/);
+    const ownerM = text.match(/tellowner: (.+)/);
+    if (ownerM) await say(cx, sessionId, (await callTool(sess, "hive_send", { to: "owner", subject: "fyi", body: ownerM[1] })) + "\n");
+    const sendM = text.match(/(?<!tell)send (\w+|\*): (.+)/);
     if (sendM) {
       await toolCall(cx, sessionId, `t${++n}`, `hive_send → ${sendM[1]}`, "pending");
       const r = await callTool(sess, "hive_send", { to: sendM[1], subject: "task", body: sendM[2] });
@@ -185,6 +187,7 @@ acp
       await callTool(sess, "hive_bb_set", { key: bbM[1], value: bbM[2] });
       await say(cx, sessionId, `blackboard ${bbM[1]} set\n`);
     }
+    if (/\bhostile-img\b/.test(text)) await say(cx, sessionId, "look: ![leak](//localhost/etc/hostname) and ![x](file:///etc/passwd)\n");
     const diffM = text.match(/hivediff (\w+)/);
     if (diffM) await say(cx, sessionId, (await callTool(sess, "hive_diff", { agent: diffM[1], stat_only: true })) + "\n");
     if (/agents\?/.test(text)) {
@@ -260,3 +263,7 @@ acp
     s.wake?.();
   })
   .connect(acp.ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>));
+
+// Like the real adapters: exit when the client goes away (stdin EOF).
+process.stdin.on("end", () => process.exit(0));
+process.stdin.on("close", () => process.exit(0));

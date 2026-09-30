@@ -124,18 +124,27 @@ export type BackendEvent =
   | { event: "agents"; agents: AgentView[] }
   | { event: "jobs"; jobs: JobView[] }
   | { event: "permission"; ask: PermissionAsk }
-  | { event: "permission_done"; reqId: string }
+  | { event: "permission_done"; reqId: string; outcome?: string }
   | { event: "elicitation"; ask: ElicitationAsk }
-  | { event: "elicitation_done"; reqId: string }
+  | { event: "elicitation_done"; reqId: string; outcome?: string }
   | { event: "job"; text: string; jobId: number; agent: string }
-  | { event: "error"; text: string };
+  | { event: "error"; text: string }
+  | { event: "fatal"; text: string }
+  /** Sent by Electron main, not the backend. */
+  | { event: "backend_down"; text: string };
 
 /** UI → backend requests; each gets `{id, result}` or `{id, error}`. */
 export interface Methods {
   addAgent: (p: PaneSpec & { resume?: boolean; startJob?: boolean }) => AgentView;
   worktrees: (p: Record<string, never>) => { repo: string; base: string; worktrees: WorktreeView[] }[];
   mergeWorktree: (p: { name: string; repo: string }) => { ok: boolean; message: string };
-  removeAgent: (p: { name: string; forget?: boolean }) => void;
+  removeAgent: (p: { name: string; forget?: boolean; stopJobs?: boolean }) => void;
+  getState: (p: Record<string, never>) => {
+    ready: Extract<BackendEvent, { event: "ready" }>;
+    agents: AgentView[];
+    permissions: PermissionAsk[];
+    elicitations: ElicitationAsk[];
+  };
   prompt: (p: { name: string; text: string }) => void;
   broadcast: (p: { names: string[]; text: string }) => void;
   cancel: (p: { name: string }) => void;
