@@ -6,6 +6,7 @@ import { _electron as electron, type ElectronApplication, type Page } from "play
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
+import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { assert, finish, freshDir, sleep } from "./util.js";
 import { projectDir } from "../src/core/home.js";
@@ -13,7 +14,13 @@ import { projectDir } from "../src/core/home.js";
 const dir = freshDir(".hive-test-ui");
 process.env.HIVE_HOME = freshDir(".hive-test-ui-home"); // fresh default db + ui.json per run
 const shots = resolve(process.env.SHOT_DIR ?? dir);
-const electronBin = resolve("node_modules/electron/dist/electron" + (process.platform === "win32" ? ".exe" : ""));
+const require = createRequire(import.meta.url);
+let electronBin = require("electron") as unknown as string;
+if (!existsSync(electronBin)) {
+  // npm sometimes skips electron's postinstall download
+  execFileSync(process.execPath, [require.resolve("electron/install.js")], { stdio: "inherit" });
+  electronBin = require("electron") as unknown as string;
+}
 
 /** PID of the UI backend (node running src/ui/backend.ts). */
 function findBackendPid(): number | undefined {
