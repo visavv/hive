@@ -11,6 +11,8 @@ Design goals, in order:
 
 ## Quick start
 
+**On Windows, follow [docs/WINDOWS.md](docs/WINDOWS.md)** (PowerShell, step by step).
+
 ```
 npm install
 npm test                         # mock-agent end-to-end suites (no vendor login needed)
