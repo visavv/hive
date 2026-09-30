@@ -1,0 +1,43 @@
+name: ci
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: git config --global user.email ci@example.com && git config --global user.name ci
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: doctor (adapters spawn and answer initialize)
+        run: node dist/cli/index.js doctor claude codex mock
+      - name: UI e2e (Windows)
+        if: runner.os == 'Windows'
+        run: npm run test:ui
+        env:
+          SHOT_DIR: ${{ github.workspace }}/shots
+      - name: UI e2e (Linux, xvfb)
+        if: runner.os == 'Linux'
+        run: node scripts/build-ui.mjs && xvfb-run -a -s "-screen 0 1920x1080x24" npx tsx test/ui.ts
+        env:
+          SHOT_DIR: ${{ github.workspace }}/shots
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots-${{ matrix.os }}
+          path: shots/
+          if-no-files-found: ignore
