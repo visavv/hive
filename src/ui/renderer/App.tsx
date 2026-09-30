@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Layout, PaneSpec, Policy, WorktreeView } from "../protocol.js";
+import type { JobView, Layout, PaneSpec, Policy, WorktreeView } from "../protocol.js";
 import { connect, hello, onEvent, onFocusLast, rpc } from "./bridge.js";
 import { store, useStore } from "./store.js";
 import { Pane } from "./Pane.js";
@@ -304,6 +304,7 @@ function Sidebar({ names, onAdd }: { names: string[]; onAdd: () => void }) {
   const jobs = useStore((s) => s.jobs);
   const layout = useStore((s) => s.layout);
   const active = jobs.filter((j) => j.state === "active" || j.state === "queued");
+  const [runsFor, setRunsFor] = useState<JobView | null>(null);
   const ended = jobs.filter((j) => !(j.state === "active" || j.state === "queued")).slice(-5).reverse();
   return (
     <aside className="sidebar">
@@ -356,19 +357,28 @@ function Sidebar({ names, onAdd }: { names: string[]; onAdd: () => void }) {
       </div>
       <ul className="job-list">
         {active.map((j) => (
-          <li key={j.id} title={j.prompt}>
+          <li key={j.id} title={j.prompt} className="clickable" onClick={() => setRunsFor(j)}>
             <div className="row1">
               <span className={`dot ${j.state === "active" ? "working" : "idle"}`} />
               <strong>#{j.id}</strong> <span className="kind">{j.kind}</span> <span>{j.agent}</span>
               <span className="spacer" />
-              <button className="ghost small" onClick={() => void rpc("stopJob", { id: j.id })} title="stop job">■</button>
+              <button
+                className="ghost small"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void rpc("stopJob", { id: j.id });
+                }}
+                title="stop job"
+              >
+                ■
+              </button>
             </div>
             <div className="row2 dim">{j.schedule} · {j.runs} run{j.runs === 1 ? "" : "s"}</div>
             {j.lastError && <div className="row3 err">{j.lastError}</div>}
           </li>
         ))}
         {ended.map((j) => (
-          <li key={j.id} className="ended" title={j.prompt}>
+          <li key={j.id} className="ended clickable" title={j.prompt} onClick={() => setRunsFor(j)}>
             <div className="row1 dim">
               #{j.id} {j.kind} {j.agent} — {j.state} · {j.runs} run{j.runs === 1 ? "" : "s"}
             </div>
@@ -376,6 +386,7 @@ function Sidebar({ names, onAdd }: { names: string[]; onAdd: () => void }) {
         ))}
         {jobs.length === 0 && <li className="dim pad">none — use ⏱ on a pane</li>}
       </ul>
+      {runsFor && <JobRunsDialog job={runsFor} onClose={() => setRunsFor(null)} />}
     </aside>
   );
 }
@@ -436,6 +447,41 @@ function Worktrees() {
         )}
       </ul>
     </>
+  );
+}
+
+function JobRunsDialog({ job, onClose }: { job: JobView; onClose: () => void }) {
+  const [runs, setRuns] = useState<Awaited<ReturnType<typeof rpc<"jobRuns">>> | null>(null);
+  useEffect(() => {
+    void rpc("jobRuns", { id: job.id }).then(setRuns).catch((e) => store.toast(e.message, "error"));
+  }, [job.id]);
+  return (
+    <Modal title={`Job #${job.id} · ${job.kind} on ${job.agent}`} onClose={onClose}>
+      <div className="dim small">{job.schedule} · {job.state} · {job.runs} run{job.runs === 1 ? "" : "s"}</div>
+      <pre className="rep-sum">{job.prompt}</pre>
+      <div className="runs">
+        {!runs && <div className="dim">loading…</div>}
+        {runs?.length === 0 && <div className="dim">no runs yet</div>}
+        {runs?.map((r) => (
+          <div key={r.iteration + ":" + r.started} className="rep-job">
+            <div>
+              <strong>run {r.iteration}</strong> <span className="dim">{new Date(r.started).toLocaleString()}</span>{" "}
+              <span className={r.error ? "err" : r.stop_reason === "rate_limited" ? "warn" : "ok"}>{r.stop_reason ?? "running"}</span>
+              {r.ended ? <span className="dim"> · {Math.round((r.ended - r.started) / 1000)}s</span> : null}
+              {r.tokens ? <span className="dim"> · {r.tokens.toLocaleString()} tok</span> : null}
+            </div>
+            {r.summary && <pre className="rep-sum">{r.summary.slice(-1500)}</pre>}
+            {r.error && <div className="err small">{r.error.slice(0, 400)}</div>}
+          </div>
+        ))}
+      </div>
+      <div className="buttons">
+        {(job.state === "active" || job.state === "queued") && (
+          <button className="ghost" onClick={() => void rpc("stopJob", { id: job.id }).then(onClose)}>Stop job</button>
+        )}
+        <button className="primary" onClick={onClose}>Close</button>
+      </div>
+    </Modal>
   );
 }
 

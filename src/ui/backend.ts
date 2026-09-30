@@ -473,6 +473,15 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
     if (to !== "*" && !hub.db.getAgent(to)) throw new Error(`no agent "${to}"`);
     return hub.db.send("owner", to, subject?.trim() || text.split("\n")[0].slice(0, 80), text);
   },
+  jobRuns({ id }) {
+    return hub.db.jobRuns(id, 100).map((r) => {
+      let tokens: number | undefined;
+      try {
+        tokens = r.usage ? JSON.parse(r.usage).totalTokens : undefined;
+      } catch {}
+      return { iteration: r.iteration, started: r.started, ended: r.ended, stop_reason: r.stop_reason, error: r.error, summary: r.summary, tokens };
+    });
+  },
   bbDelete({ key }) {
     hub.db.bbDelete(key);
   },

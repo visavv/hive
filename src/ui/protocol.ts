@@ -175,6 +175,7 @@ export interface Methods {
   };
   sendMail: (p: { to: string; subject?: string; body: string }) => number;
   bbDelete: (p: { key: string }) => void;
+  jobRuns: (p: { id: number }) => { iteration: number; started: number; ended: number | null; stop_reason: string | null; error: string | null; summary: string | null; tokens?: number }[];
   markOwnerRead: (p: Record<string, never>) => void;
 }
 
