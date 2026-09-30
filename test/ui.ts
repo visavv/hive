@@ -92,6 +92,32 @@ try {
   await pane(page, "beta").locator(".msg.user", { hasText: "roll call" }).waitFor({ timeout: 10_000 });
   assert(true, "broadcast reaches every pane");
 
+  // hostile markdown: images from agent output never load
+  await pane(page, "beta").locator("textarea").fill("hostile-img");
+  await pane(page, "beta").locator("textarea").press("Enter");
+  await pane(page, "beta").locator(".img-blocked").first().waitFor({ timeout: 10_000 });
+  assert((await page.locator(".transcript img").count()) === 0, "images in agent markdown are not rendered (no file:/SMB loads)");
+
+  // reload with a pending permission: panes and the ask survive, answering still works
+  await pane(page, "alpha").locator("textarea").fill("please edit again");
+  await pane(page, "alpha").locator("textarea").press("Enter");
+  await pane(page, "alpha").locator(".ask.perm:not(.done)").waitFor({ timeout: 10_000 });
+  await page.reload();
+  await pane(page, "alpha").locator(".ask.perm:not(.done)").waitFor({ timeout: 15_000 });
+  assert((await page.locator(".pane").count()) === 2, "renderer reload keeps every pane");
+  await pane(page, "alpha").locator(".ask.perm:not(.done) button", { hasText: "Allow" }).click();
+  await pane(page, "alpha").locator(".msg.agent", { hasText: "edit allowed" }).nth(1).waitFor({ timeout: 10_000 });
+  assert(true, "pending permission re-shown after reload and answerable");
+
+  // backend crash: it restarts and panes come back
+  const backendPid = Number(execFileSync("pgrep", ["-f", "--newest", "src/ui/backend.ts --cwd"], { encoding: "utf8" }).trim().split("\n")[0]);
+  process.kill(backendPid, "SIGKILL");
+  await page.locator(".toast", { hasText: "restarting" }).waitFor({ timeout: 10_000 });
+  await sleep(1500);
+  await page.locator(`[data-pane="alpha"] textarea:not([disabled])`).waitFor({ timeout: 30_000 });
+  await page.locator(`[data-pane="beta"] textarea:not([disabled])`).waitFor({ timeout: 30_000 });
+  assert(true, "backend crash: auto-restart, panes reconnect");
+
   // columns + maximize
   await page.locator(".cols button", { hasText: "−" }).click();
   await page.waitForFunction(() => getComputedStyle(document.querySelector(".grid")!).gridTemplateColumns.split(" ").length === 1);
@@ -100,7 +126,10 @@ try {
   await page.keyboard.press("Control+M");
   await page.waitForFunction(() => document.querySelectorAll(".pane").length === 1);
   assert(true, "Ctrl+M maximizes the focused pane");
-  await page.keyboard.press("Control+M");
+  await page.keyboard.press("Control+2");
+  await page.waitForFunction(() => document.querySelectorAll(".pane").length === 2);
+  await sleep(100);
+  assert(await activeIn(page, "beta"), "Ctrl+2 while maximized restores the grid and focuses pane 2");
   await page.locator(".cols button", { hasText: "+" }).click();
 
   // schedule a job from the pane

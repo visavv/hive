@@ -9,5 +9,5 @@ contextBridge.exposeInMainWorld("hiveBridge", {
   onFocusLast: (fn: () => void) => {
     ipcRenderer.on("hive:focus-last", () => fn());
   },
-  hello: (): Promise<string | null> => ipcRenderer.invoke("hive:hello"),
+  hello: (): Promise<boolean> => ipcRenderer.invoke("hive:hello"),
 });

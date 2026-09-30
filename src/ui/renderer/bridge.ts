@@ -5,7 +5,7 @@ interface HiveBridge {
   send(line: string): void;
   onMessage(fn: (line: string) => void): void;
   onFocusLast(fn: () => void): void;
-  hello(): Promise<string | null>;
+  hello(): Promise<boolean>;
 }
 
 declare global {
@@ -36,12 +36,20 @@ export function connect() {
       else w.res(msg.result);
       return;
     }
+    if (msg.event === "backend_down") {
+      // Nothing in flight will be answered by the old backend.
+      for (const [id, w] of waiting) {
+        waiting.delete(id);
+        w.rej(new Error("hive backend restarted"));
+      }
+    }
     for (const l of listeners) l(msg as BackendEvent);
   });
-  // After a renderer reload the backend is still up; replay its ready event.
-  void b.hello().then((line) => {
-    if (line) for (const l of listeners) l(JSON.parse(line));
-  });
+}
+
+/** True if the backend is already up (renderer reload): the caller should fetch state now. */
+export function hello(): Promise<boolean> {
+  return window.hiveBridge.hello();
 }
 
 export function onEvent(fn: (e: BackendEvent) => void) {

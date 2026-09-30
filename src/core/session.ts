@@ -20,7 +20,7 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import * as acp from "@agentclientprotocol/sdk";
 import type * as schema from "@agentclientprotocol/sdk";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { AGENTS, killTree, resolveEnv, spawnSpec, type AgentDef } from "./agents.js";
+import { AGENTS, groupSpawn, killTree, resolveEnv, spawnSpec, type AgentDef } from "./agents.js";
 import { nodeEntry } from "./paths.js";
 import { AUTH_STATUS_UPDATE, authLabel, type AuthStatus } from "./doctor.js";
 import { HiveDb } from "../hive/db.js";
@@ -187,6 +187,7 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
       stdio: ["pipe", "pipe", "pipe"],
       shell: spec.shell,
       windowsHide: true,
+      ...groupSpawn,
     });
     this.proc.stderr?.on("data", (d) => this.emitEv({ type: "notice", text: `[stderr] ${String(d).trimEnd()}` }));
     let startFailed: ((e: Error) => void) | undefined;
@@ -628,6 +629,7 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
       `Other agents:\n${others || "- (none yet)"}`,
       `You have MCP tools prefixed hive_: use hive_inbox at the start of each turn, hive_send to hand work or findings to another agent, hive_bb_* for shared project facts and task claims (key "claim/<task>"), hive_status to publish what you're doing.`,
       `Never wait or poll for replies inside a turn; send, finish your own work, and the hub will wake you when mail arrives.`,
+      `To reach the human, hive_send to "owner" — only for decisions you need, finished work worth their attention, or blockers.`,
       this.opts.briefing ?? "",
     ]
       .filter(Boolean)

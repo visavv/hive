@@ -467,6 +467,19 @@ export class HiveDb {
     this.db.prepare(`DELETE FROM job_runs WHERE ended IS NOT NULL AND ended < ?`).run(cutoff);
     this.db.prepare(`DELETE FROM message_reads WHERE read_at < ?`).run(cutoff);
   }
+  messagesSince(ts: number, limit = 500): Message[] {
+    return this.db.prepare(`SELECT * FROM messages WHERE ts>=? ORDER BY id DESC LIMIT ?`).all(ts, limit) as Message[];
+  }
+  runsSince(ts: number): (JobRunRow & { agent: string; kind: string; prompt: string })[] {
+    return this.db
+      .prepare(
+        `SELECT r.*, j.agent, j.kind, j.prompt FROM job_runs r JOIN jobs j ON j.id=r.job_id WHERE r.started>=? ORDER BY r.id`,
+      )
+      .all(ts) as any;
+  }
+  bbSince(ts: number): BlackboardEntry[] {
+    return this.db.prepare(`SELECT * FROM blackboard WHERE updated_at>=? ORDER BY key`).all(ts) as BlackboardEntry[];
+  }
   threadLength(thread: string): number {
     return (this.db.prepare(`SELECT COUNT(*) AS n FROM messages WHERE thread=?`).get(thread) as { n: number }).n;
   }

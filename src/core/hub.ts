@@ -13,6 +13,8 @@ export interface HubOptions {
   /** Mail delivery poll interval. */
   pollMs?: number;
   onEvent?: (agent: string, e: SessionEvent) => void;
+  /** Lease owner id (default: pid + random). */
+  id?: string;
   /** Defaults applied to every add() (e.g. the CLI's permission/elicitation prompts). */
   defaults?: Partial<Pick<SessionOptions, "askPermission" | "elicit" | "briefing" | "startTimeoutMs">>;
 }
@@ -44,7 +46,7 @@ export class Hub {
   readonly db: HiveDb;
   readonly hiveDb: string;
   /** Lease owner id for agents this process runs. */
-  readonly id = `${process.pid}@${Math.random().toString(36).slice(2, 8)}`;
+  readonly id: string;
   private timer?: NodeJS.Timeout;
   private leaseTimer: NodeJS.Timeout;
   private starting = new Map<string, Promise<AgentSession>>();
@@ -52,6 +54,7 @@ export class Hub {
   constructor(private opts: HubOptions) {
     this.hiveDb = resolve(opts.hiveDb);
     this.db = new HiveDb(this.hiveDb);
+    this.id = opts.id ?? `${process.pid}@${Math.random().toString(36).slice(2, 8)}`;
     this.leaseTimer = setInterval(() => {
       if (this.db.db.open) this.db.renewAgents(this.id, [...this.sessions.keys(), ...this.starting.keys()], AGENT_LEASE_MS);
     }, AGENT_LEASE_MS / 3);

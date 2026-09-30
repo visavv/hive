@@ -64,7 +64,7 @@ server.registerTool(
   "hive_send",
   {
     description:
-      'Send a message to another agent (by name) or to "*" for everyone. Keep subject short. Use thread to continue a conversation. The recipient will see it as a work order on its next turn; you will not get a reply inline — check hive_inbox later.',
+      'Send a message to another agent (by name), to "*" for everyone, or to "owner" for the human (use sparingly: decisions you need, finished work, blockers). Keep subject short. Use thread to continue a conversation. The recipient will see it as a work order on its next turn; you will not get a reply inline — check hive_inbox later.',
     inputSchema: {
       to: z.string().describe('Agent name or "*"'),
       subject: z.string().max(120),
@@ -73,8 +73,8 @@ server.registerTool(
     },
   },
   async ({ to, subject, body, thread }) => {
-    if (to !== "*" && !db.getAgent(to)) {
-      return text(`No agent named "${to}". Known: ${db.listAgents().map((a) => a.name).join(", ")}`);
+    if (to !== "*" && to !== "owner" && !db.getAgent(to)) {
+      return text(`No agent named "${to}". Known: owner (the human), ${db.listAgents().map((a) => a.name).join(", ")}`);
     }
     const t = thread ?? `${me}-${Date.now().toString(36)}`;
     // Stop runaway back-and-forth between agents.
@@ -85,7 +85,7 @@ server.registerTool(
       );
     const id = db.send(me, to, subject, body, t);
     db.log(me, "send", { id, to, subject, thread: t });
-    const target = to === "*" ? undefined : db.getAgent(to);
+    const target = to === "*" || to === "owner" ? undefined : db.getAgent(to);
     const asleep = target && (target.status === "asleep" || target.status === "error");
     return text(`sent #${id} to ${to} (thread ${t})${asleep ? ` — ${to} is ${target!.status}; it will get this when it next runs` : ""}`);
   },

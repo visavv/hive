@@ -7,14 +7,29 @@ const inputs = new Map<string, HTMLTextAreaElement>();
 let order: string[] = [];
 let active: string | undefined;
 
-/** Don't steal focus from dialogs or a broadcast message being written. */
+/** Last keystroke into a pane input: hover must not move focus mid-dictation. */
+let lastKeyAt = 0;
+const TYPING_LOCK_MS = 1500;
+document.addEventListener(
+  "keydown",
+  (e) => {
+    if ([...inputs.values()].includes(e.target as HTMLTextAreaElement)) lastKeyAt = Date.now();
+  },
+  true,
+);
+
+/**
+ * Don't steal focus from: any field that isn't a pane input (dialogs, the
+ * broadcast box, a question form inside a pane, selects), or a pane input
+ * that is being typed into right now (Handy types via keystrokes; moving the
+ * mouse mid-sentence would split it across panes).
+ */
 function focusIsProtected(): boolean {
   const el = document.activeElement as HTMLElement | null;
-  if (!el) return false;
-  if (el.closest("dialog, .modal")) return true;
-  if (el.closest(".broadcast") && (el as HTMLInputElement).value) return true;
-  if (el.tagName === "SELECT") return true;
-  return false;
+  if (!el || el === document.body) return false;
+  const isPaneInput = [...inputs.values()].includes(el as HTMLTextAreaElement);
+  if (isPaneInput) return Date.now() - lastKeyAt < TYPING_LOCK_MS;
+  return el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable;
 }
 
 export const focus = {
@@ -50,9 +65,11 @@ export const focus = {
     this.to(order[i]);
   },
   cycle(dir: 1 | -1) {
-    if (!order.length) return;
-    const i = active ? order.indexOf(active) : -1;
-    this.to(order[(i + dir + order.length) % order.length]);
+    // Only panes that are on screen (a maximized layout hides the others).
+    const live = order.filter((n) => inputs.has(n) && inputs.get(n)!.isConnected);
+    if (!live.length) return;
+    const i = active ? live.indexOf(active) : -1;
+    this.to(live[(i + dir + live.length) % live.length]);
   },
   last() {
     this.to(active ?? order[0]);

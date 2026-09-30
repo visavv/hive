@@ -9,12 +9,30 @@ md.renderer.rules.link_open = (tokens, idx, opts, env, self) => {
   return defaultLink(tokens, idx, opts, env, self);
 };
 
+// Agent output is untrusted: never load images from it (file:// and, on
+// Windows, //host/share URLs would leak data or NTLM hashes). Show alt text + URL.
+md.renderer.rules.image = (tokens, idx) => {
+  const t = tokens[idx];
+  const src = t.attrGet("src") ?? "";
+  const alt = t.content || "image";
+  return `<span class="img-blocked" title="${md.utils.escapeHtml(String(src))}">[${md.utils.escapeHtml(alt)}]</span>`;
+};
+
+// Small LRU for finished messages; streaming prefixes are not worth caching.
 const cache = new Map<string, string>();
+let cachedChars = 0;
 export function renderMarkdown(src: string): string {
   const hit = cache.get(src);
-  if (hit) return hit;
+  if (hit !== undefined) return hit;
   const html = md.render(src);
-  if (cache.size > 500) cache.clear();
-  cache.set(src, html);
+  if (src.length < 20_000) {
+    cache.set(src, html);
+    cachedChars += src.length;
+    while (cache.size > 300 || cachedChars > 2_000_000) {
+      const [k] = cache.keys();
+      cache.delete(k);
+      cachedChars -= k.length;
+    }
+  }
   return html;
 }
