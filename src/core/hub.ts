@@ -10,6 +10,7 @@ import { ensureWorktree } from "./worktree.js";
 import { AGENTS, killGroup } from "./agents.js";
 import { ROLES } from "./roles.js";
 import { checkAutomatic, notifyOnce } from "./budget.js";
+import { mediaKinds, runMedia } from "../hive/media.js";
 import { existsSync } from "node:fs";
 
 export interface HubOptions {
@@ -71,6 +72,31 @@ export class Hub {
       if (this.db.db.open) this.db.renewAgents(this.id, [...this.sessions.keys(), ...this.starting.keys()], AGENT_LEASE_MS);
     }, AGENT_LEASE_MS / 3);
     this.leaseTimer.unref?.();
+    // Media calls agents request through the db (keys stay in this process).
+    if (mediaKinds().length) {
+      this.mediaTimer = setInterval(() => void this.mediaTick(), 300);
+      this.mediaTimer.unref?.();
+    }
+  }
+
+  private mediaTimer?: NodeJS.Timeout;
+  private mediaBusy = 0;
+  private async mediaTick() {
+    if (!this.db.db.open || this.mediaBusy >= 2) return;
+    const job = this.db.claimMedia(mediaKinds());
+    if (!job) return;
+    this.mediaBusy++;
+    try {
+      // The folder is the one this hub knows for the agent, never one from the request.
+      const cwd = this.sessions.get(job.agent)?.cwd ?? this.db.getAgent(job.agent)?.cwd;
+      if (!cwd) throw new Error(`unknown agent ${job.agent}`);
+      const out = await runMedia(this.db, job.agent, cwd, job.kind, JSON.parse(job.params));
+      if (this.db.db.open) this.db.finishMedia(job.id, out, null);
+    } catch (e: any) {
+      if (this.db.db.open) this.db.finishMedia(job.id, null, String(e?.message ?? e).slice(0, 1000));
+    } finally {
+      this.mediaBusy--;
+    }
   }
 
   async add(o: AddOptions): Promise<AgentSession> {
@@ -132,6 +158,7 @@ export class Hub {
     const provider = typeof o.agent === "string" ? o.agent : o.agent.id;
     const s = new AgentSession({
       ...this.opts.defaults,
+      mediaKinds: mediaKinds(),
       autoGuard: () => {
         const g = checkAutomatic(this.db, provider);
         if (!g.ok) notifyOnce(this.db, g);
@@ -237,6 +264,7 @@ export class Hub {
   async close() {
     if (this.timer) clearInterval(this.timer);
     clearInterval(this.leaseTimer);
+    if (this.mediaTimer) clearInterval(this.mediaTimer);
     this.timer = undefined;
     await Promise.all([...this.sessions.values()].map((s) => s.close()));
     if (this.db.db.open) for (const n of this.sessions.keys()) this.db.releaseAgent(n, this.id);

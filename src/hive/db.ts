@@ -209,6 +209,18 @@ export class HiveDb {
         PRIMARY KEY (provider, window)
       );
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      -- Media API calls requested by agents, run by a hive process that has the keys
+      -- (so API keys never reach vendor agent processes).
+      CREATE TABLE IF NOT EXISTS media_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER NOT NULL,
+        agent TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        params TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        result TEXT,
+        error TEXT
+      );
       -- Groups: mail to "@<group>" reaches every member (agents or "owner").
       CREATE TABLE IF NOT EXISTS group_members (
         grp TEXT NOT NULL,
@@ -420,6 +432,26 @@ export class HiveDb {
   limits(): { provider: string; window: string; utilization: number | null; resets_at: number | null; status: string | null; updated_at: number }[] {
     return this.db.prepare(`SELECT * FROM limits ORDER BY provider, window`).all() as any;
   }
+  addMedia(agent: string, kind: string, params: unknown): number {
+    return Number(this.db.prepare(`INSERT INTO media_jobs (ts, agent, kind, params) VALUES (?,?,?,?)`).run(Date.now(), agent, kind, JSON.stringify(params)).lastInsertRowid);
+  }
+  /** Atomically take the oldest pending media job of the given kinds. */
+  claimMedia(kinds: string[]): { id: number; agent: string; kind: string; params: string } | undefined {
+    if (!kinds.length) return undefined;
+    return this.db.transaction(() => {
+      const row = this.db
+        .prepare(`SELECT id, agent, kind, params FROM media_jobs WHERE status='pending' AND kind IN (${kinds.map(() => "?").join(",")}) ORDER BY id LIMIT 1`)
+        .get(...kinds) as { id: number; agent: string; kind: string; params: string } | undefined;
+      if (row) this.db.prepare(`UPDATE media_jobs SET status='running' WHERE id=?`).run(row.id);
+      return row;
+    })();
+  }
+  finishMedia(id: number, result: string | null, error: string | null) {
+    this.db.prepare(`UPDATE media_jobs SET status=?, result=?, error=? WHERE id=?`).run(error ? "failed" : "done", result, error, id);
+  }
+  getMedia(id: number): { status: string; result: string | null; error: string | null } | undefined {
+    return this.db.prepare(`SELECT status, result, error FROM media_jobs WHERE id=?`).get(id) as any;
+  }
   getSetting(key: string): string | undefined {
     return (this.db.prepare(`SELECT value FROM settings WHERE key=?`).get(key) as { value: string } | undefined)?.value;
   }
@@ -589,6 +621,7 @@ export class HiveDb {
     this.db.prepare(`DELETE FROM job_runs WHERE ended IS NOT NULL AND ended < ?`).run(cutoff);
     // message_reads are never pruned: dropping them would make old broadcasts unread again.
     this.db.prepare(`DELETE FROM usage_log WHERE ts < ?`).run(Date.now() - Math.max(days, 35) * 86_400_000);
+    this.db.prepare(`DELETE FROM media_jobs WHERE ts < ?`).run(Date.now() - 86_400_000);
   }
   messagesSince(ts: number, limit = 500): Message[] {
     return this.db.prepare(`SELECT * FROM messages WHERE ts>=? ORDER BY id DESC LIMIT ?`).all(ts, limit) as Message[];

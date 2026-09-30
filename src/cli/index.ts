@@ -59,6 +59,7 @@ import { findSkill, listSkills, parseSkill, projectSkillsDir, skillTemplate, use
 import { runSkill, writeSkill } from "../core/skill-run.js";
 import { createBridges } from "../bridges/index.js";
 import { BUDGET_KEYS, setBudget, usageSummary } from "../core/budget.js";
+import { runMedia } from "../hive/media.js";
 import type { Bridge } from "../bridges/router.js";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { listWorktrees, mergeWorktree, removeWorktree, syncWorktree } from "../core/worktree.js";
@@ -105,6 +106,11 @@ const { values, positionals } = parseArgs({
     model: { type: "string" },
     label: { type: "string" },
     context: { type: "string" },
+    voice: { type: "string" },
+    voices: { type: "boolean", default: false },
+    size: { type: "string" },
+    edit: { type: "string" },
+    mask: { type: "string" },
     help: { type: "boolean", short: "h", default: false },
   },
 });
@@ -148,6 +154,8 @@ const USAGE = `hive — local multi-agent harness
   hive start <agent> --as security|scout|bughunter    run a preset's default job
 
   hive report [--since 12h]               what happened: job runs + summaries, commits, mail to you
+  hive tts "text" [--voice ID] [--out name]           ElevenLabs voice-over → out/media/*.mp3  (hive tts --voices lists voices)
+  hive image "prompt" [--size 1536x1024] [--edit img.png [--mask m.png]]   generate / edit an image → out/media/*.png
   hive usage · hive budget [set k=v …]    tokens per provider, limit windows + resets · spending guards
   hive inbox [--all]                      mail agents sent to you ("owner")
   hive send <agent|*> "text"              message an agent as the owner (it's woken to read it)
@@ -980,6 +988,26 @@ async function main() {
         return;
       }
       die(`unknown skill subcommand "${sub}" (list|show|new|run|edit)`);
+    }
+
+    case "tts":
+    case "image": {
+      const db = new HiveDb(values.db!);
+      const cwd = resolve(values.cwd ?? process.cwd());
+      try {
+        const listVoices = cmd === "tts" && !!values.voices;
+        const text = rest.join(" ").trim();
+        if (!text && !listVoices) die(cmd === "tts" ? 'usage: hive tts "text to speak" [--voice ID] [--out name]' : 'usage: hive image "prompt" [--size 1536x1024] [--edit file.png] [--out name]');
+        const out = listVoices
+          ? await runMedia(db, "owner", cwd, "voices", {})
+          : await runMedia(db, "owner", cwd, cmd, cmd === "tts" ? { text, voice: values.voice, name: values.out } : { prompt: text, size: values.size, name: values.out, edit: !!values.edit, image: values.edit, mask: values.mask });
+        console.log(out);
+      } catch (e: any) {
+        die(e.message);
+      } finally {
+        db.close();
+      }
+      return;
     }
 
     case "usage": {
