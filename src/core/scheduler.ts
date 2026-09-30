@@ -21,8 +21,8 @@ import type { FSWatcher } from "chokidar";
 import { AgentElsewhereError, type Hub } from "./hub.js";
 import type { AgentSession, PermissionPolicy, TurnResult } from "./session.js";
 import type { JobRow } from "../hive/db.js";
-import { ChangeCounter, describeDiff, watchTree, type DiffStat } from "./watch.js";
-import { selfIgnoreHiveDir } from "./worktree.js";
+import { BRANCHES, ChangeCounter, branchChanges, branchTips, describeDiff, watchTree, type DiffStat } from "./watch.js";
+import { baseBranch, repoRoot, selfIgnoreHiveDir } from "./worktree.js";
 
 export interface SchedulerOptions {
   hub: Hub;
@@ -38,6 +38,10 @@ export interface SchedulerOptions {
   retryMs?: number;
   /** Consecutive failures before a job is ended as 'failed'. */
   maxFailures?: number;
+  /** Agents the scheduler starts give up on unanswered permission prompts after this (default 15 min). */
+  askTimeoutMs?: number;
+  /** How often branch-watch jobs check refs (default 5 s). */
+  branchPollMs?: number;
   /** Wait after a usage/rate limit when the agent doesn't say when it resets. */
   rateLimitWaitMs?: number;
   /** Close agents the scheduler started once none of their jobs remain. */
@@ -213,6 +217,7 @@ export class Scheduler {
         policy: job.policy as PermissionPolicy,
         briefing: job.briefing || undefined,
         worktree: !!job.worktree,
+        askTimeoutMs: this.opts.askTimeoutMs ?? 15 * 60_000,
       });
       if (!existed) this.startedAgents.add(job.agent);
     } catch (e: any) {
@@ -284,7 +289,7 @@ export class Scheduler {
       case "watch":
         if (tree) {
           patch.watch_ref = tree;
-          void this.watches.get(job.id)?.counter.keep(tree);
+          if (job.watch_path !== BRANCHES) void this.watches.get(job.id)?.counter.keep(tree);
         }
         break;
     }
@@ -380,7 +385,59 @@ export class Scheduler {
   // ---- watch jobs ----
 
   /** Returns prompt context + new tree when a watch job should fire now. */
+  /** Branch-watch state per job: last reviewed tips + throttle. */
+  private branchState = new Map<number, { tips: Record<string, string>; checkedAt: number; firstChangeAt?: number }>();
+
+  /** watch_path "@branches": fire when enough lines are committed on agents' hive/* branches. */
+  private async branchesReady(job: JobRow): Promise<WatchFire | undefined> {
+    let st = this.branchState.get(job.id);
+    const repo = await repoRoot(job.cwd);
+    if (!st) {
+      let tips: Record<string, string> | undefined;
+      try {
+        tips = job.watch_ref ? JSON.parse(job.watch_ref) : undefined;
+      } catch {}
+      if (!tips) {
+        tips = await branchTips(repo); // start from now; history isn't "new"
+        this.db.updateJob(job.id, { watch_ref: JSON.stringify(tips) });
+      }
+      st = { tips, checkedAt: 0 };
+      this.branchState.set(job.id, st);
+    }
+    if (Date.now() - st.checkedAt < (this.opts.branchPollMs ?? 5000)) return undefined;
+    st.checkedAt = Date.now();
+    const cur = await branchTips(repo);
+    const base = await baseBranch(repo);
+    const changes = await branchChanges(repo, base, st.tips, cur);
+    const lines = changes.reduce((n, c) => n + c.diff.lines, 0);
+    if (lines > 0) st.firstChangeAt ??= Date.now();
+    const min = job.watch_min_lines ?? 50;
+    const due = lines >= min || (lines > 0 && !!job.every_ms && Date.now() - (st.firstChangeAt ?? 0) >= job.every_ms);
+    this.opts.onJob?.({ type: "watch", job, lines, fired: due });
+    if (!due) return undefined;
+    const list = changes
+      .map((c) => `- ${c.branch} (agent ${c.branch.replace(/^hive\//, "")}): ${c.from.slice(0, 9)}..${c.to.slice(0, 9)} — ${describeDiff(c.diff, 12)}`)
+      .join("\n");
+    const s = st;
+    return {
+      tree: JSON.stringify(cur),
+      commit: () => {
+        s.tips = cur;
+        s.firstChangeAt = undefined;
+      },
+      text: `New commits on agent branches since the last review (${lines} changed lines):\n${list}\nInspect each with hive_diff (agent: <name>) or git diff <from>..<to>, and focus on these changes.`,
+    };
+  }
+
   private async watchReady(job: JobRow): Promise<WatchFire | undefined> {
+    if (job.watch_path === BRANCHES) {
+      try {
+        return await this.branchesReady(job);
+      } catch (e: any) {
+        this.fail(job, `branch watch: ${e?.message ?? e}`);
+        return undefined;
+      }
+    }
     let w = this.watches.get(job.id);
     if (!w) {
       w = await this.startWatch(job);
@@ -530,7 +587,7 @@ export function describeSchedule(j: JobRow): string {
     case "interval":
       return `every ${formatDuration(j.every_ms ?? 0)}`;
     case "watch":
-      return `${j.watch_path} ≥${j.watch_min_lines ?? 50} lines${j.every_ms ? `, max wait ${formatDuration(j.every_ms)}` : ""}`;
+      return `${j.watch_path === BRANCHES ? "agent branches (hive/*)" : j.watch_path} ≥${j.watch_min_lines ?? 50} lines${j.every_ms ? `, max wait ${formatDuration(j.every_ms)}` : ""}`;
     case "once":
       return new Date(j.next_run).toLocaleString();
   }

@@ -192,6 +192,20 @@ server.registerTool(
   },
 );
 
+/**
+ * Refs and paths come from the agent: never let them be read as git options
+ * (e.g. branch "--output=/some/file"). Refs must look like refs; paths go after "--".
+ */
+function safeRef(r: string, what: string): string {
+  if (!/^[\w./@{}~^-]+$/.test(r) || r.startsWith("-") || r.includes("..")) throw new Error(`invalid ${what}: ${JSON.stringify(r)}`);
+  return r;
+}
+function safePaths(ps?: string[]): string[] {
+  if (!ps?.length) return [];
+  for (const p of ps) if (p.startsWith("-") || p.includes("\0")) throw new Error(`invalid path: ${JSON.stringify(p)}`);
+  return ["--", ...ps];
+}
+
 /** Resolve an agent's folder and branch (defaults: me). */
 async function target(agent?: string, branch?: string) {
   const self = db.getAgent(me!);
@@ -199,7 +213,7 @@ async function target(agent?: string, branch?: string) {
   if (agent && !who) throw new Error(`No agent named "${agent}". Known: ${db.listAgents().map((a) => a.name).join(", ")}`);
   const cwd = who?.cwd || self?.cwd || process.cwd();
   const repo = await repoRoot(cwd);
-  const br = branch ?? (await git(["rev-parse", "--abbrev-ref", "HEAD"], cwd)).trim();
+  const br = safeRef(branch ?? (await git(["rev-parse", "--abbrev-ref", "HEAD"], cwd)).trim(), "branch");
   return { cwd, repo, branch: br };
 }
 
@@ -222,17 +236,17 @@ server.registerTool(
   async ({ agent, branch, base, paths, stat_only, max_bytes }) => {
     try {
       const t = await target(agent, branch);
-      const b = base ?? (await baseBranch(t.repo));
+      const b = safeRef(base ?? (await baseBranch(t.repo)), "base");
       const range = `${b}...${t.branch}`;
-      const ps = paths?.length ? ["--", ...paths] : [];
-      const stat = await git(["diff", "--stat", range, ...ps], t.repo);
-      const log = await git(["log", "--oneline", "-n", "30", `${b}..${t.branch}`], t.repo).catch(() => "");
+      const ps = safePaths(paths);
+      const stat = await git(["diff", "--stat", "--end-of-options", range, ...ps], t.repo);
+      const log = await git(["log", "--oneline", "-n", "30", "--end-of-options", `${b}..${t.branch}`], t.repo).catch(() => "");
       const dirty = await git(["status", "--porcelain", ...ps], t.cwd).catch(() => "");
       let out = `# ${t.branch} vs ${b}\n\n## commits\n${log || "(none)"}\n\n## diffstat\n${stat || "(no committed changes)"}\n`;
       if (dirty.trim()) out += `\n## uncommitted in ${t.cwd}\n${dirty}`;
       if (!stat_only) {
         const n = max_bytes ?? 60_000;
-        const patch = await git(["diff", range, ...ps], t.repo);
+        const patch = await git(["diff", "--end-of-options", range, ...ps], t.repo);
         out += `\n## patch\n${cap(patch, n)}`;
         if (dirty.trim()) out += `\n## uncommitted patch\n${cap(await git(["diff", "HEAD", ...ps], t.cwd).catch(() => ""), Math.max(5000, n / 3))}`;
       }
@@ -257,8 +271,8 @@ server.registerTool(
   async ({ agent, branch, base, n }) => {
     try {
       const t = await target(agent, branch);
-      const b = base ?? (await baseBranch(t.repo));
-      const out = await git(["log", `--max-count=${n ?? 30}`, "--format=%h %ad %s", "--date=short", `${b}..${t.branch}`], t.repo);
+      const b = safeRef(base ?? (await baseBranch(t.repo)), "base");
+      const out = await git(["log", `--max-count=${Math.max(1, Math.min(500, Math.floor(n ?? 30)))}`, "--format=%h %ad %s", "--date=short", "--end-of-options", `${b}..${t.branch}`], t.repo);
       return text(out || `(no commits on ${t.branch} beyond ${b})`);
     } catch (e: any) {
       return text(`hive_log failed: ${e?.message ?? e}`);

@@ -13,6 +13,7 @@
  *   hive loop <agent> --for 8h "prompt"       … until the time is up (--hours 8 also works)
  *   hive every <agent> 10m "prompt"           on an interval
  *   hive watch <agent> <path> [--min-lines 50] [--max-wait 30m] "prompt"
+  hive watch <agent> --branches "prompt"  fire on new commits on agents' hive/* branches
  *   hive once <agent> [--in 20m | --at 2026-10-01T09:00] "prompt"
  *   hive jobs [--all]                         list jobs
  *   hive job stop|start|runs|rm <id>
@@ -33,8 +34,11 @@
  */
 import { parseArgs } from "node:util";
 import readline from "node:readline";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { existsSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import type * as schema from "@agentclientprotocol/sdk";
 import { Hub } from "../core/hub.js";
 import { AGENTS } from "../core/agents.js";
@@ -43,6 +47,7 @@ import { Scheduler, parseDuration, formatDuration, describeSchedule as schedule,
 import { probe, installed } from "../core/doctor.js";
 import { ROLES, type RolePreset } from "../core/roles.js";
 import { defaultDb } from "../core/home.js";
+import { BRANCHES } from "../core/watch.js";
 import { buildReport, renderReport } from "../core/report.js";
 import { listWorktrees, mergeWorktree, removeWorktree } from "../core/worktree.js";
 import { HiveDb, type JobRow, type NewJob } from "../hive/db.js";
@@ -73,6 +78,7 @@ const { values, positionals } = parseArgs({
     subject: { type: "string" },
     worktree: { type: "boolean", default: false },
     force: { type: "boolean", default: false },
+    branches: { type: "boolean", default: false },
     help: { type: "boolean", short: "h", default: false },
   },
 });
@@ -94,11 +100,13 @@ const USAGE = `hive — local multi-agent harness
   hive chat <agent> [opts]                interactive; resumes last session (--fresh for new)
   hive agents                             list hive members
   hive doctor [agent...] [--quick]        installed? speaks ACP? logged in?
+  hive ui [--cwd DIR]                     open the pane UI for this project
 
   hive loop <agent> --times 5 "prompt"    run N times, fresh session each, shared notes file
   hive loop <agent> --for 8h "prompt"     … until time is up
   hive every <agent> 10m "prompt"         on an interval
   hive watch <agent> <path> [--min-lines 50] [--max-wait 30m] "prompt"
+  hive watch <agent> --branches "prompt"  fire on new commits on agents' hive/* branches
   hive once <agent> [--in 20m | --at 2026-10-01T09:00] "prompt"
   hive jobs [--all]                       list jobs
   hive job stop|start|runs|rm <id>
@@ -291,6 +299,17 @@ function policyArg(def: PermissionPolicy): PermissionPolicy {
   const p = (values.policy ?? preset()?.policy ?? def) as PermissionPolicy;
   if (!POLICIES.includes(p)) die(`unknown policy "${p}" (use ${POLICIES.join(", ")})`);
   return p;
+}
+
+/** Coders work on hive/* branches in their own worktrees; a watcher should follow those. */
+async function hasAgentBranches(cwd: string): Promise<boolean> {
+  try {
+    const w = await listWorktrees(cwd);
+    if (w.worktrees.length) console.log(dim(`watching agent branches (hive/*): ${w.worktrees.map((x) => x.name).join(", ")} — use --branches explicitly to force`));
+    return w.worktrees.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 function preset(): RolePreset | undefined {
@@ -495,11 +514,18 @@ async function main() {
     }
 
     case "watch": {
-      const agent = agentArg(rest[0], `hive watch <agent> <path> [--min-lines 50] "prompt"`);
-      if (!rest[1]) die(`usage: hive watch <agent> <path> [--min-lines 50] "prompt"`);
-      const path = resolve(values.cwd ?? process.cwd(), rest[1]);
-      if (!existsSync(path)) die(`watch path ${path} does not exist`);
-      const text = prompt(rest.slice(2));
+      const agent = agentArg(rest[0], `hive watch <agent> <path>|--branches [--min-lines 50] "prompt"`);
+      let path: string;
+      let text: string;
+      if (values.branches) {
+        path = BRANCHES;
+        text = prompt(rest.slice(1));
+      } else {
+        if (!rest[1]) die(`usage: hive watch <agent> <path>|--branches [--min-lines 50] "prompt"`);
+        path = resolve(values.cwd ?? process.cwd(), rest[1]);
+        if (!existsSync(path)) die(`watch path ${path} does not exist`);
+        text = prompt(rest.slice(2));
+      }
       return submitJob({
         kind: "watch",
         agent_kind: agent,
@@ -609,9 +635,34 @@ async function main() {
         remaining: r.job.kind === "loop" ? (values.times ? positiveInt(values.times, "--times") : (r.job.remaining ?? null)) : null,
         until_ts: values.for ? Date.now() + duration(values.for, "--for") : null,
         every_ms: r.job.kind === "interval" ? (r.job.every_ms ?? null) : null,
-        watch_path: r.job.kind === "watch" ? cwd : null,
+        watch_path: r.job.kind === "watch" ? (values.branches || (await hasAgentBranches(cwd)) ? BRANCHES : cwd) : null,
         watch_min_lines: values["min-lines"] ? positiveInt(values["min-lines"], "--min-lines") : (r.job.watch_min_lines ?? null),
       });
+    }
+
+    case "ui": {
+      // Electron's npm package exports the path of its binary.
+      const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
+      const main = join(repoRoot, "dist-ui", "main.cjs");
+      const build = join(repoRoot, "scripts", "build-ui.mjs");
+      if (existsSync(build)) {
+        const b = spawnSync(process.execPath, [build], { cwd: repoRoot, encoding: "utf8" });
+        if (b.status !== 0) die(`UI build failed:\n${b.stderr}`);
+      } else if (!existsSync(main)) die(`UI not built: ${main} missing`);
+      let electronBin: string;
+      try {
+        electronBin = createRequire(import.meta.url)("electron") as unknown as string;
+      } catch {
+        die("electron is not installed (npm install in the hive checkout)");
+      }
+      const cwd = resolve(values.cwd ?? process.cwd());
+      const args = [main, "--cwd", cwd, ...(values.db !== resolve(defaultDb(cwd)) ? ["--db", values.db!] : [])];
+      // Chromium refuses to run as root with its sandbox on Linux.
+      if (process.platform === "linux" && process.getuid?.() === 0) args.push("--no-sandbox");
+      console.log(dim(`opening hive for ${cwd}`));
+      const child = spawn(electronBin, args, { stdio: "inherit", env: { ...process.env, HIVE_NODE: process.env.HIVE_NODE ?? process.execPath } });
+      await new Promise<void>((res) => child.on("exit", () => res()));
+      return;
     }
 
     case "report": {

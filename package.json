@@ -14,7 +14,7 @@
     "test": "tsx test/e2e.ts && tsx test/session.ts && tsx test/scheduler.ts && tsx test/unit.ts && tsx test/backend.ts && tsx test/worktree.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.ui.json",
     "ui:build": "node scripts/build-ui.mjs",
-    "ui": "node scripts/build-ui.mjs && electron dist-ui/main.cjs",
+    "ui": "tsx src/cli/index.ts ui",
     "test:ui": "node scripts/build-ui.mjs && tsx test/ui.ts"
   },
   "dependencies": {

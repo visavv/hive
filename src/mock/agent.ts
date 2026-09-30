@@ -188,8 +188,9 @@ acp
       await say(cx, sessionId, `blackboard ${bbM[1]} set\n`);
     }
     if (/\bhostile-img\b/.test(text)) await say(cx, sessionId, "look: ![leak](//localhost/etc/hostname) and ![x](file:///etc/passwd)\n");
-    const diffM = text.match(/hivediff (\w+)/);
-    if (diffM) await say(cx, sessionId, (await callTool(sess, "hive_diff", { agent: diffM[1], stat_only: true })) + "\n");
+    const diffM = text.match(/hivediff (\w+)(?: branch=(\S+))?/);
+    if (diffM)
+      await say(cx, sessionId, (await callTool(sess, "hive_diff", { agent: diffM[1], stat_only: true, ...(diffM[2] ? { branch: diffM[2] } : {}) })) + "\n");
     if (/agents\?/.test(text)) {
       await say(cx, sessionId, (await callTool(sess, "hive_agents", {})) + "\n");
     }

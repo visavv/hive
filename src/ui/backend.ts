@@ -20,6 +20,7 @@ import { ROLES } from "../core/roles.js";
 import { defaultDb } from "../core/home.js";
 import { listWorktrees, mergeWorktree } from "../core/worktree.js";
 import { buildReport } from "../core/report.js";
+import { BRANCHES } from "../core/watch.js";
 import type { AgentView, BackendEvent, ElicitationAsk, JobView, Layout, Methods, PermissionAsk, Request } from "./protocol.js";
 
 // stdout is the protocol channel: keep stray logging off it.
@@ -439,7 +440,7 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
         id = hub.db.addJob({
           ...base,
           kind: "watch",
-          watch_path: resolve(s.cwd, p.watchPath || "."),
+          watch_path: p.watchPath === BRANCHES ? BRANCHES : resolve(s.cwd, p.watchPath || "."),
           watch_min_lines: p.minLines ?? 50,
         });
         break;
