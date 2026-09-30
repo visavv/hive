@@ -55,6 +55,11 @@ export interface SessionOptions {
    * unattended job can't hang forever on a prompt nobody sees.
    */
   askTimeoutMs?: number;
+  /**
+   * May an automatic turn (mail wake-up) start now? Set by the hub from the
+   * budget rules; when it says no, mail waits.
+   */
+  autoGuard?: () => { ok: true } | { ok: false; reason: string; until?: number };
   /** Mail wake-ups allowed per agent per 10 minutes (stops agent ping-pong). Default 30. */
   maxWakesPer10Min?: number;
   /** Max ms to wait for the agent to initialize and open a session. */
@@ -345,7 +350,7 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
    * the turn runs in a brand-new ACP session (unless the current one has
    * never been prompted). Used by the scheduler.
    */
-  async runOnce(text: string, opts: { fresh?: boolean } = {}): Promise<TurnResult & { sessionId?: string }> {
+  async runOnce(text: string, opts: { fresh?: boolean; automatic?: boolean } = {}): Promise<TurnResult & { sessionId?: string }> {
     while (this.busy) await new Promise((r) => setTimeout(r, 100));
     if (this.closed) return { stopReason: "closed", error: "session closed" };
     // Claimed synchronously after the wait, so no other turn slips in.
@@ -356,7 +361,7 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
       this.busy = false;
       throw e;
     }
-    const r = await this.runTurn(text, true);
+    const r = await this.runTurn(text, true, opts.automatic ?? true);
     if (!r.error) void this.drain().catch(() => {});
     return { ...r, sessionId: this.sessionIdValue };
   }
@@ -496,13 +501,28 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
   private replyText = "";
   /** Full agent text of the last finished turn. */
   lastReply = "";
+  /** Session cost as reported by the agent (cumulative USD), and what was already logged. */
+  private costTotal = 0;
+  private costLogged = 0;
+  /** The turn in progress was started automatically (job, mail), not by a person. */
+  private automatic = false;
 
   private onUpdate(n: schema.SessionNotification) {
     const replay = n.sessionId === this.replayingId && !this.busy;
     if (!replay && n.sessionId !== this.sessionIdValue) return;
     const u = n.update;
     // State the UI wants even between turns (and from replayed history).
-    if (u.sessionUpdate === "usage_update") this.context = { used: u.used, size: u.size };
+    if (u.sessionUpdate === "usage_update") {
+      this.context = { used: u.used, size: u.size };
+      const cost = (u as any).cost?.amount;
+      if (typeof cost === "number") this.costTotal = cost;
+      // claude-agent-acp forwards the subscription's rate-limit window here.
+      const rl = (u as any)._meta?.["_claude/rateLimit"];
+      if (rl && this.db.db.open)
+        try {
+          this.db.setLimit(this.def.id, rl.rateLimitType ?? "five_hour", { utilization: rl.utilization ?? null, resets_at: rl.resetsAt ?? null, status: rl.status ?? null });
+        } catch {}
+    }
     if (u.sessionUpdate === "config_option_update") this.setConfig(u.configOptions);
     if (replay) return;
     if (this.busy) this.updates.push({ kind: "update", update: u });
@@ -541,10 +561,18 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
         continue;
       }
       if (Date.now() < this.nextWakeAt) break;
+      if (this.db.unreadCount(this.name) === 0) break;
+      const guard = this.opts.autoGuard?.();
+      if (guard && !guard.ok) {
+        // Budget / subscription reserve: mail waits (what you type still runs).
+        this.nextWakeAt = guard.until ?? Date.now() + 10 * 60_000;
+        this.emitEv({ type: "notice", text: `mail delivery held: ${guard.reason}` });
+        break;
+      }
       const next = this.mailWake();
       if (!next) break;
       const before = this.db.unreadCount(this.name);
-      const r = await this.runTurn(next);
+      const r = await this.runTurn(next, false, true);
       if (r.error) break;
       if (this.db.unreadCount(this.name) >= before) {
         this.ignoredStreak++;
@@ -577,7 +605,7 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
     this.emitEv({ type: "notice", text: `${why}; pausing mail delivery for ${Math.round(ms / 1000)}s` });
   }
 
-  private async runTurn(text: string, claimed = false): Promise<TurnResult> {
+  private async runTurn(text: string, claimed = false, automatic = false): Promise<TurnResult> {
     if (!this.ctx || !this.sessionIdValue) {
       if (claimed) this.busy = false;
       throw new Error(`${this.name}: session not started`);
@@ -587,6 +615,7 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
       return { stopReason: "closed", error: "session closed" };
     }
     this.busy = true;
+    this.automatic = automatic;
     this.lastActivity = Date.now();
     this.dbStatus(this.name, "working", text.slice(0, 120));
     this.emitEv({ type: "status", status: "working", note: text.slice(0, 120) });
@@ -637,6 +666,13 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
       this.lastReply = this.replyText;
       this.emitEv({ type: "turn_end", stopReason: result.stopReason, usage: result.usage });
       if (this.db.db.open) {
+        const tokens = (result.usage as any)?.totalTokens ?? 0;
+        const cost = Math.max(0, this.costTotal - this.costLogged);
+        this.costLogged = this.costTotal;
+        if (tokens || cost)
+          try {
+            this.db.recordUsage(this.name, this.def.id, tokens, cost, this.automatic);
+          } catch {}
         if (this.replyText) this.dbLog(this.name, "reply", { text: this.replyText });
         this.dbLog(this.name, "turn_end", { stopReason: result.stopReason, usage: result.usage, error: result.error });
         this.dbStatus(this.name, this.closed ? "asleep" : result.error ? "error" : "idle", result.error ?? "");

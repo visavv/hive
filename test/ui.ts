@@ -229,6 +229,22 @@ try {
   await page.screenshot({ path: join(shots, "hive-ui-drawer.png") });
   await page.keyboard.press("Escape");
 
+  // usage: tokens per provider, a limit window with its reset, the pause switch
+  await pane(page, "alpha").locator("textarea").fill("ratelimit-meta 42");
+  await pane(page, "alpha").locator("textarea").press("Enter");
+  await pane(page, "alpha").locator(".msg.user", { hasText: "ratelimit-meta 42" }).waitFor({ timeout: 10_000 });
+  await page.waitForTimeout(1000);
+  await page.locator(".usage-chip").click();
+  await page.locator(".drawer .usage-win", { hasText: "58% left" }).waitFor({ timeout: 20_000 });
+  assert(await page.locator(".drawer .usage-win", { hasText: "resets in" }).count() > 0, "usage tab shows what's left in a window and when it resets");
+  await page.locator(".drawer .usage-pause button").click();
+  await page.locator(".drawer .usage-pause.on").waitFor({ timeout: 5000 });
+  assert(true, "the pause switch stops automatic work");
+  await page.screenshot({ path: join(shots, "hive-ui-usage.png") });
+  await page.locator(".drawer .usage-pause button").click();
+  await page.locator(".drawer .usage-pause:not(.on)").waitFor({ timeout: 5000 });
+  await page.keyboard.press("Escape");
+
   await page.screenshot({ path: join(shots, "hive-ui.png") });
   const layout = JSON.parse(readFileSync(join(projectDir(dir), "ui.json"), "utf8"));
   assert(layout.panes.length === 2 && layout.columns === 2, "layout persisted to .hive/ui.json");

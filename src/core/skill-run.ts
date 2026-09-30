@@ -37,7 +37,7 @@ export async function runSkill(
     policy: skill.policy as PermissionPolicy,
     resume: false,
   });
-  const result = await session.runOnce(prompt, { fresh: o.fresh ?? true });
+  const result = await session.runOnce(prompt, { fresh: o.fresh ?? true, automatic: false });
   const reply = session.lastReply;
   let saved: string | undefined;
   const out = outputPath(skill, o.cwd);
@@ -51,7 +51,7 @@ export async function runSkill(
 /** Ask an agent to write a new skill file from a description; returns the file text (validated). */
 export async function writeSkill(hub: Hub, name: string, description: string, o: { cwd: string; kind: string }): Promise<string> {
   const session = await hub.ensure({ name: "skill-writer", agent: o.kind, cwd: o.cwd, role: "writes hive skills", policy: "reject-all" });
-  const r = await session.runOnce(skillWriterPrompt(name, description), { fresh: true });
+  const r = await session.runOnce(skillWriterPrompt(name, description), { fresh: true, automatic: false });
   if (r.error) throw new Error(r.error);
   const text = extractSkill(session.lastReply);
   const s = parseSkill(text, `${name}.md`);

@@ -9,6 +9,7 @@ import { dirname, join, resolve } from "node:path";
 import { ensureWorktree } from "./worktree.js";
 import { AGENTS, killGroup } from "./agents.js";
 import { ROLES } from "./roles.js";
+import { checkAutomatic, notifyOnce } from "./budget.js";
 import { existsSync } from "node:fs";
 
 export interface HubOptions {
@@ -128,7 +129,18 @@ export class Hub {
       const kind = typeof o.agent === "string" ? o.agent : o.agent.id;
       if (prev?.session_id && prev.kind === kind && prev.cwd === resolve(rest.cwd)) resumeSessionId = prev.session_id;
     }
-    const s = new AgentSession({ ...this.opts.defaults, ...rest, resumeSessionId, hiveDb: this.hiveDb });
+    const provider = typeof o.agent === "string" ? o.agent : o.agent.id;
+    const s = new AgentSession({
+      ...this.opts.defaults,
+      autoGuard: () => {
+        const g = checkAutomatic(this.db, provider);
+        if (!g.ok) notifyOnce(this.db, g);
+        return g;
+      },
+      ...rest,
+      resumeSessionId,
+      hiveDb: this.hiveDb,
+    });
     s.on("event", (e) => {
       this.opts.onEvent?.(o.name, e);
       if (e.type === "exit" && this.sessions.get(o.name) === s) {

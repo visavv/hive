@@ -58,6 +58,7 @@ import { RECIPES, applyRecipe } from "../core/recipes.js";
 import { findSkill, listSkills, parseSkill, projectSkillsDir, skillTemplate, userSkillsDir } from "../core/skills.js";
 import { runSkill, writeSkill } from "../core/skill-run.js";
 import { createBridges } from "../bridges/index.js";
+import { BUDGET_KEYS, setBudget, usageSummary } from "../core/budget.js";
 import type { Bridge } from "../bridges/router.js";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { listWorktrees, mergeWorktree, removeWorktree, syncWorktree } from "../core/worktree.js";
@@ -139,6 +140,7 @@ const USAGE = `hive — local multi-agent harness
   hive start <agent> --as security|scout|bughunter    run a preset's default job
 
   hive report [--since 12h]               what happened: job runs + summaries, commits, mail to you
+  hive usage · hive budget [set k=v …]    tokens per provider, limit windows + resets · spending guards
   hive inbox [--all]                      mail agents sent to you ("owner")
   hive send <agent|*> "text"              message an agent as the owner (it's woken to read it)
   hive bb [prefix] · hive bb rm <key>     the shared blackboard (ideas/, security/, claim/…)
@@ -927,6 +929,46 @@ async function main() {
         return;
       }
       die(`unknown skill subcommand "${sub}" (list|show|new|run|edit)`);
+    }
+
+    case "usage": {
+      const db = new HiveDb(values.db!);
+      const u = usageSummary(db);
+      if (!u.providers.length) console.log(dim("no usage recorded yet"));
+      const k = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
+      for (const p of u.providers) {
+        console.log(`${cyan(p.provider.padEnd(10))} tokens 5h ${k(p.h5).padStart(6)} · today ${k(p.d1).padStart(6)} · 7d ${k(p.d7).padStart(6)}${p.cost7 ? ` · $${p.cost7.toFixed(2)} 7d` : ""}`);
+        for (const l of p.limits) {
+          const left = l.pct != null ? `${Math.max(0, 100 - Math.round(l.pct))}% left` : (l.status ?? "");
+          const reset = l.resetsAt ? `resets in ${formatDuration(Math.max(0, l.resetsAt - Date.now()))} (${new Date(l.resetsAt).toLocaleTimeString()})` : "";
+          console.log(`           ${l.window.padEnd(14)} ${left.padEnd(10)} ${reset}`);
+        }
+        if (!p.guard.ok) console.log(yellow(`           automatic work held: ${p.guard.reason}`));
+      }
+      console.log(dim(`\nbudget: ${Object.entries(u.budget).map(([a, b]) => `${a}=${b}`).join("  ")}   (hive budget set key=value)`));
+      console.log(dim(`limits: Claude reports its 5-hour/weekly windows while it runs; other providers show tokens and any limit they hit.`));
+      db.close();
+      return;
+    }
+
+    case "budget": {
+      const db = new HiveDb(values.db!);
+      if (rest[0] === "set") {
+        for (const kv of rest.slice(1)) {
+          const m = kv.match(/^([\w.]+)=(.*)$/);
+          if (!m) die(`use key=value (keys: ${BUDGET_KEYS.join(", ")}, daily_tokens.<provider>)`);
+          try {
+            setBudget(db, m[1], m[2]);
+          } catch (e: any) {
+            die(e.message);
+          }
+        }
+      }
+      const u = usageSummary(db);
+      for (const [a, b] of Object.entries(u.budget)) console.log(`${a.padEnd(22)} ${b}`);
+      console.log(dim(`\nset: hive budget set daily_tokens=3m daily_tokens.claude=2m reserve_pct=80 max_concurrent=2 paused=1\nclear: hive budget set daily_tokens=`));
+      db.close();
+      return;
     }
 
     case "recipes":

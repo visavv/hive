@@ -213,6 +213,8 @@ export interface Methods {
   }[];
   runSkill: (p: { name: string; params: Record<string, string>; kind?: string }) => { agent: string; kind: string; policy: Policy };
   groups: (p: Record<string, never>) => { name: string; members: string[] }[];
+  usage: (p: Record<string, never>) => import("../core/budget.js").UsageSummary;
+  setBudget: (p: { key: string; value: string }) => import("../core/budget.js").UsageSummary;
 }
 
 export type MethodName = keyof Methods;

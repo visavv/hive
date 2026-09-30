@@ -24,6 +24,7 @@ import { RECIPES, applyRecipe } from "../core/recipes.js";
 import { findSkill, listSkills, renderSkill } from "../core/skills.js";
 import { runSkill, skillAgentName } from "../core/skill-run.js";
 import { BB_PREFIX, BRANCHES } from "../core/watch.js";
+import { setBudget, usageSummary } from "../core/budget.js";
 import type { AgentView, BackendEvent, ElicitationAsk, JobView, Layout, Methods, PermissionAsk, Request } from "./protocol.js";
 
 // stdout is the protocol channel: keep stray logging off it.
@@ -537,6 +538,13 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
   },
   groups() {
     return hub.db.groups();
+  },
+  usage() {
+    return usageSummary(hub.db);
+  },
+  setBudget({ key, value }) {
+    setBudget(hub.db, need(key, "key"), String(value ?? ""));
+    return usageSummary(hub.db);
   },
   hiveData() {
     return {
