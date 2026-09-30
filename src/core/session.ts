@@ -633,9 +633,10 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
         break;
       }
     } finally {
+      // lastReply first: turn_end listeners (bridges, scheduler) read it.
+      this.lastReply = this.replyText;
       this.emitEv({ type: "turn_end", stopReason: result.stopReason, usage: result.usage });
       if (this.db.db.open) {
-        this.lastReply = this.replyText;
         if (this.replyText) this.dbLog(this.name, "reply", { text: this.replyText });
         this.dbLog(this.name, "turn_end", { stopReason: result.stopReason, usage: result.usage, error: result.error });
         this.dbStatus(this.name, this.closed ? "asleep" : result.error ? "error" : "idle", result.error ?? "");
