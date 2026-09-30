@@ -5,7 +5,7 @@
  * every pane.
  */
 import { useSyncExternalStore } from "react";
-import type { AgentView, BackendEvent, ElicitationAsk, JobView, Layout, PermissionAsk, PresetView } from "../protocol.js";
+import type { AgentView, BackendEvent, ElicitationAsk, JobView, Layout, OtherAgent, PermissionAsk, PresetView } from "../protocol.js";
 
 /** Every item has a stable id (React key) and a rev bumped on each mutation (memo key). */
 export type Item = ItemBody & { id: number; rev: number };
@@ -46,6 +46,7 @@ function capContent(content: any[]): any[] {
 class Store {
   panes = new Map<string, PaneState>();
   agents = new Map<string, AgentView>();
+  others: OtherAgent[] = [];
   starting = new Map<string, { kind: string; error?: string }>();
   jobs: JobView[] = [];
   kinds: { id: string; label: string }[] = [];
@@ -135,6 +136,7 @@ class Store {
         break; // App fetches the full state (getState) on ready
       case "agents":
         this.agents = new Map(ev.agents.map((a) => [a.name, a]));
+        this.others = ev.others ?? [];
         break;
       case "jobs":
         this.jobs = ev.jobs;

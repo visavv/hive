@@ -7,13 +7,21 @@ import { AgentSession, type SessionOptions, type SessionEvent } from "./session.
 import { HiveDb } from "../hive/db.js";
 import { dirname, join, resolve } from "node:path";
 import { ensureWorktree } from "./worktree.js";
-import { killGroup } from "./agents.js";
+import { AGENTS, killGroup } from "./agents.js";
+import { ROLES } from "./roles.js";
+import { existsSync } from "node:fs";
 
 export interface HubOptions {
   hiveDb: string;
   /** Mail delivery poll interval. */
   pollMs?: number;
   onEvent?: (agent: string, e: SessionEvent) => void;
+  /**
+   * Start agents that aren't running anywhere but have unread mail (resuming
+   * their session), and stop them again once idle. For `hive serve` and the UI,
+   * so hand-offs between agents work overnight.
+   */
+  wakeSleeping?: boolean;
   /** Lease owner id (default: pid + random). */
   id?: string;
   /** Defaults applied to every add() (e.g. the CLI's permission/elicitation prompts). */
@@ -26,8 +34,10 @@ export type AddOptions = Omit<SessionOptions, "hiveDb"> & {
    * it was the same vendor in the same cwd and the vendor supports it.
    */
   resume?: boolean;
-  /** Run in <repo>/.hive/worktrees/<name> on branch hive/<name> (created if missing). */
+  /** Run in its own git worktree on branch hive/<name> (created if missing). */
   worktree?: boolean;
+  /** Role preset id, remembered so the agent can be restarted the same way. */
+  preset?: string;
 };
 
 /** The agent is running in another hive process (CLI chat, serve, UI). */
@@ -109,7 +119,7 @@ export class Hub {
   }
 
   private async startClaimed(o: AddOptions): Promise<AgentSession> {
-    const { resume, worktree, ...rest } = o;
+    const { resume, worktree, preset, ...rest } = o;
     // Worktrees live next to the hive db (the per-user project dir by default).
     if (worktree) rest.cwd = (await ensureWorktree(o.cwd, o.name, join(dirname(this.hiveDb), "worktrees"))).path;
     let resumeSessionId = rest.resumeSessionId;
@@ -128,6 +138,7 @@ export class Hub {
     });
     await s.start();
     this.db.setPid(o.name, s.pid ?? null);
+    this.db.setAgentConfig(o.name, rest.policy ?? "ask", preset ?? null);
     this.sessions.set(o.name, s);
     return s;
   }
@@ -143,6 +154,47 @@ export class Hub {
     else this.db.releaseAgent(name, this.id);
   }
 
+  /** Agents this hub started only to deliver their mail. */
+  private woken = new Set<string>();
+  private lastWakeScan = 0;
+
+  private async wakeSleeping() {
+    const now = Date.now();
+    if (now - this.lastWakeScan < 5000) return;
+    this.lastWakeScan = now;
+    for (const a of this.db.listAgents()) {
+      if (this.sessions.has(a.name) || this.starting.has(a.name) || !a.kind || !AGENTS[a.kind]) continue;
+      if (a.owner && (a.lease_until ?? 0) > now) continue; // running elsewhere
+      if (!a.cwd || !existsSync(a.cwd) || this.db.unreadCount(a.name) === 0) continue;
+      const preset = a.preset ? ROLES[a.preset] : undefined;
+      this.woken.add(a.name);
+      this.opts.onEvent?.(a.name, { type: "notice", text: `waking ${a.name} to deliver its mail` });
+      void this.ensure({
+        name: a.name,
+        agent: a.kind,
+        cwd: a.cwd,
+        role: a.role,
+        policy: (a.policy as SessionOptions["policy"]) ?? "allow-reads",
+        preset: a.preset ?? undefined,
+        briefing: preset?.briefing,
+        resume: true,
+        askTimeoutMs: 15 * 60_000,
+      }).catch(() => this.woken.delete(a.name));
+    }
+    // Put them back to sleep once their mail is handled.
+    for (const name of this.woken) {
+      const s = this.sessions.get(name);
+      if (!s) {
+        this.woken.delete(name);
+        continue;
+      }
+      if (!s.busyNow && s.queued === 0 && s.idleMs > 60_000 && this.db.unreadCount(name) === 0 && !this.db.listJobs(false).some((j) => j.agent === name)) {
+        this.woken.delete(name);
+        await this.remove(name, false);
+      }
+    }
+  }
+
   /** Start the mail delivery loop. */
   run(): void {
     if (this.timer) return;
@@ -152,6 +204,7 @@ export class Hub {
     const ms = this.opts.pollMs ?? 1500;
     this.timer = setInterval(() => {
       for (const s of this.sessions.values()) void s.poke().catch(() => {});
+      if (this.opts.wakeSleeping) void this.wakeSleeping().catch(() => {});
     }, ms);
     this.timer.unref?.();
   }

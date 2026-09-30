@@ -116,6 +116,11 @@ export function App() {
       } else if (mod && e.key === "\\") {
         e.preventDefault();
         saveLayout({ sidebar: !store.layout.sidebar });
+      } else if (mod && (e.key === "=" || e.key === "+" || e.key === "-" || e.key === "0")) {
+        e.preventDefault();
+        const z = store.layout.zoom ?? 1;
+        const next = e.key === "0" ? 1 : Math.min(2, Math.max(0.6, Math.round((z + (e.key === "-" ? -0.1 : 0.1)) * 10) / 10));
+        saveLayout({ zoom: next });
       } else if (mod && e.key.toLowerCase() === "i") {
         e.preventDefault();
         setDrawer((d) => !d);
@@ -128,6 +133,10 @@ export function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [layout.maximized]);
+
+  useEffect(() => {
+    (document.documentElement.style as any).zoom = String(layout.zoom ?? 1);
+  }, [layout.zoom]);
 
   if (!ready) return <div className="boot">starting hive…</div>;
 
@@ -142,7 +151,7 @@ export function App() {
             <p>Run Claude Code, Codex, Qwen and friends side by side. They can message each other through the hive.</p>
             <button className="primary" onClick={() => setAdding(true)}>+ Add an agent</button>
             <p className="dim">
-              Ctrl+N add · Ctrl+1..9 jump · Ctrl+Tab cycle · Ctrl+B broadcast · Ctrl+I hive report &amp; mail · Ctrl+M maximize · Ctrl+\ sidebar · hover a pane to type into it
+              Ctrl+N add · Ctrl+1..9 jump · Ctrl+Tab cycle · Ctrl+B broadcast · Ctrl+I hive report &amp; mail · Ctrl+M maximize · Ctrl+= / Ctrl+- zoom · Ctrl+\ sidebar · hover a pane to type into it
             </p>
           </div>
         ) : (
@@ -351,6 +360,7 @@ function Sidebar({ names, onAdd }: { names: string[]; onAdd: () => void }) {
         })}
         {names.length === 0 && <li className="dim pad">no agents yet</li>}
       </ul>
+      <OtherAgents names={names} />
       <Worktrees />
       <div className="side-head">
         <span>Jobs</span>
@@ -388,6 +398,43 @@ function Sidebar({ names, onAdd }: { names: string[]; onAdd: () => void }) {
       </ul>
       {runsFor && <JobRunsDialog job={runsFor} onClose={() => setRunsFor(null)} />}
     </aside>
+  );
+}
+
+function OtherAgents({ names }: { names: string[] }) {
+  const others = useStore((s) => s.others).filter((o) => !names.includes(o.name));
+  if (!others.length) return null;
+  return (
+    <>
+      <div className="side-head">
+        <span>Other agents in this hive</span>
+      </div>
+      <ul className="job-list">
+        {others.map((o) => (
+          <li key={o.name} title={`${o.cwd}${o.where ? ` — running in ${o.where}` : ""}`}>
+            <div className="row1">
+              <span className={`dot ${o.status}`} />
+              <strong>{o.name}</strong>
+              <span className="kind">{o.kind}</span>
+              {o.unread > 0 && <span className="badge" title="unread hive mail">✉{o.unread}</span>}
+              <span className="spacer" />
+              {o.where ? (
+                <span className="dim small">elsewhere</span>
+              ) : (
+                <button
+                  className="ghost small"
+                  title="open a pane (resumes its session)"
+                  onClick={() => void openPane({ name: o.name, kind: o.kind, cwd: o.cwd, role: o.role, policy: (o.policy as Policy) ?? "ask" })}
+                >
+                  open
+                </button>
+              )}
+            </div>
+            {(o.note || o.role) && <div className="row2 dim">{[o.role, o.note].filter(Boolean).join(" · ").slice(0, 80)}</div>}
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
 

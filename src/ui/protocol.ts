@@ -53,6 +53,8 @@ export interface Layout {
   sidebar: boolean;
   /** Pane name shown alone, if any. */
   maximized?: string | null;
+  /** UI zoom (1 = 100%); Ctrl+= / Ctrl+- / Ctrl+0. */
+  zoom?: number;
 }
 
 export interface ConfigOptionView {
@@ -83,6 +85,20 @@ export interface AgentView {
   jobs: number;
   /** Current git branch of the agent's folder, if any. */
   branch?: string;
+}
+
+/** An agent in this hive that isn't running in this window. */
+export interface OtherAgent {
+  name: string;
+  kind: string;
+  cwd: string;
+  role: string;
+  policy?: string;
+  status: string;
+  note: string;
+  unread: number;
+  /** Where it runs, if somewhere: e.g. "hive serve (pid 123)". */
+  where?: string;
 }
 
 export interface JobView {
@@ -121,7 +137,7 @@ export interface ElicitationAsk {
 export type BackendEvent =
   | { event: "ready"; kinds: { id: string; label: string }[]; presets: PresetView[]; cwd: string; layout: Layout; db: string }
   | { event: "agent"; agent: string; e: SessionEvent | { type: "prompt"; text: string; queued?: boolean } }
-  | { event: "agents"; agents: AgentView[] }
+  | { event: "agents"; agents: AgentView[]; others?: OtherAgent[] }
   | { event: "jobs"; jobs: JobView[] }
   | { event: "permission"; ask: PermissionAsk }
   | { event: "permission_done"; reqId: string; outcome?: string }

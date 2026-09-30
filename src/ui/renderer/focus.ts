@@ -9,6 +9,8 @@ let active: string | undefined;
 
 /** Last keystroke into a pane input: hover must not move focus mid-dictation. */
 let lastKeyAt = 0;
+let dwell: ReturnType<typeof setTimeout> | undefined;
+const HOVER_DWELL_MS = 450;
 const TYPING_LOCK_MS = 1500;
 document.addEventListener(
   "keydown",
@@ -28,7 +30,9 @@ function focusIsProtected(): boolean {
   const el = document.activeElement as HTMLElement | null;
   if (!el || el === document.body) return false;
   const isPaneInput = [...inputs.values()].includes(el as HTMLTextAreaElement);
-  if (isPaneInput) return Date.now() - lastKeyAt < TYPING_LOCK_MS;
+  // A draft (e.g. mid-dictation, Handy types when you stop talking) stays put
+  // until you click elsewhere or send it.
+  if (isPaneInput) return Date.now() - lastKeyAt < TYPING_LOCK_MS || (el as HTMLTextAreaElement).value.trim() !== "";
   return el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable;
 }
 
@@ -55,6 +59,14 @@ export const focus = {
     active = name;
     el.focus({ preventScroll: true });
     el.closest(".pane")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  },
+  /** Hover with a short dwell, so sweeping the mouse across panes doesn't move focus. */
+  hoverStart(name: string) {
+    clearTimeout(dwell);
+    dwell = setTimeout(() => this.hover(name), HOVER_DWELL_MS);
+  },
+  hoverEnd() {
+    clearTimeout(dwell);
   },
   hover(name: string) {
     if (focusIsProtected() || window.getSelection()?.toString()) return;

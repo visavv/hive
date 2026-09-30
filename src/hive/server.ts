@@ -51,7 +51,7 @@ server.registerTool(
       kind: a.kind,
       role: a.role,
       cwd: a.cwd,
-      status: a.status,
+      status: db.effectiveStatus(a),
       note: a.status_note,
       me: a.name === me,
       unread: db.unreadCount(a.name),

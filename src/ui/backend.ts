@@ -179,6 +179,7 @@ const hub = new Hub({
   hiveDb: dbPath,
   // Same id after a backend restart, so this window reclaims its agents at once.
   id: `ui-${ownerPid}`,
+  wakeSleeping: true,
   pollMs: Number(values.poll),
   defaults: { askPermission, elicit },
   onEvent: (agent: string, e: SessionEvent) => {
@@ -258,7 +259,24 @@ function view(s: AgentSession): AgentView {
 function pushAgents() {
   pushTimer = undefined;
   if (!hub.db.db.open) return;
-  send({ event: "agents", agents: [...hub.sessions.values()].map(view) });
+  const others = hub.db
+    .listAgents()
+    .filter((a) => !hub.sessions.has(a.name) && a.kind)
+    .map((a) => {
+      const status = hub.db.effectiveStatus(a);
+      return {
+        name: a.name,
+        kind: a.kind,
+        cwd: a.cwd,
+        role: a.role || a.preset || "",
+        policy: a.policy ?? undefined,
+        status,
+        note: a.status_note,
+        unread: hub.db.unreadCount(a.name),
+        where: status !== "asleep" && a.owner ? `another hive process (${a.owner.split("@")[0]})` : undefined,
+      };
+    });
+  send({ event: "agents", agents: [...hub.sessions.values()].map(view), others });
 }
 
 let lastOwnerUnread = -1;

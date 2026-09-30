@@ -52,11 +52,12 @@ export async function buildReport(db: HiveDb, since: number, cwds: string[]): Pr
   const seen = new Set<string>();
   for (const cwd of cwds) {
     try {
-      const { repo, worktrees } = await listWorktrees(cwd);
+      const { repo, base, worktrees } = await listWorktrees(cwd);
       if (seen.has(repo)) continue;
       seen.add(repo);
       for (const w of worktrees) {
-        const out = await git(["log", `--since=${new Date(since).toISOString()}`, "--format=%h %s", w.branch], repo).catch(() => "");
+        // Only the agent's own commits, not the base branch's history.
+        const out = await git(["log", `--since=${new Date(since).toISOString()}`, "--format=%h %s", `${base}..${w.branch}`], repo).catch(() => "");
         const lines = out.split("\n").filter(Boolean);
         if (lines.length) commits.push({ repo, branch: w.branch, lines });
       }

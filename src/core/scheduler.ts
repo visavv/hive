@@ -236,6 +236,7 @@ export class Scheduler {
     const iteration = job.runs + 1;
     let runId: number | undefined;
     try {
+      if (job.fresh_session && job.kind !== "once") session.allowedPaths.add(this.notesPath(job));
       runId = this.db.startRun(job.id, iteration, null);
       this.opts.onJob?.({ type: "run_start", job, iteration });
       // runOnce claims the agent and (for fresh jobs) switches session atomically.
