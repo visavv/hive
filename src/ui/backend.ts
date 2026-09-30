@@ -14,7 +14,9 @@ import type * as schema from "@agentclientprotocol/sdk";
 import { Hub } from "../core/hub.js";
 import { AGENTS } from "../core/agents.js";
 import { POLICIES, type AgentSession, type SessionEvent } from "../core/session.js";
-import { Scheduler, describeSchedule } from "../core/scheduler.js";
+import { Scheduler, describeSchedule, formatDuration } from "../core/scheduler.js";
+import { ROLES } from "../core/roles.js";
+import { listWorktrees, mergeWorktree } from "../core/worktree.js";
 import type { AgentView, BackendEvent, ElicitationAsk, JobView, Layout, Methods, PermissionAsk, Request } from "./protocol.js";
 
 // stdout is the protocol channel: keep stray logging off it.
@@ -239,14 +241,60 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
     const name = need(p.name, "name").trim();
     if (!/^[\w.-]{1,40}$/.test(name)) throw new Error(`name must be letters, digits, _ . - (got "${name}")`);
     if (!AGENTS[p.kind]) throw new Error(`unknown agent kind "${p.kind}"`);
-    const policy = p.policy ?? "ask";
+    const r = p.preset ? ROLES[p.preset] : undefined;
+    if (p.preset && !r) throw new Error(`unknown preset "${p.preset}"`);
+    const policy = p.policy ?? r?.policy ?? "ask";
     if (!POLICIES.includes(policy)) throw new Error(`unknown policy "${policy}"`);
     const cwd = resolve(p.cwd || defaultCwd);
     if (!existsSync(cwd)) throw new Error(`folder does not exist: ${cwd}`);
     policies.set(name, policy);
-    const s = await hub.ensure({ name, agent: p.kind, cwd, role: p.role ?? "", policy, resume: p.resume ?? true });
+    const s = await hub.ensure({
+      name,
+      agent: p.kind,
+      cwd,
+      role: p.role || r?.role || "",
+      policy,
+      briefing: r?.briefing,
+      worktree: p.worktree ?? r?.worktree ?? false,
+      resume: p.resume ?? true,
+    });
+    if (p.startJob && r?.job) {
+      const j = r.job;
+      hub.db.addJob({
+        agent: name,
+        agent_kind: p.kind,
+        cwd: s.cwd,
+        prompt: j.prompt,
+        kind: j.kind,
+        policy,
+        role: s.role,
+        briefing: r.briefing,
+        remaining: j.remaining ?? null,
+        every_ms: j.every_ms ?? null,
+        watch_path: j.kind === "watch" ? s.cwd : null,
+        watch_min_lines: j.watch_min_lines ?? null,
+      });
+      pushJobs();
+    }
     schedulePush();
     return view(s);
+  },
+  async worktrees() {
+    // Every repo an open agent (or the launch folder) lives in.
+    const dirs = new Set([defaultCwd, ...[...hub.sessions.values()].map((s) => s.cwd)]);
+    const byRepo = new Map<string, Awaited<ReturnType<typeof listWorktrees>>>();
+    for (const d of dirs) {
+      try {
+        const r = await listWorktrees(d);
+        if (r.worktrees.length) byRepo.set(r.repo, r);
+      } catch {
+        // not a git repo
+      }
+    }
+    return [...byRepo.values()];
+  },
+  async mergeWorktree({ name, repo }) {
+    return mergeWorktree(repo, name);
   },
   async removeAgent({ name, forget }) {
     dropPending(name);
@@ -372,6 +420,22 @@ setInterval(pushJobs, 5000).unref();
 send({
   event: "ready",
   kinds: Object.values(AGENTS).map((a) => ({ id: a.id, label: a.label })),
+  presets: Object.values(ROLES).map((r) => ({
+    id: r.id,
+    label: r.label,
+    role: r.role,
+    policy: r.policy,
+    worktree: r.worktree,
+    job: r.job
+      ? r.job.kind === "interval"
+        ? `every ${formatDuration(r.job.every_ms ?? 0)}`
+        : r.job.kind === "watch"
+          ? `when ≥${r.job.watch_min_lines ?? 50} lines change`
+          : r.job.kind === "loop"
+            ? `loop ${r.job.remaining ?? ""}×`
+            : r.job.kind
+      : undefined,
+  })),
   cwd: defaultCwd,
   layout: loadLayout(),
   db: dbPath,

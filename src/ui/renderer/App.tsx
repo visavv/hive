@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Layout, PaneSpec, Policy } from "../protocol.js";
+import type { Layout, PaneSpec, Policy, WorktreeView } from "../protocol.js";
 import { connect, onEvent, onFocusLast, rpc } from "./bridge.js";
 import { store, useStore } from "./store.js";
 import { Pane } from "./Pane.js";
@@ -14,12 +14,12 @@ function saveLayout(patch: Partial<Layout>) {
   void rpc("saveLayout", store.layout);
 }
 
-async function openPane(spec: PaneSpec, persist = true) {
+async function openPane(spec: PaneSpec, persist = true, startJob = false) {
   if (persist && !store.layout.panes.some((p) => p.name === spec.name)) saveLayout({ panes: [...store.layout.panes, spec] });
   store.starting.set(spec.name, { kind: spec.kind });
   store.bump();
   try {
-    await rpc("addAgent", { ...spec, resume: true });
+    await rpc("addAgent", { ...spec, resume: true, startJob });
     store.starting.delete(spec.name);
     const rows = await rpc("history", { name: spec.name, limit: 120 });
     store.loadHistory(spec.name, rows);
@@ -305,6 +305,7 @@ function Sidebar({ names, onAdd }: { names: string[]; onAdd: () => void }) {
         })}
         {names.length === 0 && <li className="dim pad">no agents yet</li>}
       </ul>
+      <Worktrees />
       <div className="side-head">
         <span>Jobs</span>
       </div>
@@ -331,6 +332,65 @@ function Sidebar({ names, onAdd }: { names: string[]; onAdd: () => void }) {
         {jobs.length === 0 && <li className="dim pad">none — use ⏱ on a pane</li>}
       </ul>
     </aside>
+  );
+}
+
+function Worktrees() {
+  const [repos, setRepos] = useState<{ repo: string; base: string; worktrees: WorktreeView[] }[]>([]);
+  const [busy, setBusy] = useState("");
+  const refresh = () => void rpc("worktrees", {}).then(setRepos).catch(() => setRepos([]));
+  useEffect(() => {
+    refresh();
+    const t = setInterval(refresh, 8000);
+    return () => clearInterval(t);
+  }, []);
+  if (!repos.length) return null;
+  const merge = async (repo: string, base: string, w: WorktreeView) => {
+    if (!confirm(`Merge ${w.branch} (${w.ahead} commit${w.ahead === 1 ? "" : "s"}, +${w.insertions} −${w.deletions}) into ${base}?`)) return;
+    setBusy(w.name);
+    try {
+      const r = await rpc("mergeWorktree", { name: w.name, repo });
+      store.toast(r.message.split("\n")[0], r.ok ? "info" : "error");
+    } catch (e: any) {
+      store.toast(e.message, "error");
+    }
+    setBusy("");
+    refresh();
+  };
+  return (
+    <>
+      <div className="side-head">
+        <span>Worktrees</span>
+        <button className="ghost" onClick={refresh} title="refresh">↻</button>
+      </div>
+      <ul className="job-list wt-list">
+        {repos.flatMap(({ repo, base, worktrees }) =>
+          worktrees.map((w) => (
+            <li key={repo + w.name} title={`${w.branch} → ${base} in ${repo}`}>
+              <div className="row1">
+                <strong>{w.name}</strong>
+                <span className="dim">
+                  {w.ahead ? `↑${w.ahead}` : ""} {w.behind ? `↓${w.behind}` : ""}
+                </span>
+                <span className="spacer" />
+                <button
+                  className="ghost small"
+                  disabled={!w.ahead || busy === w.name}
+                  onClick={() => void merge(repo, base, w)}
+                  title={`merge ${w.branch} into ${base}`}
+                >
+                  merge
+                </button>
+              </div>
+              <div className="row2 dim">
+                → {base} · {w.ahead ? `${w.files} files +${w.insertions} −${w.deletions}` : w.behind ? "nothing new (merged or behind)" : "no commits yet"}
+                {w.dirty ? <span className="warn"> · {w.dirty} uncommitted</span> : null}
+              </div>
+            </li>
+          )),
+        )}
+      </ul>
+    </>
   );
 }
 
@@ -362,15 +422,32 @@ function AddAgentDialog({ onClose }: { onClose: () => void }) {
   const [kind, setKind] = useState(kinds.find((k) => k.id === "claude")?.id ?? kinds[0]?.id ?? "");
   const [name, setName] = useState(() => suggestName(taken));
   const [cwd, setCwd] = useState(store.layout.panes.at(-1)?.cwd ?? store.cwd);
+  const presets = useStore((s) => s.presets);
+  const [presetId, setPresetId] = useState("");
   const [role, setRole] = useState("");
   const [policy, setPolicy] = useState<Policy>("ask");
+  const [worktree, setWorktree] = useState(false);
+  const [startJob, setStartJob] = useState(true);
   const [err, setErr] = useState("");
+  const preset = presets.find((p) => p.id === presetId);
+  const pickPreset = (id: string) => {
+    setPresetId(id);
+    const p = presets.find((x) => x.id === id);
+    if (!p) return;
+    setRole(p.role);
+    setPolicy(p.policy);
+    setWorktree(p.worktree);
+  };
   const submit = () => {
     const n = name.trim();
     if (!/^[\w.-]{1,40}$/.test(n)) return setErr("name: letters, digits, _ . - only");
     if (taken.has(n)) return setErr(`"${n}" is already open`);
     onClose();
-    void openPane({ name: n, kind, cwd: cwd.trim() || store.cwd, role: role.trim(), policy });
+    void openPane(
+      { name: n, kind, cwd: cwd.trim() || store.cwd, role: role.trim(), policy, worktree, preset: presetId || undefined },
+      true,
+      !!preset?.job && startJob,
+    );
     setTimeout(() => focus.to(n), 300);
   };
   return (
@@ -399,6 +476,18 @@ function AddAgentDialog({ onClose }: { onClose: () => void }) {
           <input value={cwd} onChange={(e) => setCwd(e.target.value)} placeholder={store.cwd} />
         </label>
         <label>
+          <span>Preset</span>
+          <select value={presetId} onChange={(e) => pickPreset(e.target.value)}>
+            <option value="">— none —</option>
+            {presets.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+                {p.job ? ` · ${p.job}` : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
           <span>Role</span>
           <input value={role} onChange={(e) => setRole(e.target.value)} placeholder="coder, reviewer, security watcher… (shown to other agents)" />
         </label>
@@ -413,6 +502,22 @@ function AddAgentDialog({ onClose }: { onClose: () => void }) {
             ))}
           </select>
         </label>
+        <label>
+          <span>Worktree</span>
+          <span className="check">
+            <input type="checkbox" checked={worktree} onChange={(e) => setWorktree(e.target.checked)} />
+            own git worktree on branch hive/{name || "<name>"} (recommended for agents that edit)
+          </span>
+        </label>
+        {preset?.job && (
+          <label>
+            <span>Job</span>
+            <span className="check">
+              <input type="checkbox" checked={startJob} onChange={(e) => setStartJob(e.target.checked)} />
+              also start the preset's job ({preset.job})
+            </span>
+          </label>
+        )}
         {err && <div className="err">{err}</div>}
         <div className="buttons">
           <button type="button" className="ghost" onClick={onClose}>Cancel</button>

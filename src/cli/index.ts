@@ -17,11 +17,19 @@
  *   hive jobs [--all]                         list jobs
  *   hive job stop|start|runs|rm <id>
  *   hive serve                                run every job + mail delivery until Ctrl-C
+ *   hive start <agent> --as security|scout|bughunter   a preset's default job
+ *
+ * Worktrees (one per coding agent)
+ *   hive chat claude --worktree               agent works in .hive/worktrees/<name> on branch hive/<name>
+ *   hive worktrees                            branches, ahead/behind, diffstat, dirty files
+ *   hive merge <name>                         merge hive/<name> into the main checkout (--no-ff)
+ *   hive worktree rm <name> [--force]
  *
  *   Job commands run in the foreground until the job ends (Ctrl-C stops it);
  *   --detach only queues it for `hive serve`.
  *
- * Common options: --name N --cwd DIR --role R --policy ask|allow-reads|allow-all|reject-all --db PATH --quiet
+ * Common options: --name N --cwd DIR --role R --policy ask|allow-reads|allow-all|reject-all
+ *                 --as coder|reviewer|security|scout|bughunter --worktree --db PATH --quiet
  */
 import { parseArgs } from "node:util";
 import readline from "node:readline";
@@ -33,6 +41,8 @@ import { AGENTS } from "../core/agents.js";
 import { POLICIES, type AgentSession, type PermissionPolicy, type SessionEvent } from "../core/session.js";
 import { Scheduler, parseDuration, formatDuration, describeSchedule as schedule, type JobEvent } from "../core/scheduler.js";
 import { probe, installed } from "../core/doctor.js";
+import { ROLES, type RolePreset } from "../core/roles.js";
+import { listWorktrees, mergeWorktree, removeWorktree } from "../core/worktree.js";
 import { HiveDb, type JobRow, type NewJob } from "../hive/db.js";
 
 const { values, positionals } = parseArgs({
@@ -40,7 +50,7 @@ const { values, positionals } = parseArgs({
   options: {
     name: { type: "string" },
     cwd: { type: "string" },
-    role: { type: "string", default: "" },
+    role: { type: "string" },
     policy: { type: "string" },
     db: { type: "string", default: ".hive/hive.db" },
     quiet: { type: "boolean", short: "q", default: false },
@@ -56,6 +66,9 @@ const { values, positionals } = parseArgs({
     detach: { type: "boolean", short: "d", default: false },
     all: { type: "boolean", default: false },
     quick: { type: "boolean", default: false },
+    as: { type: "string" },
+    worktree: { type: "boolean", default: false },
+    force: { type: "boolean", default: false },
     help: { type: "boolean", short: "h", default: false },
   },
 });
@@ -84,9 +97,15 @@ const USAGE = `hive — local multi-agent harness
   hive jobs [--all]                       list jobs
   hive job stop|start|runs|rm <id>
   hive serve                              run all jobs + mail delivery until Ctrl-C
+  hive start <agent> --as security|scout|bughunter    run a preset's default job
 
-agents: ${Object.keys(AGENTS).join(", ")}
-options: --name N  --cwd DIR  --role R  --policy ${POLICIES.join("|")}
+  hive worktrees                          agent branches: ahead/behind, diffstat, dirty
+  hive merge <name>                       merge hive/<name> into the main checkout
+  hive worktree rm <name> [--force]
+
+agents:  ${Object.keys(AGENTS).join(", ")}
+presets: ${Object.values(ROLES).map((r) => r.id).join(", ")}  (--as: role + policy + briefing [+ worktree])
+options: --name N  --cwd DIR  --role R  --policy ${POLICIES.join("|")}  --worktree
          --db PATH (default .hive/hive.db)  --keep-context  --detach  --quiet`;
 
 // ---- one readline for the whole process (chat input, permission prompts, questions) ----
@@ -255,9 +274,16 @@ function agentArg(a: string | undefined, usage: string): string {
 }
 
 function policyArg(def: PermissionPolicy): PermissionPolicy {
-  const p = (values.policy ?? def) as PermissionPolicy;
+  const p = (values.policy ?? preset()?.policy ?? def) as PermissionPolicy;
   if (!POLICIES.includes(p)) die(`unknown policy "${p}" (use ${POLICIES.join(", ")})`);
   return p;
+}
+
+function preset(): RolePreset | undefined {
+  if (!values.as) return undefined;
+  const r = ROLES[values.as];
+  if (!r) die(`unknown preset "${values.as}" (${Object.keys(ROLES).join(", ")})`);
+  return r;
 }
 
 function prompt(words: string[]): string {
@@ -318,12 +344,15 @@ async function submitJob(j: Omit<NewJob, "agent" | "cwd" | "policy" | "role" | "
   const policy = policyArg("allow-reads");
   if (values.detach && policy === "ask") console.warn(yellow(`--policy ask with --detach: nobody will be there to answer, requests will be rejected`));
   const db = new HiveDb(values.db!);
+  const r = preset();
   const id = db.addJob({
     ...j,
     agent: values.name ?? `pending-${Date.now()}`,
     cwd,
     policy,
-    role: values.role ?? "",
+    role: values.role ?? r?.role ?? "",
+    briefing: r?.briefing ?? "",
+    worktree: values.worktree || r?.worktree ? 1 : 0,
     fresh_session: values["keep-context"] ? 0 : 1,
   });
   if (!values.name) db.updateJob(id, { agent: `${j.agent_kind}-${id}` });
@@ -402,7 +431,17 @@ async function main() {
       const hub = newHub();
       let s: AgentSession;
       try {
-        s = await hub.add({ name, agent, cwd, role: values.role, policy: policyArg("ask"), resume: !values.fresh });
+        const r = preset();
+        s = await hub.add({
+          name,
+          agent,
+          cwd,
+          role: values.role ?? r?.role ?? "",
+          policy: policyArg("ask"),
+          briefing: r?.briefing,
+          worktree: values.worktree || r?.worktree,
+          resume: !values.fresh,
+        });
       } catch (e: any) {
         await hub.close();
         die(`could not start ${agent}: ${e?.message ?? e}\nrun \`hive doctor ${agent}\` to diagnose`);
@@ -536,6 +575,60 @@ async function main() {
           die(`unknown job subcommand "${sub}" (stop|start|runs|rm)`);
       }
       db.close();
+      return;
+    }
+
+    case "start": {
+      const agent = agentArg(rest[0], `hive start <agent> --as ${Object.values(ROLES).filter((r) => r.job).map((r) => r.id).join("|")}`);
+      const r = preset();
+      if (!r?.job) die(`hive start needs --as with a preset that has a default job: ${Object.values(ROLES).filter((x) => x.job).map((x) => x.id).join(", ")}`);
+      const extra = rest.slice(1).join(" ").trim();
+      const cwd = resolve(values.cwd ?? process.cwd());
+      return submitJob({
+        kind: r.job.kind,
+        agent_kind: agent,
+        agentKind: agent,
+        prompt: extra ? `${r.job.prompt}\n\n${extra}` : r.job.prompt,
+        remaining: r.job.kind === "loop" ? (values.times ? positiveInt(values.times, "--times") : (r.job.remaining ?? null)) : null,
+        until_ts: values.for ? Date.now() + duration(values.for, "--for") : null,
+        every_ms: r.job.kind === "interval" ? (r.job.every_ms ?? null) : null,
+        watch_path: r.job.kind === "watch" ? cwd : null,
+        watch_min_lines: values["min-lines"] ? positiveInt(values["min-lines"], "--min-lines") : (r.job.watch_min_lines ?? null),
+      });
+    }
+
+    case "worktrees": {
+      const { repo, base, worktrees } = await listWorktrees(values.cwd ?? process.cwd());
+      if (!worktrees.length) console.log(dim(`no hive worktrees in ${repo} (use --worktree or --as coder)`));
+      else {
+        console.log(dim(`${repo} — base ${base}`));
+        console.table(
+          worktrees.map((w) => ({
+            name: w.name,
+            branch: w.branch,
+            ahead: w.ahead,
+            behind: w.behind,
+            diff: `${w.files} files +${w.insertions} -${w.deletions}`,
+            uncommitted: w.dirty,
+          })),
+        );
+      }
+      return;
+    }
+
+    case "merge": {
+      if (!rest[0]) die("usage: hive merge <agent-name>");
+      const r = await mergeWorktree(values.cwd ?? process.cwd(), rest[0]);
+      (r.ok ? console.log : console.error)(r.ok ? green(r.message) : red(r.message));
+      if (!r.ok) process.exitCode = 1;
+      return;
+    }
+
+    case "worktree": {
+      const [sub, name] = rest;
+      if (sub !== "rm" || !name) die("usage: hive worktree rm <name> [--force]");
+      await removeWorktree(values.cwd ?? process.cwd(), name, { force: values.force, deleteBranch: values.force });
+      console.log(`removed worktree ${name}${values.force ? " and its branch" : " (branch kept)"}`);
       return;
     }
 

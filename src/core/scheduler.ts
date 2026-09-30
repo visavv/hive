@@ -22,6 +22,7 @@ import type { Hub } from "./hub.js";
 import type { AgentSession, PermissionPolicy, TurnResult } from "./session.js";
 import type { JobRow } from "../hive/db.js";
 import { ChangeCounter, describeDiff, watchTree, type DiffStat } from "./watch.js";
+import { selfIgnoreHiveDir } from "./worktree.js";
 
 export interface SchedulerOptions {
   hub: Hub;
@@ -175,6 +176,8 @@ export class Scheduler {
         cwd: job.cwd,
         role: job.role,
         policy: job.policy as PermissionPolicy,
+        briefing: job.briefing || undefined,
+        worktree: !!job.worktree,
       });
       if (!existed) this.startedAgents.add(job.agent);
     } catch (e: any) {
@@ -288,6 +291,7 @@ export class Scheduler {
     if (job.fresh_session && job.kind !== "once") {
       const notes = this.notesPath(job);
       if (!existsSync(notes)) {
+        selfIgnoreHiveDir(dirname(dirname(notes)));
         mkdirSync(dirname(notes), { recursive: true });
         writeFileSync(
           notes,

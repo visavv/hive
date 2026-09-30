@@ -5,7 +5,8 @@
  */
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { existsSync, writeFileSync } from "node:fs";
 
 export interface Message {
   id: number;
@@ -65,10 +66,12 @@ export interface JobRow {
   last_run: number | null;
   last_error: string | null;
   ended_reason: string | null;
+  briefing: string;
+  worktree: number;
 }
 
 export type NewJob = Pick<JobRow, "agent" | "prompt" | "kind" | "agent_kind" | "cwd"> &
-  Partial<Pick<JobRow, "remaining" | "until_ts" | "every_ms" | "watch_path" | "watch_min_lines" | "fresh_session" | "next_run" | "policy" | "role">>;
+  Partial<Pick<JobRow, "remaining" | "until_ts" | "every_ms" | "watch_path" | "watch_min_lines" | "fresh_session" | "next_run" | "policy" | "role" | "briefing" | "worktree">>;
 
 export interface JobRunRow {
   id: number;
@@ -87,6 +90,9 @@ export class HiveDb {
 
   constructor(path: string) {
     mkdirSync(dirname(path), { recursive: true });
+    // A .hive/ dir ignores itself so it never shows up in the user's git status.
+    const gi = join(dirname(path), ".gitignore");
+    if (basename(dirname(path)) === ".hive" && !existsSync(gi)) writeFileSync(gi, "# created by hive\n*\n");
     this.db = new Database(path);
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("busy_timeout = 5000");
@@ -172,6 +178,8 @@ export class HiveDb {
       ["last_run", "INTEGER"],
       ["last_error", "TEXT"],
       ["ended_reason", "TEXT"],
+      ["briefing", "TEXT NOT NULL DEFAULT ''"],
+      ["worktree", "INTEGER NOT NULL DEFAULT 0"],
     ];
     for (const [name, type] of add) if (!cols.has(name)) this.db.exec(`ALTER TABLE jobs ADD COLUMN ${name} ${type}`);
   }
@@ -290,9 +298,9 @@ export class HiveDb {
     const r = this.db
       .prepare(
         `INSERT INTO jobs (agent, prompt, kind, remaining, until_ts, every_ms, watch_path, watch_min_lines,
-           fresh_session, next_run, enabled, created_at, agent_kind, cwd, policy, role)
+           fresh_session, next_run, enabled, created_at, agent_kind, cwd, policy, role, briefing, worktree)
          VALUES (@agent, @prompt, @kind, @remaining, @until_ts, @every_ms, @watch_path, @watch_min_lines,
-           @fresh_session, @next_run, 1, @created_at, @agent_kind, @cwd, @policy, @role)`,
+           @fresh_session, @next_run, 1, @created_at, @agent_kind, @cwd, @policy, @role, @briefing, @worktree)`,
       )
       .run({
         remaining: null,
@@ -304,6 +312,8 @@ export class HiveDb {
         next_run: Date.now(),
         policy: "allow-reads",
         role: "",
+        briefing: "",
+        worktree: 0,
         ...j,
         created_at: Date.now(),
       });

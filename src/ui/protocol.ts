@@ -18,6 +18,30 @@ export interface PaneSpec {
   cwd: string;
   role?: string;
   policy?: Policy;
+  /** Role preset id (roles.ts): adds its briefing. */
+  preset?: string;
+  /** Run in its own git worktree (.hive/worktrees/<name>). */
+  worktree?: boolean;
+}
+
+export interface PresetView {
+  id: string;
+  label: string;
+  role: string;
+  policy: Policy;
+  worktree: boolean;
+  job?: string;
+}
+
+export interface WorktreeView {
+  name: string;
+  branch: string;
+  ahead: number;
+  behind: number;
+  files: number;
+  insertions: number;
+  deletions: number;
+  dirty: number;
 }
 
 export interface Layout {
@@ -93,7 +117,7 @@ export interface ElicitationAsk {
 
 /** Backend → UI */
 export type BackendEvent =
-  | { event: "ready"; kinds: { id: string; label: string }[]; cwd: string; layout: Layout; db: string }
+  | { event: "ready"; kinds: { id: string; label: string }[]; presets: PresetView[]; cwd: string; layout: Layout; db: string }
   | { event: "agent"; agent: string; e: SessionEvent | { type: "prompt"; text: string; queued?: boolean } }
   | { event: "agents"; agents: AgentView[] }
   | { event: "jobs"; jobs: JobView[] }
@@ -106,7 +130,9 @@ export type BackendEvent =
 
 /** UI → backend requests; each gets `{id, result}` or `{id, error}`. */
 export interface Methods {
-  addAgent: (p: PaneSpec & { resume?: boolean }) => AgentView;
+  addAgent: (p: PaneSpec & { resume?: boolean; startJob?: boolean }) => AgentView;
+  worktrees: (p: Record<string, never>) => { repo: string; base: string; worktrees: WorktreeView[] }[];
+  mergeWorktree: (p: { name: string; repo: string }) => { ok: boolean; message: string };
   removeAgent: (p: { name: string; forget?: boolean }) => void;
   prompt: (p: { name: string; text: string }) => void;
   broadcast: (p: { names: string[]; text: string }) => void;
