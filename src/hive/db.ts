@@ -189,6 +189,26 @@ export class HiveDb {
         PRIMARY KEY (message_id, agent)
       );
       CREATE INDEX IF NOT EXISTS events_agent ON events(agent, id);
+      -- Usage per finished turn (tokens / cost) and provider limit windows.
+      CREATE TABLE IF NOT EXISTS usage_log (
+        ts INTEGER NOT NULL,
+        agent TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        tokens INTEGER NOT NULL,
+        cost_usd REAL NOT NULL DEFAULT 0,
+        automatic INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS usage_log_ts ON usage_log(ts);
+      CREATE TABLE IF NOT EXISTS limits (
+        provider TEXT NOT NULL,
+        window TEXT NOT NULL,
+        utilization REAL,
+        resets_at INTEGER,
+        status TEXT,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (provider, window)
+      );
+      CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       -- Groups: mail to "@<group>" reaches every member (agents or "owner").
       CREATE TABLE IF NOT EXISTS group_members (
         grp TEXT NOT NULL,
@@ -374,6 +394,44 @@ export class HiveDb {
     return this.db.prepare(`SELECT * FROM messages WHERE thread=? ORDER BY id`).all(thread) as Message[];
   }
 
+  // ---- usage, limits, settings ----
+  recordUsage(agent: string, provider: string, tokens: number, costUsd = 0, automatic = false) {
+    this.db
+      .prepare(`INSERT INTO usage_log (ts, agent, provider, tokens, cost_usd, automatic) VALUES (?,?,?,?,?,?)`)
+      .run(Date.now(), agent, provider, Math.max(0, Math.round(tokens)), costUsd, automatic ? 1 : 0);
+  }
+  /** Tokens and cost since `since`, per provider (optionally only automatic work). */
+  usageSince(since: number, automaticOnly = false): { provider: string; tokens: number; cost: number; turns: number }[] {
+    return this.db
+      .prepare(
+        `SELECT provider, SUM(tokens) AS tokens, SUM(cost_usd) AS cost, COUNT(*) AS turns FROM usage_log WHERE ts>=?${automaticOnly ? " AND automatic=1" : ""} GROUP BY provider ORDER BY provider`,
+      )
+      .all(since) as { provider: string; tokens: number; cost: number; turns: number }[];
+  }
+  setLimit(provider: string, window: string, l: { utilization?: number | null; resets_at?: number | null; status?: string | null }) {
+    this.db
+      .prepare(
+        `INSERT INTO limits (provider, window, utilization, resets_at, status, updated_at) VALUES (@provider,@window,@u,@r,@s,@t)
+         ON CONFLICT(provider, window) DO UPDATE SET utilization=COALESCE(excluded.utilization, utilization),
+           resets_at=COALESCE(excluded.resets_at, resets_at), status=COALESCE(excluded.status, status), updated_at=excluded.updated_at`,
+      )
+      .run({ provider, window, u: l.utilization ?? null, r: l.resets_at ?? null, s: l.status ?? null, t: Date.now() });
+  }
+  limits(): { provider: string; window: string; utilization: number | null; resets_at: number | null; status: string | null; updated_at: number }[] {
+    return this.db.prepare(`SELECT * FROM limits ORDER BY provider, window`).all() as any;
+  }
+  getSetting(key: string): string | undefined {
+    return (this.db.prepare(`SELECT value FROM settings WHERE key=?`).get(key) as { value: string } | undefined)?.value;
+  }
+  setSetting(key: string, value: string | null) {
+    if (value === null) this.db.prepare(`DELETE FROM settings WHERE key=?`).run(key);
+    else this.db.prepare(`INSERT INTO settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(key, value);
+  }
+  settings(prefix = ""): Record<string, string> {
+    const rows = this.db.prepare(`SELECT key, value FROM settings WHERE key LIKE ?`).all(prefix + "%") as { key: string; value: string }[];
+    return Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  }
+
   // ---- groups ----
   addToGroup(grp: string, members: string[]) {
     const stmt = this.db.prepare(`INSERT OR IGNORE INTO group_members (grp, member, added_at) VALUES (?,?,?)`);
@@ -530,6 +588,7 @@ export class HiveDb {
     this.db.prepare(`DELETE FROM events WHERE ts < ?`).run(cutoff);
     this.db.prepare(`DELETE FROM job_runs WHERE ended IS NOT NULL AND ended < ?`).run(cutoff);
     // message_reads are never pruned: dropping them would make old broadcasts unread again.
+    this.db.prepare(`DELETE FROM usage_log WHERE ts < ?`).run(Date.now() - Math.max(days, 35) * 86_400_000);
   }
   messagesSince(ts: number, limit = 500): Message[] {
     return this.db.prepare(`SELECT * FROM messages WHERE ts>=? ORDER BY id DESC LIMIT ?`).all(ts, limit) as Message[];

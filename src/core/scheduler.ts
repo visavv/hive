@@ -23,6 +23,7 @@ import type { AgentSession, PermissionPolicy, TurnResult } from "./session.js";
 import type { JobRow } from "../hive/db.js";
 import { BB_PREFIX, BRANCHES, ChangeCounter, branchChanges, branchTips, describeDiff, watchTree, type DiffStat } from "./watch.js";
 import { baseBranch, repoRoot, selfIgnoreHiveDir } from "./worktree.js";
+import { budgetSetting, checkAutomatic, notifyOnce } from "./budget.js";
 
 export interface SchedulerOptions {
   hub: Hub;
@@ -86,6 +87,7 @@ export class Scheduler {
   /** Watch jobs paused by a usage limit (other kinds just wait on next_run). */
   private pausedUntil = new Map<number, number>();
   private pauseStreak = new Map<number, number>();
+  private heldJobs = new Set<number>();
   /** Jobs whose agent lives in another process; don't reclaim them for a while. */
   private handOff = new Map<number, number>();
   private ticking = false;
@@ -201,8 +203,27 @@ export class Scheduler {
 
   // ---- running ----
 
+  /** Budget / subscription reserve / concurrency check before automatic work. */
+  private held(job: JobRow): boolean {
+    const max = Number(budgetSetting(this.db, "max_concurrent") ?? "3");
+    if (max > 0 && this.running.size >= max) return true;
+    const g = checkAutomatic(this.db, job.agent_kind);
+    if (g.ok) {
+      this.heldJobs.delete(job.id);
+      return false;
+    }
+    if (!this.heldJobs.has(job.id)) {
+      this.heldJobs.add(job.id);
+      this.db.updateJob(job.id, { last_error: `held: ${g.reason}` });
+      this.opts.onJob?.({ type: "paused", job, until: g.until ?? Date.now() + 10 * 60_000, reason: g.reason });
+      notifyOnce(this.db, g);
+    }
+    return true;
+  }
+
   /** Mark the job running synchronously, so the next tick can't start it twice. */
   private launch(job: JobRow, extra?: WatchFire) {
+    if (this.held(job)) return;
     this.running.set(job.id, null);
     void this.run(job, extra).finally(() => this.running.delete(job.id));
   }
@@ -317,6 +338,7 @@ export class Scheduler {
     this.pauseStreak.set(job.id, n);
     if (n % 6 === 0) return this.fail(job, `still limited after ${n} pauses: ${error}`);
     const until = resetTime(error) ?? Date.now() + (this.opts.rateLimitWaitMs ?? 30 * 60_000);
+    this.db.setLimit(job.agent_kind, "limit-hit", { status: "rejected", resets_at: until, utilization: 100 });
     this.db.updateJob(job.id, { next_run: until, last_error: `paused (usage limit): ${error.slice(0, 300)}` });
     const cur = this.db.getJob(job.id) ?? job;
     if (cur.until_ts != null && until >= cur.until_ts) return this.end(cur, "until");

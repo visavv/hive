@@ -81,7 +81,7 @@ export function App() {
   const toasts = useStore((s) => s.toasts);
   const [adding, setAdding] = useState(false);
   const [jobFor, setJobFor] = useState<string | null>(null);
-  const [drawer, setDrawer] = useState(false);
+  const [drawer, setDrawer] = useState<false | "default" | "usage">(false);
   const [dialog, setDialog] = useState<"" | "recipes" | "skills">("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
@@ -128,7 +128,7 @@ export function App() {
         setDialog("skills");
       } else if (mod && e.key.toLowerCase() === "i") {
         e.preventDefault();
-        setDrawer((d) => !d);
+        setDrawer((d) => (d ? false : "default"));
       } else if (mod && e.key.toLowerCase() === "m") {
         e.preventDefault();
         const a = focus.active;
@@ -152,7 +152,8 @@ export function App() {
         selected={selected}
         setSelected={setSelected}
         onAdd={() => setAdding(true)}
-        onHive={() => setDrawer(!drawer)}
+        onHive={() => setDrawer(drawer ? false : "default")}
+        onUsage={() => setDrawer(drawer === "usage" ? false : "usage")}
         onRecipes={() => setDialog("recipes")}
         onSkills={() => setDialog("skills")}
       />
@@ -194,7 +195,7 @@ export function App() {
       </main>
       {adding && <AddAgentDialog onClose={() => setAdding(false)} />}
       {jobFor && <JobDialog agent={jobFor} onClose={() => setJobFor(null)} />}
-      {drawer && <Drawer onClose={() => setDrawer(false)} />}
+      {drawer && <Drawer key={drawer} initialTab={drawer === "usage" ? "usage" : undefined} onClose={() => setDrawer(false)} />}
       {dialog === "recipes" && <RecipesDialog onClose={() => setDialog("")} />}
       {dialog === "skills" && <SkillsDialog onClose={() => setDialog("")} />}
       <div className="toasts">
@@ -208,7 +209,8 @@ export function App() {
 
 // ---- top bar: broadcast + layout controls ----
 
-function TopBar({ names, selected, setSelected, onAdd, onHive, onRecipes, onSkills }: {
+function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onRecipes, onSkills }: {
+  onUsage: () => void;
   names: string[];
   selected: Set<string>;
   setSelected: (s: Set<string>) => void;
@@ -260,6 +262,7 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onRecipes, onSkil
         {cols} cols
         <button className="ghost" disabled={cols >= 8} onClick={() => saveLayout({ columns: cols + 1, widths: undefined })}>+</button>
       </span>
+      <UsageChip onClick={onUsage} />
       <button className="ghost" onClick={onSkills} title="reusable prompts with parameters (Ctrl+K)">
         ✦ Skills
       </button>
@@ -271,6 +274,32 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onRecipes, onSkil
       </button>
       <button className="primary" onClick={onAdd} title="add agent (Ctrl+N)">+ Agent</button>
     </div>
+  );
+}
+
+/** Fullest subscription window across providers; amber/red as it fills, ⏸ when automatic work is held. */
+function UsageChip({ onClick }: { onClick: () => void }) {
+  const [u, setU] = useState<Awaited<ReturnType<typeof rpc<"usage">>> | null>(null);
+  useEffect(() => {
+    const load = () => void rpc("usage", {}).then(setU).catch(() => {});
+    load();
+    const t = setInterval(load, 10_000);
+    return () => clearInterval(t);
+  }, []);
+  if (!u) return null;
+  let worst: { p: string; w: string; pct: number } | null = null;
+  for (const p of u.providers)
+    for (const l of p.limits) {
+      const pct = l.status === "rejected" ? 100 : (l.pct ?? -1);
+      if (pct >= 0 && (!worst || pct > worst.pct)) worst = { p: p.provider, w: l.window, pct };
+    }
+  const held = u.budget.paused === "1" || u.providers.some((p) => !p.guard.ok);
+  const lvl = held || (worst?.pct ?? 0) >= 90 ? "err" : (worst?.pct ?? 0) >= 70 ? "warn" : "";
+  return (
+    <button className={`ghost usage-chip ${lvl}`} onClick={onClick} title="usage, limits and spending guards">
+      {held ? "⏸ " : ""}
+      {worst ? `${worst.p} ${Math.max(0, 100 - Math.round(worst.pct))}% left` : "Usage"}
+    </button>
   );
 }
 

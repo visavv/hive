@@ -8,7 +8,8 @@ import { rpc } from "./bridge.js";
 import { store, useStore } from "./store.js";
 import { fmtIdle } from "./format.js";
 
-type Tab = "report" | "inbox" | "board" | "mail";
+type Tab = "report" | "inbox" | "board" | "mail" | "usage";
+type Usage = Awaited<ReturnType<typeof rpc<"usage">>>;
 type HiveData = Awaited<ReturnType<typeof rpc<"hiveData">>>;
 
 const SINCE: [string, number][] = [
@@ -18,8 +19,8 @@ const SINCE: [string, number][] = [
   ["7d", 7 * 86_400_000],
 ];
 
-export function Drawer({ onClose }: { onClose: () => void }) {
-  const [tab, setTab] = useState<Tab>(store.ownerUnread ? "inbox" : "report");
+export function Drawer({ onClose, initialTab }: { onClose: () => void; initialTab?: Tab }) {
+  const [tab, setTab] = useState<Tab>(initialTab ?? (store.ownerUnread ? "inbox" : "report"));
   const [data, setData] = useState<HiveData | null>(null);
   const [report, setReport] = useState<Report | null>(null);
   const [since, setSince] = useState(12 * 3_600_000);
@@ -44,9 +45,9 @@ export function Drawer({ onClose }: { onClose: () => void }) {
       <div className="drawer-head">
         <strong>Hive</strong>
         <div className="seg">
-          {(["report", "inbox", "board", "mail"] as Tab[]).map((t) => (
+          {(["report", "inbox", "board", "mail", "usage"] as Tab[]).map((t) => (
             <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>
-              {t === "report" ? "Since you left" : t === "inbox" ? `Inbox${unread ? ` (${unread})` : ""}` : t === "board" ? "Blackboard" : "All mail"}
+              {t === "report" ? "Since you left" : t === "inbox" ? `Inbox${unread ? ` (${unread})` : ""}` : t === "board" ? "Blackboard" : t === "usage" ? "Usage" : "All mail"}
             </button>
           ))}
         </div>
@@ -77,6 +78,7 @@ export function Drawer({ onClose }: { onClose: () => void }) {
           </>
         )}
         {tab === "board" && <Board rows={data?.blackboard ?? []} onChange={refresh} />}
+        {tab === "usage" && <UsageView />}
         {tab === "mail" && (
           <>
             {(data?.messages ?? []).map((m) => (
@@ -143,6 +145,111 @@ function ReportView({ r }: { r: Report }) {
         </section>
       )}
       <div className="dim small">{r.mailCount} hive messages exchanged.</div>
+    </div>
+  );
+}
+
+const kTok = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
+const BUDGET_HELP: Record<string, string> = {
+  daily_tokens: "all providers, per day (empty = no cap)",
+  reserve_pct: "stop automatic work when a subscription window is this full",
+  max_concurrent: "automatic runs at once",
+  media_daily: "image / voice API calls per day",
+  paused: "1 = stop all automatic work",
+};
+
+/** Tokens per provider, subscription windows with reset countdowns, spending guards. */
+export function UsageView() {
+  const [u, setU] = useState<Usage | null>(null);
+  const [, tick] = useState(0);
+  const load = () => void rpc("usage", {}).then(setU).catch((e) => store.toast(e.message, "error"));
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 15_000);
+    const c = setInterval(() => tick((n) => n + 1), 1000);
+    return () => {
+      clearInterval(t);
+      clearInterval(c);
+    };
+  }, []);
+  const set = (key: string, value: string) =>
+    void rpc("setBudget", { key, value })
+      .then((r) => {
+        setU(r);
+        store.toast(`${key} ${value === "" ? "cleared" : `= ${value}`}`);
+      })
+      .catch((e) => store.toast(e.message, "error"));
+  if (!u) return <div className="dim pad">loading…</div>;
+  const paused = u.budget.paused === "1";
+  return (
+    <div className="usage">
+      <div className={`usage-pause${paused ? " on" : ""}`}>
+        <span>{paused ? "⏸ Automatic work is paused (jobs, mail wake-ups). Your own prompts still run." : "Automatic work is running within the limits below."}</span>
+        <span className="spacer" />
+        <button className={paused ? "" : "danger"} onClick={() => set("paused", paused ? "0" : "1")}>
+          {paused ? "Resume" : "Pause all automatic work"}
+        </button>
+      </div>
+      {!u.providers.length && <div className="dim pad">No usage yet. Numbers appear after the first turn.</div>}
+      {u.providers.map((p) => (
+        <section key={p.provider} className="usage-prov">
+          <div className="row1">
+            <strong>{p.provider}</strong>
+            <span className="dim small">
+              5h {kTok(p.h5)} · today {kTok(p.d1)} · 7d {kTok(p.d7)} tok{p.cost7 ? ` · $${p.cost7.toFixed(2)} 7d (API-equivalent)` : ""}
+            </span>
+          </div>
+          {p.limits.map((l) => {
+            const pct = l.pct == null ? null : Math.min(100, Math.max(0, l.pct));
+            const left = l.resetsAt ? Math.max(0, l.resetsAt - Date.now()) : null;
+            const lvl = l.status === "rejected" || (pct ?? 0) >= 90 ? "err" : (pct ?? 0) >= 70 ? "warn" : "ok";
+            return (
+              <div key={l.window} className="usage-win">
+                <span className="usage-label">{l.window.replace(/_/g, " ")}</span>
+                <div className="usage-bar" title={pct == null ? (l.status ?? "") : `${Math.round(pct)}% used`}>
+                  <div className={`usage-fill ${lvl}`} style={{ width: `${pct ?? (l.status === "rejected" ? 100 : 0)}%` }} />
+                </div>
+                <span className="small">{pct != null ? `${Math.max(0, 100 - Math.round(pct))}% left` : l.status === "rejected" ? "limit hit" : (l.status ?? "")}</span>
+                <span className="dim small">{left != null ? `resets in ${fmtIdle(left)}` : ""}</span>
+              </div>
+            );
+          })}
+          {!p.limits.length && <div className="dim small">No limit window reported (Claude reports its 5-hour/weekly windows while it runs; others show a window once a limit is hit).</div>}
+          {!p.guard.ok && <div className="warn small">automatic work held: {p.guard.reason}</div>}
+        </section>
+      ))}
+      <section>
+        <h3>Spending guards</h3>
+        <div className="dim small">Only automatic work (scheduled jobs, agents waking each other) is held. Values: 2m, 500k. Empty = default/off.</div>
+        {Object.keys(BUDGET_HELP)
+          .filter((k) => k !== "paused")
+          .map((k) => (
+            <BudgetRow key={k} k={k} value={u.budget[k] ?? ""} help={BUDGET_HELP[k]} onSet={set} />
+          ))}
+        {Object.entries(u.budget)
+          .filter(([k]) => k.startsWith("daily_tokens."))
+          .map(([k, v]) => (
+            <BudgetRow key={k} k={k} value={v} help="per-provider daily cap" onSet={set} />
+          ))}
+        <BudgetRow k="" value="" help="add a per-provider cap, e.g. daily_tokens.claude" onSet={set} />
+      </section>
+    </div>
+  );
+}
+
+function BudgetRow({ k, value, help, onSet }: { k: string; value: string; help: string; onSet: (k: string, v: string) => void }) {
+  const [key, setKey] = useState(k);
+  const [v, setV] = useState(value);
+  useEffect(() => setV(value), [value]);
+  const dirty = v !== value || key !== k;
+  return (
+    <div className="budget-row">
+      {k ? <code>{k}</code> : <input value={key} onChange={(e) => setKey(e.target.value)} placeholder="daily_tokens.claude" aria-label="budget key" />}
+      <input value={v} onChange={(e) => setV(e.target.value)} onKeyDown={(e) => e.key === "Enter" && dirty && key && onSet(key, v)} aria-label={`${key || "new"} value`} />
+      <button className="ghost small" disabled={!dirty || !key} onClick={() => onSet(key, v)}>
+        Save
+      </button>
+      <span className="dim small">{help}</span>
     </div>
   );
 }

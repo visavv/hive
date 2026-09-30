@@ -286,9 +286,19 @@ acp
       if (sess.cancelled) return { stopReason: "cancelled" };
     }
 
+    // Like claude-agent-acp: usage with cost, and (on request) the subscription's rate-limit window.
+    const rlM = text.match(/ratelimit-meta (\d+)/);
     await cx.notify(acp.methods.client.session.update, {
       sessionId,
-      update: { sessionUpdate: "usage_update", used: 1000 * sess.turns, size: 200_000 },
+      update: {
+        sessionUpdate: "usage_update",
+        used: 1000 * sess.turns,
+        size: 200_000,
+        cost: { amount: 0.01 * sess.turns, currency: "USD" },
+        ...(rlM
+          ? { _meta: { "_claude/rateLimit": { status: "allowed_warning", rateLimitType: "five_hour", utilization: Number(rlM[1]) / 100, resetsAt: Math.floor(Date.now() / 1000) + 3600 } } }
+          : {}),
+      } as any,
     });
 
     await callTool(sess, "hive_status", { status: "idle", note: `done: ${text.slice(0, 40)}` });
