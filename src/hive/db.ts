@@ -83,6 +83,8 @@ export interface JobRunRow {
   usage: string | null;
   error: string | null;
   session_id: string | null;
+  /** Tail of the agent's final reply for this run (what it found / did). */
+  summary: string | null;
 }
 
 export class HiveDb {
@@ -162,6 +164,15 @@ export class HiveDb {
         session_id TEXT
       );
       CREATE INDEX IF NOT EXISTS job_runs_job ON job_runs(job_id, id);
+      -- Per-agent read state for broadcasts ('*'): one agent reading must not
+      -- mark it read for everyone. Direct messages use messages.read_at.
+      CREATE TABLE IF NOT EXISTS message_reads (
+        message_id INTEGER NOT NULL,
+        agent TEXT NOT NULL,
+        read_at INTEGER NOT NULL,
+        PRIMARY KEY (message_id, agent)
+      );
+      CREATE INDEX IF NOT EXISTS events_agent ON events(agent, id);
     `);
     // Additive column migrations for dbs created by phase 1.
     const cols = new Set((this.db.prepare(`PRAGMA table_info(jobs)`).all() as { name: string }[]).map((c) => c.name));
@@ -182,6 +193,8 @@ export class HiveDb {
       ["worktree", "INTEGER NOT NULL DEFAULT 0"],
     ];
     for (const [name, type] of add) if (!cols.has(name)) this.db.exec(`ALTER TABLE jobs ADD COLUMN ${name} ${type}`);
+    const runCols = new Set((this.db.prepare(`PRAGMA table_info(job_runs)`).all() as { name: string }[]).map((c) => c.name));
+    if (!runCols.has("summary")) this.db.exec(`ALTER TABLE job_runs ADD COLUMN summary TEXT`);
   }
 
   // ---- agents ----
@@ -220,29 +233,38 @@ export class HiveDb {
       .run(Date.now(), from, to, subject, body, thread ?? null);
     return Number(r.lastInsertRowid);
   }
+  /**
+   * Messages for `agent`: direct ones plus broadcasts from others. read_at is
+   * per-agent for broadcasts (message_reads), shared for direct messages.
+   */
   inbox(agent: string, unreadOnly = true, limit = 50): Message[] {
+    const base = `SELECT m.id, m.ts, m.from_agent, m.to_agent, m.subject, m.body, m.thread,
+        CASE WHEN m.to_agent='*' THEN r.read_at ELSE m.read_at END AS read_at
+      FROM messages m LEFT JOIN message_reads r ON r.message_id=m.id AND r.agent=@agent
+      WHERE (m.to_agent=@agent OR m.to_agent='*') AND m.from_agent<>@agent`;
     const sql = unreadOnly
-      ? `SELECT * FROM messages WHERE (to_agent=? OR to_agent='*') AND from_agent<>? AND read_at IS NULL ORDER BY id LIMIT ?`
-      : `SELECT * FROM messages WHERE (to_agent=? OR to_agent='*') AND from_agent<>? ORDER BY id DESC LIMIT ?`;
-    return this.db.prepare(sql).all(agent, agent, limit) as Message[];
+      ? `${base} AND (CASE WHEN m.to_agent='*' THEN r.read_at ELSE m.read_at END) IS NULL ORDER BY m.id LIMIT @limit`
+      : `${base} ORDER BY m.id DESC LIMIT @limit`;
+    return this.db.prepare(sql).all({ agent, limit }) as Message[];
   }
   unreadCount(agent: string): number {
-    const r = this.db
+    return this.unreadRows(agent).length;
+  }
+  private unreadRows(agent: string): { from_agent: string; subject: string }[] {
+    return this.db
       .prepare(
-        `SELECT COUNT(*) AS n FROM messages WHERE (to_agent=? OR to_agent='*') AND from_agent<>? AND read_at IS NULL`,
+        `SELECT m.from_agent, m.subject FROM messages m
+         LEFT JOIN message_reads r ON r.message_id=m.id AND r.agent=@agent
+         WHERE (m.to_agent=@agent OR m.to_agent='*') AND m.from_agent<>@agent
+           AND (CASE WHEN m.to_agent='*' THEN r.read_at ELSE m.read_at END) IS NULL
+         ORDER BY m.id`,
       )
-      .get(agent, agent) as { n: number };
-    return r.n;
+      .all({ agent }) as { from_agent: string; subject: string }[];
   }
   /** Unread mail grouped by sender, for the wake-up prompt. */
   unreadSummary(agent: string): { from: string; count: number; subjects: string[] }[] {
-    const rows = this.db
-      .prepare(
-        `SELECT from_agent, subject FROM messages WHERE (to_agent=? OR to_agent='*') AND from_agent<>? AND read_at IS NULL ORDER BY id`,
-      )
-      .all(agent, agent) as { from_agent: string; subject: string }[];
     const by = new Map<string, { from: string; count: number; subjects: string[] }>();
-    for (const r of rows) {
+    for (const r of this.unreadRows(agent)) {
       const e = by.get(r.from_agent) ?? { from: r.from_agent, count: 0, subjects: [] };
       e.count++;
       e.subjects.push(r.subject);
@@ -250,11 +272,20 @@ export class HiveDb {
     }
     return [...by.values()];
   }
-  markRead(ids: number[]) {
+  /** Mark messages read by `agent` (broadcasts only for that agent). */
+  markRead(ids: number[], agent?: string) {
     if (!ids.length) return;
-    const stmt = this.db.prepare(`UPDATE messages SET read_at=? WHERE id=?`);
     const now = Date.now();
-    this.db.transaction(() => ids.forEach((id) => stmt.run(now, id)))();
+    const direct = this.db.prepare(`UPDATE messages SET read_at=? WHERE id=? AND to_agent<>'*'`);
+    const bcast = this.db.prepare(
+      `INSERT OR IGNORE INTO message_reads (message_id, agent, read_at) SELECT id, ?, ? FROM messages WHERE id=? AND to_agent='*'`,
+    );
+    this.db.transaction(() =>
+      ids.forEach((id) => {
+        direct.run(now, id);
+        if (agent) bcast.run(agent, now, id);
+      }),
+    )();
   }
   thread(thread: string): Message[] {
     return this.db.prepare(`SELECT * FROM messages WHERE thread=? ORDER BY id`).all(thread) as Message[];
@@ -353,6 +384,9 @@ export class HiveDb {
       return this.db.prepare(`SELECT * FROM jobs WHERE enabled=1 AND owner=?${filter} ORDER BY id`).all(owner) as JobRow[];
     })();
   }
+  renewLeases(owner: string, leaseMs: number) {
+    this.db.prepare(`UPDATE jobs SET lease_until=? WHERE owner=? AND enabled=1`).run(Date.now() + leaseMs, owner);
+  }
   releaseJobs(owner: string) {
     this.db.prepare(`UPDATE jobs SET owner=NULL, lease_until=NULL WHERE owner=?`).run(owner);
   }
@@ -362,10 +396,18 @@ export class HiveDb {
       .run(jobId, iteration, Date.now(), sessionId);
     return Number(r.lastInsertRowid);
   }
-  endRun(runId: number, r: { stopReason?: string; usage?: unknown; error?: string }) {
+  endRun(runId: number, r: { stopReason?: string; usage?: unknown; error?: string; summary?: string; sessionId?: string }) {
     this.db
-      .prepare(`UPDATE job_runs SET ended=?, stop_reason=?, usage=?, error=? WHERE id=?`)
-      .run(Date.now(), r.stopReason ?? null, r.usage == null ? null : JSON.stringify(r.usage), r.error ?? null, runId);
+      .prepare(`UPDATE job_runs SET ended=?, stop_reason=?, usage=?, error=?, summary=?, session_id=COALESCE(?, session_id) WHERE id=?`)
+      .run(
+        Date.now(),
+        r.stopReason ?? null,
+        r.usage == null ? null : JSON.stringify(r.usage),
+        r.error ?? null,
+        r.summary ? r.summary.slice(-2000) : null,
+        r.sessionId ?? null,
+        runId,
+      );
   }
   jobRuns(jobId: number, limit = 50): JobRunRow[] {
     return this.db

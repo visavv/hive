@@ -81,6 +81,8 @@ export interface AgentView {
   config: ConfigOptionView[];
   auth?: string;
   jobs: number;
+  /** Current git branch of the agent's folder, if any. */
+  branch?: string;
 }
 
 export interface JobView {

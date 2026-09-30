@@ -5,7 +5,7 @@
  */
 import { AgentSession, type SessionOptions, type SessionEvent } from "./session.js";
 import { HiveDb } from "../hive/db.js";
-import { resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { ensureWorktree } from "./worktree.js";
 
 export interface HubOptions {
@@ -62,7 +62,8 @@ export class Hub {
 
   private async start(o: AddOptions): Promise<AgentSession> {
     const { resume, worktree, ...rest } = o;
-    if (worktree) rest.cwd = (await ensureWorktree(o.cwd, o.name)).path;
+    // Worktrees live next to the hive db (the per-user project dir by default).
+    if (worktree) rest.cwd = (await ensureWorktree(o.cwd, o.name, join(dirname(this.hiveDb), "worktrees"))).path;
     let resumeSessionId = rest.resumeSessionId;
     if (resume && !resumeSessionId) {
       const prev = this.db.getAgent(o.name);

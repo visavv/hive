@@ -8,6 +8,7 @@
  * Add a new vendor by adding an entry; nothing else in the hub changes.
  */
 import { nodeEntry } from "./paths.js";
+import { spawnSync, type ChildProcess } from "node:child_process";
 
 export interface AgentDef {
   /** Short id used in config and hive addressing, e.g. "claude". */
@@ -110,4 +111,17 @@ export function spawnSpec(def: AgentDef, platform = process.platform): { command
 export function winQuote(a: string): string {
   if (a !== "" && !/[\s"&|<>^()%!]/.test(a)) return a;
   return `"${a.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, "$1$1")}"`;
+}
+
+/**
+ * Stop an agent and everything it spawned. On Windows a shell-launched
+ * adapter is cmd.exe → npx → node → claude; kill() would only end cmd.exe.
+ */
+export function killTree(proc: ChildProcess | undefined) {
+  if (!proc || proc.exitCode !== null || proc.pid == null) return;
+  if (process.platform === "win32") {
+    spawnSync("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { windowsHide: true });
+  } else {
+    proc.kill();
+  }
 }

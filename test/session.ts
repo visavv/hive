@@ -101,5 +101,41 @@ await hub.remove("carol", false);
 const carol4 = await hub.add({ name: "carol", agent: mock("carol"), cwd: dir, policy: "allow-all", resume: true });
 assert(carol4.sessionId !== sid, "no resume when cwd changed");
 
+
+// ---- a broken agent with unread mail must not spin ----
+const broken = await hub.add({ name: "broken", agent: mock("broken", { MOCK_FAIL: "1" }), cwd: process.cwd(), policy: "allow-all" });
+hub.db.send("carol", "broken", "hi", "x");
+hub.run();
+await new Promise((r) => setTimeout(r, 3000));
+const tries = hub.db.events(0, 100_000).filter((e) => e.agent === "broken" && e.type === "prompt").length;
+assert(tries >= 1 && tries <= 2, `failing wake-ups back off instead of spinning (${tries} tries in 3 s)`);
+await hub.remove("broken");
+
+// ---- cancel answers a pending permission ask with "cancelled" ----
+let asked = false;
+const waiter = await hub.add({
+  name: "waiter",
+  agent: mock("waiter"),
+  cwd: process.cwd(),
+  policy: "ask",
+  askPermission: () => {
+    asked = true;
+    return new Promise<string>(() => {}); // nobody answers
+  },
+});
+const turn = waiter.runOnce("please edit something");
+await until(() => asked, 5000, "permission ask");
+await waiter.cancel();
+const tr = await Promise.race([turn, new Promise<null>((r) => setTimeout(() => r(null), 5000))]);
+assert(tr && log.some((l) => l.agent === "waiter" && l.e.type === "permission" && l.e.decision === "cancelled"), "cancel() resolves a pending permission as cancelled and the turn ends");
+assert(texts("waiter").includes("edit rejected"), "agent saw the cancelled permission as not allowed");
+
+// ---- two fresh runs racing on one agent stay serialized ----
+const racer = await hub.add({ name: "racer", agent: mock("racer"), cwd: process.cwd(), policy: "allow-all" });
+const sessions = new Set<string>();
+racer.on("event", (e) => e.type === "session" && sessions.add(e.sessionId));
+const [a, b] = await Promise.all([racer.runOnce("one", { fresh: true }), racer.runOnce("two", { fresh: true })]);
+assert(a.sessionId && b.sessionId && a.sessionId !== b.sessionId && sessions.size === 1, "concurrent fresh runs get their own sessions, no orphans");
+
 await hub.close();
 finish("session");
