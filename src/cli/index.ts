@@ -519,7 +519,7 @@ async function main() {
             schedule: schedule(j),
             runs: j.runs,
             state: j.enabled ? (j.owner ? "running" : "queued") : j.ended_reason ?? "ended",
-            next: j.enabled && j.kind !== "watch" ? ago(j.next_run) : "-",
+            next: j.enabled && j.kind !== "watch" ? (j.next_run <= Date.now() ? "due" : ago(j.next_run)) : j.enabled ? "on change" : "-",
             last: ago(j.last_run),
             error: (j.last_error ?? "").slice(0, 40),
             prompt: j.prompt.slice(0, 40),
