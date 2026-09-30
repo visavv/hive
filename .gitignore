@@ -4,3 +4,4 @@ dist
 *.db
 *.db-*
 .hive-test*/
+dist-ui

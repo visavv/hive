@@ -1,0 +1,527 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { Layout, PaneSpec, Policy } from "../protocol.js";
+import { connect, onEvent, onFocusLast, rpc } from "./bridge.js";
+import { store, useStore } from "./store.js";
+import { Pane } from "./Pane.js";
+import { focus } from "./focus.js";
+import { ctxPct, fmtIdle, parseDuration, statusLabel, suggestName } from "./format.js";
+
+const POLICIES: Policy[] = ["ask", "allow-reads", "allow-all", "reject-all"];
+
+function saveLayout(patch: Partial<Layout>) {
+  store.layout = { ...store.layout, ...patch };
+  store.bump();
+  void rpc("saveLayout", store.layout);
+}
+
+async function openPane(spec: PaneSpec, persist = true) {
+  if (persist && !store.layout.panes.some((p) => p.name === spec.name)) saveLayout({ panes: [...store.layout.panes, spec] });
+  store.starting.set(spec.name, { kind: spec.kind });
+  store.bump();
+  try {
+    await rpc("addAgent", { ...spec, resume: true });
+    store.starting.delete(spec.name);
+    const rows = await rpc("history", { name: spec.name, limit: 120 });
+    store.loadHistory(spec.name, rows);
+  } catch (e: any) {
+    store.starting.set(spec.name, { kind: spec.kind, error: e.message });
+  }
+  store.bump();
+}
+
+let booted = false;
+function boot() {
+  if (booted) return;
+  booted = true;
+  onEvent((ev) => {
+    const first = ev.event === "ready" && !store.ready;
+    store.apply(ev);
+    if (first) for (const p of store.layout.panes) void openPane(p, false);
+  });
+  connect();
+  onFocusLast(() => focus.last());
+}
+
+export function App() {
+  useEffect(boot, []);
+  const ready = useStore((s) => s.ready);
+  const layout = useStore((s) => s.layout);
+  const toasts = useStore((s) => s.toasts);
+  const [adding, setAdding] = useState(false);
+  const [jobFor, setJobFor] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  const names = layout.panes.map((p) => p.name);
+  const visible = layout.maximized && names.includes(layout.maximized) ? [layout.maximized] : names;
+  useEffect(() => focus.setOrder(names), [names.join("|")]);
+
+  // Title shows how many agents need you, so it's visible from the taskbar.
+  const waitingTotal = useStore((s) => names.reduce((n, x) => n + s.waitingOn(x), 0));
+  useEffect(() => {
+    document.title = waitingTotal ? `(${waitingTotal}) hive — needs you` : "hive";
+  }, [waitingTotal]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && /^[1-9]$/.test(e.key)) {
+        e.preventDefault();
+        if (layout.maximized) saveLayout({ maximized: null });
+        focus.nth(Number(e.key) - 1);
+      } else if (e.ctrlKey && e.key === "Tab") {
+        e.preventDefault();
+        focus.cycle(e.shiftKey ? -1 : 1);
+      } else if (mod && e.key.toLowerCase() === "n" && !e.shiftKey) {
+        e.preventDefault();
+        setAdding(true);
+      } else if (mod && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        document.querySelector<HTMLInputElement>(".broadcast input")?.focus();
+      } else if (mod && e.key === "\\") {
+        e.preventDefault();
+        saveLayout({ sidebar: !store.layout.sidebar });
+      } else if (mod && e.key.toLowerCase() === "m") {
+        e.preventDefault();
+        const a = focus.active;
+        if (a) saveLayout({ maximized: store.layout.maximized === a ? null : a });
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [layout.maximized]);
+
+  if (!ready) return <div className="boot">starting hive…</div>;
+
+  return (
+    <div className={`app${layout.sidebar ? "" : " nosidebar"}`}>
+      <TopBar names={names} selected={selected} setSelected={setSelected} onAdd={() => setAdding(true)} />
+      {layout.sidebar && <Sidebar names={names} onAdd={() => setAdding(true)} />}
+      <main className="grid-wrap">
+        {names.length === 0 ? (
+          <div className="welcome">
+            <h1>hive</h1>
+            <p>Run Claude Code, Codex, Qwen and friends side by side. They can message each other through the hive.</p>
+            <button className="primary" onClick={() => setAdding(true)}>+ Add an agent</button>
+            <p className="dim">
+              Ctrl+N add · Ctrl+1..9 jump · Ctrl+Tab cycle · Ctrl+B broadcast · Ctrl+M maximize · Ctrl+\ sidebar · hover a pane to type into it
+            </p>
+          </div>
+        ) : (
+          <Grid names={visible} columns={layout.maximized ? 1 : layout.columns} widths={layout.maximized ? [1] : layout.widths}>
+            {visible.map((n) => (
+              <Pane
+                key={n}
+                name={n}
+                index={names.indexOf(n)}
+                onMaximize={() => saveLayout({ maximized: layout.maximized === n ? null : n })}
+                onJob={() => setJobFor(n)}
+                selected={selected.has(n)}
+                onSelect={(v) => {
+                  const s = new Set(selected);
+                  if (v) s.add(n);
+                  else s.delete(n);
+                  setSelected(s);
+                }}
+              />
+            ))}
+          </Grid>
+        )}
+      </main>
+      {adding && <AddAgentDialog onClose={() => setAdding(false)} />}
+      {jobFor && <JobDialog agent={jobFor} onClose={() => setJobFor(null)} />}
+      <div className="toasts">
+        {toasts.map((t) => (
+          <div key={t.id} className={`toast ${t.level}`}>{t.text}</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---- top bar: broadcast + layout controls ----
+
+function TopBar({ names, selected, setSelected, onAdd }: {
+  names: string[];
+  selected: Set<string>;
+  setSelected: (s: Set<string>) => void;
+  onAdd: () => void;
+}) {
+  const layout = useStore((s) => s.layout);
+  const [text, setText] = useState("");
+  const targets = names.filter((n) => selected.has(n) && store.agents.has(n));
+  const send = () => {
+    const t = text.trim();
+    if (!t) return;
+    const to = targets.length ? targets : names.filter((n) => store.agents.has(n));
+    if (!to.length) return store.toast("no running agents to broadcast to", "error");
+    void rpc("broadcast", { names: to, text: t });
+    store.toast(`sent to ${to.join(", ")}`);
+    setText("");
+  };
+  const cols = layout.columns;
+  return (
+    <div className="topbar">
+      <button className="ghost" onClick={() => saveLayout({ sidebar: !layout.sidebar })} title="toggle sidebar (Ctrl+\)">☰</button>
+      <span className="brand">hive</span>
+      <div className="broadcast">
+        <input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && send()}
+          placeholder={
+            targets.length ? `broadcast to ${targets.join(", ")}…` : `broadcast to all ${names.length} agents… (tick pane boxes to pick)`
+          }
+        />
+        <button onClick={send} disabled={!text.trim()}>Send</button>
+        {selected.size > 0 && (
+          <button className="ghost" onClick={() => setSelected(new Set())} title="clear selection">
+            ✕ {selected.size}
+          </button>
+        )}
+      </div>
+      <span className="spacer" />
+      <label className="toggle" title="hovering a pane focuses its input (for Handy / voice typing)">
+        <input type="checkbox" checked={layout.hoverFocus} onChange={(e) => saveLayout({ hoverFocus: e.target.checked })} /> hover focus
+      </label>
+      <span className="cols" title="panes per row">
+        <button className="ghost" disabled={cols <= 1} onClick={() => saveLayout({ columns: cols - 1, widths: undefined })}>−</button>
+        {cols} cols
+        <button className="ghost" disabled={cols >= 8} onClick={() => saveLayout({ columns: cols + 1, widths: undefined })}>+</button>
+      </span>
+      <button className="primary" onClick={onAdd} title="add agent (Ctrl+N)">+ Agent</button>
+    </div>
+  );
+}
+
+// ---- resizable grid ----
+
+function Grid({ names, columns, widths, children }: { names: string[]; columns: number; widths?: number[]; children: React.ReactNode }) {
+  const cols = Math.max(1, Math.min(columns, names.length));
+  const w = widths && widths.length === cols ? widths : Array(cols).fill(1);
+  const rows = Math.ceil(names.length / cols);
+  const ref = useRef<HTMLDivElement>(null);
+  const total = w.reduce((a, b) => a + b, 0);
+  const startDrag = (i: number) => (e: React.PointerEvent) => {
+    e.preventDefault();
+    const el = ref.current!;
+    const rect = el.getBoundingClientRect();
+    const start = [...w];
+    const x0 = e.clientX;
+    const move = (ev: PointerEvent) => {
+      const dfr = ((ev.clientX - x0) / rect.width) * total;
+      const next = [...start];
+      const min = total * 0.08;
+      const a = Math.max(min, start[i] + dfr);
+      const b = Math.max(min, start[i] + start[i + 1] - a);
+      next[i] = start[i] + start[i + 1] - b;
+      next[i + 1] = b;
+      store.layout = { ...store.layout, widths: next };
+      store.bump();
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      void rpc("saveLayout", store.layout);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+  let acc = 0;
+  return (
+    <div
+      className="grid"
+      ref={ref}
+      style={{ gridTemplateColumns: w.map((x) => `minmax(0, ${x}fr)`).join(" "), gridTemplateRows: `repeat(${rows}, minmax(220px, 1fr))` }}
+    >
+      {children}
+      {w.slice(0, -1).map((x, i) => {
+        acc += x;
+        return (
+          <div
+            key={i}
+            className="col-handle"
+            style={{ left: `calc(${(acc / total) * 100}% - 4px)` }}
+            onPointerDown={startDrag(i)}
+            onDoubleClick={() => saveLayout({ widths: undefined })}
+            title="drag to resize · double-click to reset"
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+// ---- sidebar ----
+
+function Sidebar({ names, onAdd }: { names: string[]; onAdd: () => void }) {
+  const agents = useStore((s) => s.agents);
+  const starting = useStore((s) => s.starting);
+  const jobs = useStore((s) => s.jobs);
+  const layout = useStore((s) => s.layout);
+  const active = jobs.filter((j) => j.state === "active" || j.state === "queued");
+  const ended = jobs.filter((j) => !(j.state === "active" || j.state === "queued")).slice(-5).reverse();
+  return (
+    <aside className="sidebar">
+      <div className="side-head">
+        <span>Agents</span>
+        <button className="ghost" onClick={onAdd} title="add agent">＋</button>
+      </div>
+      <ul className="agent-list">
+        {names.map((n, i) => {
+          const a = agents.get(n);
+          const st = starting.get(n);
+          const status = a?.status ?? (st?.error ? "error" : "starting");
+          const model = a?.config.find((c) => c.category === "model" || c.id === "model");
+          const effort = a?.config.find((c) => c.category === "thought_level" || /effort|reason|think/i.test(c.id));
+          const waiting = store.waitingOn(n);
+          return (
+            <li
+              key={n}
+              className={`agent-item${layout.maximized === n ? " max" : ""}`}
+              onClick={() => {
+                if (layout.maximized && layout.maximized !== n) saveLayout({ maximized: null });
+                setTimeout(() => focus.to(n), 0);
+              }}
+            >
+              <div className="row1">
+                <span className={`dot ${status}`} title={statusLabel(status)} />
+                <strong>{n}</strong>
+                <span className="kind">{a?.kind ?? st?.kind}</span>
+                <span className="spacer" />
+                {waiting > 0 && <span className="badge alert" title="waiting for your answer">!</span>}
+                {a && a.unread > 0 && <span className="badge" title="unread hive mail">✉{a.unread}</span>}
+                {i < 9 && <span className="key">^{i + 1}</span>}
+              </div>
+              <div className="row2">
+                {model && <span>{labelOf(model)}</span>}
+                {effort && effort !== model && <span>· {labelOf(effort)}</span>}
+                {a && <span className="dim">· {a.status === "idle" ? `idle ${fmtIdle(a.idleMs)}` : statusLabel(a.status)}</span>}
+                {a?.ctx && <span className="dim">· {ctxPct(a.ctx.used, a.ctx.size)}% ctx</span>}
+              </div>
+              {a?.note && <div className="row3" title={a.note}>{a.note}</div>}
+              {st?.error && <div className="row3 err">{st.error}</div>}
+            </li>
+          );
+        })}
+        {names.length === 0 && <li className="dim pad">no agents yet</li>}
+      </ul>
+      <div className="side-head">
+        <span>Jobs</span>
+      </div>
+      <ul className="job-list">
+        {active.map((j) => (
+          <li key={j.id} title={j.prompt}>
+            <div className="row1">
+              <span className={`dot ${j.state === "active" ? "working" : "idle"}`} />
+              <strong>#{j.id}</strong> <span className="kind">{j.kind}</span> <span>{j.agent}</span>
+              <span className="spacer" />
+              <button className="ghost small" onClick={() => void rpc("stopJob", { id: j.id })} title="stop job">■</button>
+            </div>
+            <div className="row2 dim">{j.schedule} · {j.runs} run{j.runs === 1 ? "" : "s"}</div>
+            {j.lastError && <div className="row3 err">{j.lastError}</div>}
+          </li>
+        ))}
+        {ended.map((j) => (
+          <li key={j.id} className="ended" title={j.prompt}>
+            <div className="row1 dim">
+              #{j.id} {j.kind} {j.agent} — {j.state} · {j.runs} run{j.runs === 1 ? "" : "s"}
+            </div>
+          </li>
+        ))}
+        {jobs.length === 0 && <li className="dim pad">none — use ⏱ on a pane</li>}
+      </ul>
+    </aside>
+  );
+}
+
+function labelOf(o: { currentValue: string | boolean; options?: { value: string; name: string }[] }) {
+  return o.options?.find((x) => x.value === o.currentValue)?.name ?? String(o.currentValue);
+}
+
+// ---- dialogs ----
+
+function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", k);
+    return () => window.removeEventListener("keydown", k);
+  }, [onClose]);
+  return (
+    <div className="modal-back" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal" role="dialog" aria-label={title}>
+        <h2>{title}</h2>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function AddAgentDialog({ onClose }: { onClose: () => void }) {
+  const kinds = useStore((s) => s.kinds);
+  const taken = useMemo(() => new Set(store.layout.panes.map((p) => p.name)), []);
+  const [kind, setKind] = useState(kinds.find((k) => k.id === "claude")?.id ?? kinds[0]?.id ?? "");
+  const [name, setName] = useState(() => suggestName(taken));
+  const [cwd, setCwd] = useState(store.layout.panes.at(-1)?.cwd ?? store.cwd);
+  const [role, setRole] = useState("");
+  const [policy, setPolicy] = useState<Policy>("ask");
+  const [err, setErr] = useState("");
+  const submit = () => {
+    const n = name.trim();
+    if (!/^[\w.-]{1,40}$/.test(n)) return setErr("name: letters, digits, _ . - only");
+    if (taken.has(n)) return setErr(`"${n}" is already open`);
+    onClose();
+    void openPane({ name: n, kind, cwd: cwd.trim() || store.cwd, role: role.trim(), policy });
+    setTimeout(() => focus.to(n), 300);
+  };
+  return (
+    <Modal title="Add agent" onClose={onClose}>
+      <form
+        className="form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit();
+        }}
+      >
+        <label>
+          <span>Agent</span>
+          <select value={kind} onChange={(e) => setKind(e.target.value)} autoFocus>
+            {kinds.map((k) => (
+              <option key={k.id} value={k.id}>{k.label}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>Name</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <label>
+          <span>Folder</span>
+          <input value={cwd} onChange={(e) => setCwd(e.target.value)} placeholder={store.cwd} />
+        </label>
+        <label>
+          <span>Role</span>
+          <input value={role} onChange={(e) => setRole(e.target.value)} placeholder="coder, reviewer, security watcher… (shown to other agents)" />
+        </label>
+        <label>
+          <span>Permissions</span>
+          <select value={policy} onChange={(e) => setPolicy(e.target.value as Policy)}>
+            {POLICIES.map((p) => (
+              <option key={p} value={p}>
+                {p}
+                {p === "ask" ? " — ask me in the pane" : p === "allow-reads" ? " — auto-allow reads, ask for edits" : p === "allow-all" ? " — trusted (use a worktree)" : " — read-only"}
+              </option>
+            ))}
+          </select>
+        </label>
+        {err && <div className="err">{err}</div>}
+        <div className="buttons">
+          <button type="button" className="ghost" onClick={onClose}>Cancel</button>
+          <button type="submit" className="primary">Add</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function JobDialog({ agent, onClose }: { agent: string; onClose: () => void }) {
+  const [kind, setKind] = useState<"loop" | "interval" | "watch" | "once">("loop");
+  const [prompt, setPrompt] = useState("");
+  const [times, setTimes] = useState("5");
+  const [forS, setForS] = useState("");
+  const [every, setEvery] = useState("10m");
+  const [path, setPath] = useState(".");
+  const [minLines, setMinLines] = useState("50");
+  const [err, setErr] = useState("");
+  const submit = async () => {
+    if (!prompt.trim()) return setErr("write the instruction the agent should run");
+    const p: Parameters<typeof rpc<"addJob">>[1] = { agent, kind, prompt: prompt.trim() };
+    if (kind === "loop") {
+      if (times.trim()) p.times = Number(times);
+      if (forS.trim()) {
+        const ms = parseDuration(forS);
+        if (!ms) return setErr(`bad duration "${forS}" (e.g. 8h, 90m)`);
+        p.forMs = ms;
+      }
+      if (!p.times && !p.forMs) return setErr("set times and/or a duration");
+    } else if (kind === "interval") {
+      const ms = parseDuration(every);
+      if (!ms) return setErr(`bad interval "${every}" (e.g. 10m)`);
+      p.everyMs = ms;
+    } else if (kind === "watch") {
+      p.watchPath = path.trim() || ".";
+      p.minLines = Number(minLines) || 50;
+    }
+    try {
+      const id = await rpc("addJob", p);
+      store.toast(`job #${id} scheduled on ${agent}`);
+      onClose();
+    } catch (e: any) {
+      setErr(e.message);
+    }
+  };
+  return (
+    <Modal title={`Schedule a job on ${agent}`} onClose={onClose}>
+      <form
+        className="form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submit();
+        }}
+      >
+        <div className="seg">
+          {(["loop", "interval", "watch", "once"] as const).map((k) => (
+            <button type="button" key={k} className={kind === k ? "on" : ""} onClick={() => setKind(k)}>
+              {k === "interval" ? "every" : k}
+            </button>
+          ))}
+        </div>
+        <p className="dim small">
+          {kind === "loop" && "Runs back to back, each time in a fresh session. A notes file carries findings between runs."}
+          {kind === "interval" && "Runs on a timer, each time in a fresh session."}
+          {kind === "watch" && "Runs when enough lines change under the folder (untracked files count; .git, node_modules, .hive ignored)."}
+          {kind === "once" && "Runs once now in a fresh session."}
+          {" "}Each run starts a new conversation on this agent.
+        </p>
+        <label>
+          <span>Instruction</span>
+          <textarea rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} autoFocus placeholder="e.g. hunt for bugs in src/ and fix one per run" />
+        </label>
+        {kind === "loop" && (
+          <>
+            <label>
+              <span>Times</span>
+              <input value={times} onChange={(e) => setTimes(e.target.value)} placeholder="5" />
+            </label>
+            <label>
+              <span>For</span>
+              <input value={forS} onChange={(e) => setForS(e.target.value)} placeholder="8h (optional)" />
+            </label>
+          </>
+        )}
+        {kind === "interval" && (
+          <label>
+            <span>Every</span>
+            <input value={every} onChange={(e) => setEvery(e.target.value)} placeholder="10m" />
+          </label>
+        )}
+        {kind === "watch" && (
+          <>
+            <label>
+              <span>Path</span>
+              <input value={path} onChange={(e) => setPath(e.target.value)} placeholder="relative to the agent's folder" />
+            </label>
+            <label>
+              <span>Min lines</span>
+              <input value={minLines} onChange={(e) => setMinLines(e.target.value)} />
+            </label>
+          </>
+        )}
+        {err && <div className="err">{err}</div>}
+        <div className="buttons">
+          <button type="button" className="ghost" onClick={onClose}>Cancel</button>
+          <button type="submit" className="primary">Schedule</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}

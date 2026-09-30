@@ -11,5 +11,6 @@
     "declaration": false,
     "sourceMap": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["src/ui/renderer", "src/ui/electron-main.ts", "src/ui/preload.ts"]
 }

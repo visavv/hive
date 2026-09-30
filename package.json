@@ -11,8 +11,11 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/cli/index.ts",
     "hive-mcp": "tsx src/hive/server.ts",
-    "test": "tsx test/e2e.ts && tsx test/session.ts && tsx test/scheduler.ts && tsx test/unit.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "test": "tsx test/e2e.ts && tsx test/session.ts && tsx test/scheduler.ts && tsx test/unit.ts && tsx test/backend.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.ui.json",
+    "ui:build": "node scripts/build-ui.mjs",
+    "ui": "node scripts/build-ui.mjs && electron dist-ui/main.cjs",
+    "test:ui": "node scripts/build-ui.mjs && tsx test/ui.ts"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.5.1",
@@ -23,7 +26,16 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
+    "@types/markdown-it": "^14.2.0",
     "@types/node": "^22.0.0",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "electron": "^44.5.1",
+    "esbuild": "^0.28.2",
+    "markdown-it": "^15.0.2",
+    "playwright-core": "1.56",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0"
   },
