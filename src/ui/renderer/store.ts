@@ -50,6 +50,8 @@ class Store {
   jobs: JobView[] = [];
   kinds: { id: string; label: string }[] = [];
   presets: PresetView[] = [];
+  /** Unread mail agents sent to the owner. */
+  ownerUnread = 0;
   cwd = "";
   db = "";
   layout: Layout = { panes: [], columns: 2, hoverFocus: true, sidebar: true, maximized: null };
@@ -166,6 +168,13 @@ class Store {
               i.done = ev.outcome ?? "answered";
               this.touch(name, i);
             }
+        break;
+      case "owner_mail":
+        this.ownerUnread = ev.unread;
+        if (ev.latest) {
+          this.toast(`✉ ${ev.latest.from}: ${ev.latest.subject}`);
+          notifyAttention(ev.latest.from, ev.latest.subject, "wrote to you");
+        }
         break;
       case "backend_down":
         this.toast(ev.text, "error");
@@ -295,7 +304,8 @@ class Store {
   }
 
   /** Apply a full backend snapshot (startup, renderer reload, backend restart). */
-  applyState(st: { ready: Extract<BackendEvent, { event: "ready" }>; agents: AgentView[]; permissions: PermissionAsk[]; elicitations: ElicitationAsk[] }) {
+  applyState(st: { ready: Extract<BackendEvent, { event: "ready" }>; agents: AgentView[]; permissions: PermissionAsk[]; elicitations: ElicitationAsk[]; ownerUnread?: number }) {
+    this.ownerUnread = st.ownerUnread ?? 0;
     this.kinds = st.ready.kinds;
     this.presets = st.ready.presets ?? [];
     this.cwd = st.ready.cwd;
@@ -323,9 +333,12 @@ export function usePane(name: string): PaneState {
   return store.pane(name);
 }
 
-function notifyAttention(agent: string, what: string) {
+function notifyAttention(agent: string, what: string, verb = "needs you") {
   if (document.hasFocus()) return;
   try {
-    new Notification(`hive: ${agent} needs you`, { body: what.slice(0, 120), silent: false });
+    window.hiveBridge?.attention?.();
+  } catch {}
+  try {
+    new Notification(`hive: ${agent} ${verb}`, { body: what.slice(0, 120), silent: false });
   } catch {}
 }

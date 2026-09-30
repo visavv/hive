@@ -3,6 +3,7 @@ import type { Layout, PaneSpec, Policy, WorktreeView } from "../protocol.js";
 import { connect, hello, onEvent, onFocusLast, rpc } from "./bridge.js";
 import { store, useStore } from "./store.js";
 import { Pane } from "./Pane.js";
+import { Drawer } from "./Drawer.js";
 import { focus } from "./focus.js";
 import { ctxPct, fmtIdle, parseDuration, statusLabel, suggestName } from "./format.js";
 
@@ -79,6 +80,7 @@ export function App() {
   const toasts = useStore((s) => s.toasts);
   const [adding, setAdding] = useState(false);
   const [jobFor, setJobFor] = useState<string | null>(null);
+  const [drawer, setDrawer] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const names = layout.panes.map((p) => p.name);
@@ -114,6 +116,9 @@ export function App() {
       } else if (mod && e.key === "\\") {
         e.preventDefault();
         saveLayout({ sidebar: !store.layout.sidebar });
+      } else if (mod && e.key.toLowerCase() === "i") {
+        e.preventDefault();
+        setDrawer((d) => !d);
       } else if (mod && e.key.toLowerCase() === "m") {
         e.preventDefault();
         const a = focus.active;
@@ -128,7 +133,7 @@ export function App() {
 
   return (
     <div className={`app${layout.sidebar ? "" : " nosidebar"}`}>
-      <TopBar names={names} selected={selected} setSelected={setSelected} onAdd={() => setAdding(true)} />
+      <TopBar names={names} selected={selected} setSelected={setSelected} onAdd={() => setAdding(true)} onHive={() => setDrawer(!drawer)} />
       {layout.sidebar && <Sidebar names={names} onAdd={() => setAdding(true)} />}
       <main className="grid-wrap">
         {names.length === 0 ? (
@@ -137,7 +142,7 @@ export function App() {
             <p>Run Claude Code, Codex, Qwen and friends side by side. They can message each other through the hive.</p>
             <button className="primary" onClick={() => setAdding(true)}>+ Add an agent</button>
             <p className="dim">
-              Ctrl+N add · Ctrl+1..9 jump · Ctrl+Tab cycle · Ctrl+B broadcast · Ctrl+M maximize · Ctrl+\ sidebar · hover a pane to type into it
+              Ctrl+N add · Ctrl+1..9 jump · Ctrl+Tab cycle · Ctrl+B broadcast · Ctrl+I hive report &amp; mail · Ctrl+M maximize · Ctrl+\ sidebar · hover a pane to type into it
             </p>
           </div>
         ) : (
@@ -163,6 +168,7 @@ export function App() {
       </main>
       {adding && <AddAgentDialog onClose={() => setAdding(false)} />}
       {jobFor && <JobDialog agent={jobFor} onClose={() => setJobFor(null)} />}
+      {drawer && <Drawer onClose={() => setDrawer(false)} />}
       <div className="toasts">
         {toasts.map((t) => (
           <div key={t.id} className={`toast ${t.level}`}>{t.text}</div>
@@ -174,12 +180,14 @@ export function App() {
 
 // ---- top bar: broadcast + layout controls ----
 
-function TopBar({ names, selected, setSelected, onAdd }: {
+function TopBar({ names, selected, setSelected, onAdd, onHive }: {
   names: string[];
   selected: Set<string>;
   setSelected: (s: Set<string>) => void;
   onAdd: () => void;
+  onHive: () => void;
 }) {
+  const unread = useStore((s) => s.ownerUnread);
   const layout = useStore((s) => s.layout);
   const [text, setText] = useState("");
   const targets = names.filter((n) => selected.has(n) && store.agents.has(n));
@@ -222,6 +230,9 @@ function TopBar({ names, selected, setSelected, onAdd }: {
         {cols} cols
         <button className="ghost" disabled={cols >= 8} onClick={() => saveLayout({ columns: cols + 1, widths: undefined })}>+</button>
       </span>
+      <button className={`hive-btn${unread ? " has-mail" : ""}`} onClick={onHive} title="report, inbox, blackboard, mail (Ctrl+I)">
+        ✉ Hive{unread ? <span className="badge alert">{unread}</span> : null}
+      </button>
       <button className="primary" onClick={onAdd} title="add agent (Ctrl+N)">+ Agent</button>
     </div>
   );

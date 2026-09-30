@@ -6,6 +6,8 @@ interface HiveBridge {
   onMessage(fn: (line: string) => void): void;
   onFocusLast(fn: () => void): void;
   hello(): Promise<boolean>;
+  /** Flash the taskbar entry when the window isn't focused. */
+  attention?(): void;
 }
 
 declare global {

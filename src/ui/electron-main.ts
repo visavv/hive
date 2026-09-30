@@ -109,6 +109,7 @@ function createWindow() {
     }
   });
   void win.loadFile(join(__dirname, "index.html"));
+  win.on("focus", () => win?.flashFrame(false));
   win.on("closed", () => (win = undefined));
 }
 
@@ -155,6 +156,9 @@ app.whenReady().then(() => {
         if (typeof id === "number") toRenderer({ id, error: "hive backend is restarting" });
       } catch {}
     }
+  });
+  ipcMain.on("hive:attention", () => {
+    if (win && !win.isFocused()) win.flashFrame(true);
   });
   // A (re)loaded renderer asks whether the backend is up; if so it fetches state.
   ipcMain.handle("hive:hello", () => backendReady);

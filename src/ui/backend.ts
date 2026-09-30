@@ -19,6 +19,7 @@ import { Scheduler, describeSchedule, formatDuration } from "../core/scheduler.j
 import { ROLES } from "../core/roles.js";
 import { defaultDb } from "../core/home.js";
 import { listWorktrees, mergeWorktree } from "../core/worktree.js";
+import { buildReport } from "../core/report.js";
 import type { AgentView, BackendEvent, ElicitationAsk, JobView, Layout, Methods, PermissionAsk, Request } from "./protocol.js";
 
 // stdout is the protocol channel: keep stray logging off it.
@@ -246,6 +247,17 @@ function pushAgents() {
   send({ event: "agents", agents: [...hub.sessions.values()].map(view) });
 }
 
+let lastOwnerUnread = -1;
+function pushOwnerMail(force = false) {
+  if (!hub.db.db.open) return;
+  const unread = hub.db.inbox("owner", true, 500);
+  if (!force && unread.length === lastOwnerUnread) return;
+  const grew = unread.length > lastOwnerUnread && lastOwnerUnread >= 0;
+  lastOwnerUnread = unread.length;
+  const last = unread.at(-1);
+  send({ event: "owner_mail", unread: unread.length, latest: grew && last ? { from: last.from_agent, subject: last.subject } : undefined });
+}
+
 function pushJobs() {
   if (!hub.db.db.open) return;
   const jobs: JobView[] = hub.db.listJobs(true).slice(-50).map((j) => ({
@@ -290,6 +302,7 @@ const handlersExtra = {
       agents: [...hub.sessions.values()].map(view),
       permissions: [...pendingPerm.values()].map((p) => p.ask),
       elicitations: [...pendingElicit.values()].map((p) => p.ask),
+      ownerUnread: hub.db.unreadCount("owner"),
     };
   },
 };
@@ -443,6 +456,29 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
     hub.db.endJob(id, "stopped");
     pushJobs();
   },
+  async report({ sinceMs }) {
+    const cwds = [defaultCwd, ...hub.db.listAgents().map((a) => a.cwd).filter(Boolean)];
+    return buildReport(hub.db, Date.now() - sinceMs, cwds);
+  },
+  hiveData() {
+    return {
+      blackboard: hub.db.bbList(""),
+      messages: hub.db.messagesSince(0, 200),
+      agents: hub.db.listAgents().map((a) => a.name),
+    };
+  },
+  sendMail({ to, subject, body }) {
+    const text = need(body, "message").trim();
+    if (to !== "*" && !hub.db.getAgent(to)) throw new Error(`no agent "${to}"`);
+    return hub.db.send("owner", to, subject?.trim() || text.split("\n")[0].slice(0, 80), text);
+  },
+  bbDelete({ key }) {
+    hub.db.bbDelete(key);
+  },
+  markOwnerRead() {
+    hub.db.markRead(hub.db.inbox("owner", true, 500).map((m) => m.id), "owner");
+    pushOwnerMail(true);
+  },
 };
 
 function readyEvent(): Extract<BackendEvent, { event: "ready" }> {
@@ -508,5 +544,6 @@ hub.run();
 scheduler.start();
 setInterval(pushAgents, 1000).unref();
 setInterval(pushJobs, 5000).unref();
+setInterval(() => pushOwnerMail(), 2000).unref();
 send(readyEvent());
 pushJobs();

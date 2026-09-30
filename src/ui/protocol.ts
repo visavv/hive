@@ -130,6 +130,7 @@ export type BackendEvent =
   | { event: "job"; text: string; jobId: number; agent: string }
   | { event: "error"; text: string }
   | { event: "fatal"; text: string }
+  | { event: "owner_mail"; unread: number; latest?: { from: string; subject: string } }
   /** Sent by Electron main, not the backend. */
   | { event: "backend_down"; text: string };
 
@@ -144,6 +145,7 @@ export interface Methods {
     agents: AgentView[];
     permissions: PermissionAsk[];
     elicitations: ElicitationAsk[];
+    ownerUnread: number;
   };
   prompt: (p: { name: string; text: string }) => void;
   broadcast: (p: { names: string[]; text: string }) => void;
@@ -165,6 +167,15 @@ export interface Methods {
     minLines?: number;
   }) => number;
   stopJob: (p: { id: number }) => void;
+  report: (p: { sinceMs: number }) => import("../core/report.js").Report;
+  hiveData: (p: Record<string, never>) => {
+    blackboard: { key: string; value: string; updated_by: string; updated_at: number }[];
+    messages: { id: number; ts: number; from_agent: string; to_agent: string; subject: string; body: string; thread: string | null; read_at: number | null }[];
+    agents: string[];
+  };
+  sendMail: (p: { to: string; subject?: string; body: string }) => number;
+  bbDelete: (p: { key: string }) => void;
+  markOwnerRead: (p: Record<string, never>) => void;
 }
 
 export type MethodName = keyof Methods;
