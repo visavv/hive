@@ -1,5 +1,5 @@
 /** Recipes (ready-made teams) and Skills (reusable prompts with parameters). */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { rpc } from "./bridge.js";
 import { store, useStore } from "./store.js";
 import { Modal, openPane } from "./App.js";
@@ -88,25 +88,31 @@ export function RecipesDialog({ onClose }: { onClose: () => void }) {
   );
 }
 
-export function SkillsDialog({ onClose }: { onClose: () => void }) {
+export function SkillsDialog({ onClose, initial }: { onClose: () => void; initial?: { name: string; vals: Record<string, string> } | null }) {
   const [list, setList] = useState<SkillList>([]);
   const [name, setName] = useState("");
   const [vals, setVals] = useState<Record<string, string>>({});
   const [kind, setKind] = useState("");
   const [err, setErr] = useState("");
   const [filter, setFilter] = useState("");
+  const prefill = useRef(initial);
   useEffect(() => {
     void rpc("skills", {}).then((l) => {
       setList(l);
-      if (l[0]) setName(l[0].name);
+      const want = prefill.current?.name;
+      setName(want && l.some((x) => x.name === want) ? want : (l[0]?.name ?? ""));
     });
   }, []);
   const sk = list.find((x) => x.name === name);
   useEffect(() => {
-    setVals({});
+    // Opened with values (e.g. from the prompt editor): keep them for that skill once.
+    if (prefill.current && prefill.current.name === name) {
+      setVals(prefill.current.vals);
+      prefill.current = null;
+    } else setVals({});
     setErr("");
     setKind(sk?.agent ?? "claude");
-  }, [name]);
+  }, [name, list.length]);
   const run = async () => {
     if (!sk) return;
     try {
@@ -194,6 +200,108 @@ export function SkillsDialog({ onClose }: { onClose: () => void }) {
         )}
       </div>
       <p className="dim small">New skill: <code>hive skill new my-skill --describe "what it should do"</code> — or copy a file in the skills folder.</p>
+    </Modal>
+  );
+}
+
+/**
+ * Big editor for long prompts: write comfortably, then send it, turn it into a
+ * reusable skill, or have the prompt-engineer skill rewrite it (pick the model there).
+ */
+export function PromptEditor({ agent, initial, onClose, onSend }: { agent: string; initial: string; onClose: (draft: string) => void; onSend: (text: string) => void }) {
+  const [text, setText] = useState(initial);
+  const [saving, setSaving] = useState(false);
+  const [skillName, setSkillName] = useState("");
+  const [desc, setDesc] = useState("");
+  const [err, setErr] = useState("");
+  const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+  const placeholders = [...new Set([...text.matchAll(/\{\{(\w[\w-]*)\}\}/g)].map((m) => m[1]))];
+  const send = () => {
+    if (!text.trim()) return;
+    onSend(text.trim());
+  };
+  const save = async () => {
+    try {
+      const r = await rpc("saveSkill", { name: skillName.trim(), description: desc.trim(), body: text });
+      store.toast(`skill ${skillName} saved (${r.path})${placeholders.length ? ` with parameters ${placeholders.join(", ")}` : ""}`);
+      setSaving(false);
+    } catch (e: any) {
+      setErr(e.message);
+    }
+  };
+  return (
+    <Modal title={`Prompt for ${agent}`} onClose={() => onClose(text)} wide>
+      <textarea
+        className="prompt-editor"
+        value={text}
+        autoFocus
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            send();
+          }
+        }}
+        placeholder="Write or paste a long prompt. Use {{name}} for parts you want to fill in each time if you save it as a skill."
+        aria-label="prompt"
+      />
+      <div className="row1 small dim">
+        <span>
+          {words.toLocaleString()} words · {text.length.toLocaleString()} chars
+        </span>
+        {placeholders.length > 0 && <span>· parameters: {placeholders.join(", ")}</span>}
+      </div>
+      {saving && (
+        <form
+          className="form save-skill"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void save();
+          }}
+        >
+          <label>
+            <span>Skill name</span>
+            <input value={skillName} onChange={(e) => setSkillName(e.target.value)} placeholder="e.g. app-audit" autoFocus />
+          </label>
+          <label>
+            <span>Description</span>
+            <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="one line: what it does" />
+          </label>
+          {err && <div className="err">{err}</div>}
+          <div className="buttons">
+            <button type="button" className="ghost" onClick={() => setSaving(false)}>
+              Cancel
+            </button>
+            <button type="submit" className="primary" disabled={!/^[\w.-]{1,60}$/.test(skillName.trim())}>
+              Save skill
+            </button>
+          </div>
+        </form>
+      )}
+      <div className="buttons">
+        <button
+          type="button"
+          className="ghost"
+          disabled={!text.trim()}
+          title="rewrite this into a stronger prompt with the prompt-engineer skill (you pick the model)"
+          onClick={() => {
+            onClose(text);
+            store.requestSkill("prompt-engineer", { goal: text });
+          }}
+        >
+          ✦ Improve with prompt-engineer
+        </button>
+        <button type="button" className="ghost" disabled={!text.trim()} onClick={() => setSaving(true)} title="reuse this prompt later from Skills (Ctrl+K)">
+          Save as skill…
+        </button>
+        <span className="spacer" />
+        <button type="button" className="ghost" onClick={() => onClose(text)}>
+          Keep as draft
+        </button>
+        <button type="button" className="primary" disabled={!text.trim()} onClick={send} title="Ctrl+Enter">
+          Send to {agent}
+        </button>
+      </div>
     </Modal>
   );
 }

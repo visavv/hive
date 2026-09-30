@@ -65,6 +65,13 @@ export interface Layout {
   maximized?: string | null;
   /** UI zoom (1 = 100%); Ctrl+= / Ctrl+- / Ctrl+0. */
   zoom?: number;
+  /** auto: one column + no sidebar on tall/narrow windows (9:16 monitors). */
+  orientation?: "auto" | "vertical" | "horizontal";
+  /** Columns / sidebar used while the layout is vertical. */
+  vcolumns?: number;
+  vsidebar?: boolean;
+  /** Chime when an agent finishes (default on). */
+  ping?: boolean;
 }
 
 export interface ConfigOptionView {
@@ -223,6 +230,7 @@ export interface Methods {
   }[];
   runSkill: (p: { name: string; params: Record<string, string>; kind?: string }) => { agent: string; kind: string; policy: Policy };
   groups: (p: Record<string, never>) => { name: string; members: string[] }[];
+  saveSkill: (p: { name: string; description?: string; body: string; overwrite?: boolean }) => { path: string; params: string[] };
   usage: (p: Record<string, never>) => import("../core/budget.js").UsageSummary;
   setBudget: (p: { key: string; value: string }) => import("../core/budget.js").UsageSummary;
 }

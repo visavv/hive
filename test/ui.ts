@@ -245,6 +245,55 @@ try {
   await page.locator(".drawer .usage-pause:not(.on)").waitFor({ timeout: 5000 });
   await page.keyboard.press("Escape");
 
+  // ready: a turn that finishes while you're elsewhere turns the pane green (+ top-bar button); focusing clears it
+  await pane(page, "beta").locator("textarea").click();
+  await pane(page, "alpha").locator("textarea").fill("slow task");
+  await pane(page, "alpha").locator("textarea").press("Enter");
+  await pane(page, "beta").locator("textarea").click();
+  await page.locator('[data-pane="alpha"].ready').waitFor({ timeout: 20_000 });
+  assert(await pane(page, "alpha").locator(".badge.ready").count() === 1, "a finished agent you weren't looking at turns green with a ✓ ready badge");
+  assert(/ready/.test(await page.title()), "window title counts ready agents");
+  await page.locator(".ready-btn").click();
+  await page.locator('[data-pane="alpha"].ready').waitFor({ state: "detached", timeout: 5000 });
+  assert(await activeIn(page, "alpha"), "the ready button jumps to the agent and clears the mark");
+  await page.screenshot({ path: join(shots, "hive-ui-ready.png") });
+
+  // long prompt editor: write, save as skill with a parameter, send
+  await pane(page, "alpha").locator("textarea").fill("draft line");
+  await pane(page, "alpha").locator("button.expand").click();
+  const ed = page.locator(".modal.wide");
+  await ed.locator("textarea.prompt-editor").fill("Audit the {{area}} of this app.\nBe thorough.\nroll call");
+  await ed.locator("button", { hasText: "Save as skill" }).click();
+  await ed.locator("label:has-text('Skill name') input").fill("ui-audit-test");
+  await ed.locator("button", { hasText: "Save skill" }).click();
+  await page.locator(".toast", { hasText: "skill ui-audit-test saved" }).waitFor({ timeout: 5000 });
+  assert(existsSync(join(process.env.HIVE_HOME!, "skills", "ui-audit-test.md")) && readFileSync(join(process.env.HIVE_HOME!, "skills", "ui-audit-test.md"), "utf8").includes("- name: area"), "prompt saved as a skill with {{area}} as a parameter");
+  await ed.locator("button", { hasText: "Send to alpha" }).click();
+  await pane(page, "alpha").locator(".msg.user", { hasText: "Be thorough." }).waitFor({ timeout: 10_000 });
+  assert(true, "the editor sends the long prompt to the agent");
+  // ✦ Improve opens the prompt-engineer skill with the draft filled in
+  await pane(page, "alpha").locator("button.expand").click();
+  await ed.locator("textarea.prompt-editor").fill("an audit prompt for my app");
+  await ed.locator("button", { hasText: "Improve with prompt-engineer" }).click();
+  await page.locator(".modal .skill.on", { hasText: "prompt-engineer" }).waitFor({ timeout: 5000 });
+  assert((await page.locator(".modal label:has-text('goal') textarea").inputValue()) === "an audit prompt for my app", "✦ Improve opens prompt-engineer with the draft as the goal");
+  await page.keyboard.press("Escape");
+
+  // vertical layout: forced vertical → one column, no sidebar; auto on a tall window does the same
+  await page.locator(".topbar button", { hasText: "auto" }).click();
+  await page.locator(".app.vertical").waitFor({ timeout: 5000 });
+  const cols = await page.locator(".grid").evaluate((g) => getComputedStyle(g).gridTemplateColumns.split(" ").length);
+  assert(cols === 1 && (await page.locator(".sidebar").count()) === 0, `vertical layout: one column, no sidebar (${cols})`);
+  await page.screenshot({ path: join(shots, "hive-ui-vertical-forced.png") });
+  await page.locator(".topbar button", { hasText: "vertical" }).click(); // → horizontal
+  await page.locator(".topbar button", { hasText: "horizontal" }).click(); // → auto
+  await page.setViewportSize({ width: 720, height: 1280 }).catch(() => {});
+  await page.locator(".app.vertical").waitFor({ timeout: 5000 });
+  assert(true, "auto layout goes vertical on a 9:16 window");
+  await page.screenshot({ path: join(shots, "hive-ui-vertical.png") });
+  await page.setViewportSize({ width: 1600, height: 950 }).catch(() => {});
+  await page.locator(".app:not(.vertical)").waitFor({ timeout: 5000 });
+
   await page.screenshot({ path: join(shots, "hive-ui.png") });
   const layout = JSON.parse(readFileSync(join(projectDir(dir), "ui.json"), "utf8"));
   assert(layout.panes.length === 2 && layout.columns === 2, "layout persisted to .hive/ui.json");
