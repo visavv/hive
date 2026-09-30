@@ -60,9 +60,10 @@ export interface TurnResult {
 }
 
 export type SessionEvent =
+  | { type: "prompt"; text: string }
   | { type: "text"; text: string }
   | { type: "thought"; text: string }
-  | { type: "tool_call"; id: string; title: string; status: string; kind?: string }
+  | { type: "tool_call"; id: string; title: string; status: string; kind?: string; raw?: unknown }
   | { type: "tool_update"; id: string; status?: string; title?: string; raw: unknown }
   | { type: "plan"; entries: unknown }
   | { type: "usage"; usage: unknown }
@@ -439,6 +440,8 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
     this.emitEv({ type: "session", sessionId: sid, how });
   }
   private replayingId?: string;
+  /** Agent text of the current turn, logged as a "reply" event for history. */
+  private replyText = "";
 
   private onUpdate(n: schema.SessionNotification) {
     const replay = n.sessionId === this.replayingId && !this.busy;
@@ -486,6 +489,8 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
     this.db.setStatus(this.name, "working", text.slice(0, 120));
     this.emitEv({ type: "status", status: "working", note: text.slice(0, 120) });
     this.db.log(this.name, "prompt", { text });
+    this.emitEv({ type: "prompt", text });
+    this.replyText = "";
 
     let full = text;
     if (this.firstPrompt) {
@@ -522,6 +527,7 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
     } finally {
       this.emitEv({ type: "turn_end", stopReason: result.stopReason, usage: result.usage });
       if (this.db.db.open) {
+        if (this.replyText) this.db.log(this.name, "reply", { text: this.replyText });
         this.db.log(this.name, "turn_end", { stopReason: result.stopReason, usage: result.usage, error: result.error });
         this.db.setStatus(this.name, this.closed ? "asleep" : result.error ? "error" : "idle", result.error ?? "");
       }
@@ -552,13 +558,16 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
   private handleUpdate(u: schema.SessionUpdate) {
     switch (u.sessionUpdate) {
       case "agent_message_chunk":
-        if (u.content.type === "text") this.emitEv({ type: "text", text: u.content.text });
+        if (u.content.type === "text") {
+          if (this.replyText.length < 50_000) this.replyText += u.content.text;
+          this.emitEv({ type: "text", text: u.content.text });
+        }
         break;
       case "agent_thought_chunk":
         if (u.content.type === "text") this.emitEv({ type: "thought", text: u.content.text });
         break;
       case "tool_call":
-        this.emitEv({ type: "tool_call", id: u.toolCallId, title: u.title, status: u.status ?? "pending", kind: u.kind ?? undefined });
+        this.emitEv({ type: "tool_call", id: u.toolCallId, title: u.title, status: u.status ?? "pending", kind: u.kind ?? undefined, raw: u });
         this.db.log(this.name, "tool_call", { id: u.toolCallId, title: u.title, kind: u.kind });
         break;
       case "tool_call_update":

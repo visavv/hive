@@ -438,3 +438,21 @@ export function formatDuration(ms: number): string {
   }
   return parts.join("");
 }
+
+/** One-line human description of when a job runs. */
+export function describeSchedule(j: JobRow): string {
+  switch (j.kind) {
+    case "loop":
+      return (
+        [j.remaining != null ? `${j.remaining} left` : "", j.until_ts ? `until ${new Date(j.until_ts).toLocaleString()}` : ""]
+          .filter(Boolean)
+          .join(", ") || "forever"
+      );
+    case "interval":
+      return `every ${formatDuration(j.every_ms ?? 0)}`;
+    case "watch":
+      return `${j.watch_path} ≥${j.watch_min_lines ?? 50} lines${j.every_ms ? `, max wait ${formatDuration(j.every_ms)}` : ""}`;
+    case "once":
+      return new Date(j.next_run).toLocaleString();
+  }
+}

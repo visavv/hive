@@ -363,6 +363,16 @@ export class HiveDb {
       .all(jobId, limit) as JobRunRow[];
   }
 
+  /** Recent events for one agent, oldest first (UI history). */
+  agentEvents(agent: string, types: string[], limit = 200) {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM events WHERE agent=? AND type IN (${types.map(() => "?").join(",")}) ORDER BY id DESC LIMIT ?`,
+      )
+      .all(agent, ...types, limit) as { id: number; ts: number; agent: string; type: string; data: string }[];
+    return rows.reverse();
+  }
+
   close() {
     if (this.db.open) this.db.close();
   }
