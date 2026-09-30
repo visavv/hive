@@ -20,7 +20,10 @@ import { ROLES } from "../core/roles.js";
 import { defaultDb } from "../core/home.js";
 import { listWorktrees, mergeWorktree } from "../core/worktree.js";
 import { buildReport } from "../core/report.js";
-import { BRANCHES } from "../core/watch.js";
+import { RECIPES, applyRecipe } from "../core/recipes.js";
+import { findSkill, listSkills, renderSkill } from "../core/skills.js";
+import { runSkill, skillAgentName } from "../core/skill-run.js";
+import { BB_PREFIX, BRANCHES } from "../core/watch.js";
 import type { AgentView, BackendEvent, ElicitationAsk, JobView, Layout, Methods, PermissionAsk, Request } from "./protocol.js";
 
 // stdout is the protocol channel: keep stray logging off it.
@@ -471,8 +474,10 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
         id = hub.db.addJob({
           ...base,
           kind: "watch",
-          watch_path: p.watchPath === BRANCHES ? BRANCHES : resolve(s.cwd, p.watchPath || "."),
-          watch_min_lines: p.minLines ?? 50,
+          watch_path: p.watchPath === BRANCHES || p.watchPath?.startsWith(BB_PREFIX) ? p.watchPath : resolve(s.cwd, p.watchPath || "."),
+          watch_min_lines: p.minLines ?? (p.watchPath?.startsWith(BB_PREFIX) ? 1 : 50),
+          every_ms: p.maxWaitMs ?? null,
+          cooldown_ms: p.cooldownMs ?? null,
         });
         break;
       case "once":
@@ -492,16 +497,57 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
     const cwds = [defaultCwd, ...hub.db.listAgents().map((a) => a.cwd).filter(Boolean)];
     return buildReport(hub.db, Date.now() - sinceMs, cwds);
   },
+  recipes() {
+    return Object.values(RECIPES).map((r) => ({ id: r.id, label: r.label, description: r.description, agents: r.agents, next: r.next }));
+  },
+  applyRecipe({ id, kind, alt, prefix }) {
+    const r = RECIPES[id];
+    if (!r) throw new Error(`unknown recipe "${id}"`);
+    if (!AGENTS[kind] || (alt && !AGENTS[alt])) throw new Error("unknown agent kind");
+    if (prefix && !/^[\w.-]{0,20}$/.test(prefix)) throw new Error("prefix: letters, digits, _ . - only");
+    const res = applyRecipe(hub.db, r, { cwd: defaultCwd, kind, alt, prefix });
+    pushJobs();
+    schedulePush();
+    return { ...res, next: r.next };
+  },
+  skills() {
+    return listSkills(defaultCwd).map((sk) => ({
+      name: sk.name,
+      description: sk.description,
+      source: sk.source,
+      agent: sk.agent,
+      policy: sk.policy,
+      output: sk.output,
+      params: sk.params,
+    }));
+  },
+  runSkill({ name, params, kind }) {
+    const sk = findSkill(defaultCwd, name);
+    renderSkill(sk, params, defaultCwd); // validate now, so errors show in the dialog
+    const k = kind || sk.agent || "claude";
+    if (!AGENTS[k]) throw new Error(`unknown agent "${k}"`);
+    const agent = skillAgentName(sk.name);
+    policies.set(agent, sk.policy);
+    void runSkill(hub, sk, params, { cwd: defaultCwd, kind: k })
+      .then((r) => {
+        if (r.saved) send({ event: "job", agent, jobId: 0, text: `saved to ${r.saved}` });
+      })
+      .catch((e) => send({ event: "error", text: `${name}: ${e?.message ?? e}` }));
+    return { agent, kind: k, policy: sk.policy };
+  },
+  groups() {
+    return hub.db.groups();
+  },
   hiveData() {
     return {
       blackboard: hub.db.bbList(""),
       messages: hub.db.messagesSince(0, 200),
-      agents: hub.db.listAgents().map((a) => a.name),
+      agents: [...hub.db.listAgents().map((a) => a.name), ...hub.db.groups().map((g) => "@" + g.name)],
     };
   },
   sendMail({ to, subject, body }) {
     const text = need(body, "message").trim();
-    if (to !== "*" && !hub.db.getAgent(to)) throw new Error(`no agent "${to}"`);
+    if (to.startsWith("@") ? !hub.db.groupMembers(to.slice(1)).length : to !== "*" && !hub.db.getAgent(to)) throw new Error(`no agent or group "${to}"`);
     return hub.db.send("owner", to, subject?.trim() || text.split("\n")[0].slice(0, 80), text);
   },
   jobRuns({ id }) {

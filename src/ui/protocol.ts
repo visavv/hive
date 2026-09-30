@@ -181,6 +181,8 @@ export interface Methods {
     everyMs?: number;
     watchPath?: string;
     minLines?: number;
+    maxWaitMs?: number;
+    cooldownMs?: number;
   }) => number;
   stopJob: (p: { id: number }) => void;
   report: (p: { sinceMs: number }) => import("../core/report.js").Report;
@@ -193,6 +195,24 @@ export interface Methods {
   bbDelete: (p: { key: string }) => void;
   jobRuns: (p: { id: number }) => { iteration: number; started: number; ended: number | null; stop_reason: string | null; error: string | null; summary: string | null; tokens?: number }[];
   markOwnerRead: (p: Record<string, never>) => void;
+  recipes: (p: Record<string, never>) => { id: string; label: string; description: string; agents: { name: string; alt?: boolean; interactive?: boolean }[]; next: string }[];
+  applyRecipe: (p: { id: string; kind: string; alt?: string; prefix?: string }) => {
+    agents: { name: string; kind: string; interactive: boolean; policy: string; role: string; worktree: boolean; preset?: string }[];
+    groups: string[];
+    jobs: number[];
+    next: string;
+  };
+  skills: (p: Record<string, never>) => {
+    name: string;
+    description: string;
+    source: string;
+    agent?: string;
+    policy: string;
+    output?: string;
+    params: { name: string; type: string; required?: boolean; default?: string; description?: string; choices?: string[] }[];
+  }[];
+  runSkill: (p: { name: string; params: Record<string, string>; kind?: string }) => { agent: string; kind: string; policy: Policy };
+  groups: (p: Record<string, never>) => { name: string; members: string[] }[];
 }
 
 export type MethodName = keyof Methods;
