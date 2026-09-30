@@ -1,4 +1,4 @@
-# HANDOFF — hive, phases 1–4 done + two review loops
+# HANDOFF — hive, phases 1–4 done + two review/improvement loops
 
 Read this first, then README.md, then `npm test`.
 
@@ -24,7 +24,7 @@ All of the original plan is implemented and tested with the mock agent:
 | report | `src/core/report.ts` | "since you left": runs, summaries, tokens, commits on agent branches, blackboard, owner mail |
 | doctor | `src/core/doctor.ts` | `initialize` probe + waits for `_auth/status_update` |
 | MCP tools | `src/hive/server.ts` | hive_agents / send (incl. `owner`, thread budget) / inbox / thread / bb_get,set,list,delete / status / diff / log |
-| CLI | `src/cli/index.ts` | run chat agents doctor ui · loop every watch once start jobs job serve · report inbox send bb · worktrees merge worktree |
+| CLI | `src/cli/index.ts` | run chat agents doctor ui · loop every watch once start jobs job serve · report inbox send bb log · worktrees merge sync worktree |
 | UI | `src/ui/` | Electron main (relay, respawn, CSP, file: blocking) · Node backend (`backend.ts`, NDJSON on stdio) · React renderer (grid, sidebar, drawer) |
 
 Tests (`npm test`, ~2 min): e2e, session, scheduler, unit, backend, worktree. `npm run test:ui` drives the real Electron app with Playwright (needs a display; on Linux `xvfb-run -a`).
@@ -57,9 +57,9 @@ Adapters are pinned in package.json (`claude-agent-acp` 0.84.0, `codex-acp` 2.0.
 
 ## 5. Open items / next ideas
 
+- Verify with real vendors (§4) — especially the permission tool titles Claude/Codex use for MCP tools (`isHiveTool` in session.ts is a regex over title/rawInput) and whether they edit the notes file with an `edit` tool call carrying `locations`/`rawInput.file_path` (`touchesOnly`).
 - Close-to-tray + start at login; let the backend outlive the window (attach over a named pipe `\\.\pipe\hive-<user>` — local only).
 - Render `hive_*` tool results (JSON) as tables in panes.
-- Clickable job rows in the sidebar → run history + summaries (data exists: `job_runs`).
 - Subagent sessions from claude-agent-acp (`sessionCapabilities.subagents`) as nested panes.
 - Terminal capability (`terminal/*`) and a raw-terminal fallback pane (needs node-pty built for Electron).
 - Cost history from `~/.claude/projects/*/*.jsonl` (low priority per owner).
