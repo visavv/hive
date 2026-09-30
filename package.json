@@ -11,7 +11,7 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/cli/index.ts",
     "hive-mcp": "tsx src/hive/server.ts",
-    "test": "tsx test/e2e.ts && tsx test/session.ts && tsx test/scheduler.ts && tsx test/unit.ts && tsx test/backend.ts && tsx test/worktree.ts",
+    "test": "tsx test/e2e.ts && tsx test/session.ts && tsx test/scheduler.ts && tsx test/unit.ts && tsx test/backend.ts && tsx test/worktree.ts && tsx test/groups.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.ui.json",
     "ui:build": "node scripts/build-ui.mjs",
     "ui": "tsx src/cli/index.ts ui",

@@ -192,3 +192,6 @@ export async function branchChanges(repo: string, base: string, prev: Record<str
   }
   return out;
 }
+
+/** watch_path prefix meaning "watch blackboard keys under this prefix". */
+export const BB_PREFIX = "@bb:";

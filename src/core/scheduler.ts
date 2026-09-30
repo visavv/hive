@@ -21,7 +21,7 @@ import type { FSWatcher } from "chokidar";
 import { AgentElsewhereError, type Hub } from "./hub.js";
 import type { AgentSession, PermissionPolicy, TurnResult } from "./session.js";
 import type { JobRow } from "../hive/db.js";
-import { BRANCHES, ChangeCounter, branchChanges, branchTips, describeDiff, watchTree, type DiffStat } from "./watch.js";
+import { BB_PREFIX, BRANCHES, ChangeCounter, branchChanges, branchTips, describeDiff, watchTree, type DiffStat } from "./watch.js";
 import { baseBranch, repoRoot, selfIgnoreHiveDir } from "./worktree.js";
 
 export interface SchedulerOptions {
@@ -175,6 +175,8 @@ export class Scheduler {
         }
         if (job.kind === "watch") {
           if ((this.pausedUntil.get(job.id) ?? 0) > now) continue;
+          // Review at most every cooldown_ms (changes keep accumulating meanwhile).
+          if (job.cooldown_ms && job.last_run && now - job.last_run < job.cooldown_ms) continue;
           // Failure backoff (fail() pushes next_run into the future).
           if (job.failures > 0 && job.next_run > now) continue;
           const extra = await this.watchReady(job);
@@ -295,7 +297,7 @@ export class Scheduler {
       case "watch":
         if (tree) {
           patch.watch_ref = tree;
-          if (job.watch_path !== BRANCHES) void this.watches.get(job.id)?.counter.keep(tree);
+          if (job.watch_path !== BRANCHES && !job.watch_path?.startsWith(BB_PREFIX)) void this.watches.get(job.id)?.counter.keep(tree);
         }
         break;
     }
@@ -395,6 +397,34 @@ export class Scheduler {
   // ---- watch jobs ----
 
   /** Returns prompt context + new tree when a watch job should fire now. */
+  /** watch_path "@bb:<prefix>": fire when blackboard keys under prefix are new or changed. */
+  private blackboardReady(job: JobRow): WatchFire | undefined {
+    const prefix = job.watch_path!.slice(BB_PREFIX.length);
+    const since = Number(job.watch_ref ?? "NaN");
+    const rows = this.db.bbList(prefix);
+    const newest = rows.reduce((m, r) => Math.max(m, r.updated_at), 0);
+    if (!Number.isFinite(since)) {
+      // Start from now: existing entries aren't new.
+      this.db.updateJob(job.id, { watch_ref: String(newest) });
+      return undefined;
+    }
+    const changed = rows.filter((r) => r.updated_at > since);
+    const min = job.watch_min_lines ?? 1;
+    const oldest = changed.reduce((m, r) => Math.min(m, r.updated_at), Infinity);
+    const due = changed.length >= min || (changed.length > 0 && !!job.every_ms && Date.now() - oldest >= job.every_ms);
+    if (!due) return undefined;
+    this.opts.onJob?.({ type: "watch", job, lines: changed.length, fired: true });
+    const list = changed
+      .slice(0, 40)
+      .map((r) => `- ${r.key} (by ${r.updated_by}): ${r.value.replace(/\s+/g, " ").slice(0, 300)}`)
+      .join("\n");
+    return {
+      tree: String(newest),
+      commit: () => {},
+      text: `New or updated blackboard entries under "${prefix}" since your last run (${changed.length}):\n${list}${changed.length > 40 ? "\n…" : ""}\nRead full values with hive_bb_get.`,
+    };
+  }
+
   /** Branch-watch state per job: last reviewed tips + throttle. */
   private branchState = new Map<number, { tips: Record<string, string>; checkedAt: number; firstChangeAt?: number }>();
 
@@ -440,6 +470,7 @@ export class Scheduler {
   }
 
   private async watchReady(job: JobRow): Promise<WatchFire | undefined> {
+    if (job.watch_path?.startsWith(BB_PREFIX)) return this.blackboardReady(job);
     if (job.watch_path === BRANCHES) {
       try {
         return await this.branchesReady(job);
@@ -597,7 +628,9 @@ export function describeSchedule(j: JobRow): string {
     case "interval":
       return `every ${formatDuration(j.every_ms ?? 0)}`;
     case "watch":
-      return `${j.watch_path === BRANCHES ? "agent branches (hive/*)" : j.watch_path} ≥${j.watch_min_lines ?? 50} lines${j.every_ms ? `, max wait ${formatDuration(j.every_ms)}` : ""}`;
+      if (j.watch_path?.startsWith(BB_PREFIX))
+        return `blackboard ${j.watch_path.slice(BB_PREFIX.length)}* ≥${j.watch_min_lines ?? 1} new${j.every_ms ? `, max wait ${formatDuration(j.every_ms)}` : ""}${j.cooldown_ms ? `, at most every ${formatDuration(j.cooldown_ms)}` : ""}`;
+      return `${j.watch_path === BRANCHES ? "agent branches (hive/*)" : j.watch_path} ≥${j.watch_min_lines ?? 50} lines${j.every_ms ? ` or any change after ${formatDuration(j.every_ms)}` : ""}${j.cooldown_ms ? `, at most every ${formatDuration(j.cooldown_ms)}` : ""}`;
     case "once":
       return new Date(j.next_run).toLocaleString();
   }

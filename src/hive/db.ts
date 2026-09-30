@@ -38,6 +38,7 @@ export interface AgentRow {
   pid?: number | null;
   policy?: string | null;
   preset?: string | null;
+  briefing?: string | null;
   owner?: string | null;
   lease_until?: number | null;
   joined_at?: number | null;
@@ -74,10 +75,12 @@ export interface JobRow {
   ended_reason: string | null;
   briefing: string;
   worktree: number;
+  /** watch jobs: minimum time between runs (review at most every N). */
+  cooldown_ms: number | null;
 }
 
 export type NewJob = Pick<JobRow, "agent" | "prompt" | "kind" | "agent_kind" | "cwd"> &
-  Partial<Pick<JobRow, "remaining" | "until_ts" | "every_ms" | "watch_path" | "watch_min_lines" | "fresh_session" | "next_run" | "policy" | "role" | "briefing" | "worktree" | "owner" | "lease_until">>;
+  Partial<Pick<JobRow, "remaining" | "until_ts" | "every_ms" | "watch_path" | "watch_min_lines" | "fresh_session" | "next_run" | "policy" | "role" | "briefing" | "worktree" | "owner" | "lease_until" | "cooldown_ms">>;
 
 export interface JobRunRow {
   id: number;
@@ -96,7 +99,9 @@ export interface JobRunRow {
 /** Broadcasts sent before an agent joined the hive aren't its mail. */
 const JOINED = `COALESCE((SELECT joined_at FROM agents WHERE name=@agent), 0)`;
 /** The human ("owner") gets mail addressed to "owner", not agents' broadcasts. */
-const BCAST = `(m.to_agent='*' AND @agent<>'owner' AND m.ts >= ${JOINED})`;
+const BCAST = `((m.to_agent='*' AND @agent<>'owner' AND m.ts >= ${JOINED}) OR (m.to_agent LIKE '@%' AND EXISTS (SELECT 1 FROM group_members g WHERE g.grp=substr(m.to_agent,2) AND g.member=@agent AND m.ts >= g.added_at)))`;
+/** Messages delivered to many (broadcast "*" or a group "@name") keep read state per agent. */
+const SHARED = `(m.to_agent='*' OR m.to_agent LIKE '@%')`;
 
 export class HiveDb {
   readonly db: Database.Database;
@@ -184,6 +189,13 @@ export class HiveDb {
         PRIMARY KEY (message_id, agent)
       );
       CREATE INDEX IF NOT EXISTS events_agent ON events(agent, id);
+      -- Groups: mail to "@<group>" reaches every member (agents or "owner").
+      CREATE TABLE IF NOT EXISTS group_members (
+        grp TEXT NOT NULL,
+        member TEXT NOT NULL,
+        added_at INTEGER NOT NULL,
+        PRIMARY KEY (grp, member)
+      );
     `);
     // Additive column migrations for dbs created by phase 1.
     const cols = new Set((this.db.prepare(`PRAGMA table_info(jobs)`).all() as { name: string }[]).map((c) => c.name));
@@ -202,6 +214,7 @@ export class HiveDb {
       ["ended_reason", "TEXT"],
       ["briefing", "TEXT NOT NULL DEFAULT ''"],
       ["worktree", "INTEGER NOT NULL DEFAULT 0"],
+      ["cooldown_ms", "INTEGER"],
     ];
     for (const [name, type] of add) if (!cols.has(name)) this.db.exec(`ALTER TABLE jobs ADD COLUMN ${name} ${type}`);
     const agentCols = new Set((this.db.prepare(`PRAGMA table_info(agents)`).all() as { name: string }[]).map((c) => c.name));
@@ -212,6 +225,7 @@ export class HiveDb {
       ["pid", "INTEGER"],
       ["policy", "TEXT"],
       ["preset", "TEXT"],
+      ["briefing", "TEXT"],
     ] as const)
       if (!agentCols.has(name)) this.db.exec(`ALTER TABLE agents ADD COLUMN ${name} ${type}`);
     const runCols = new Set((this.db.prepare(`PRAGMA table_info(job_runs)`).all() as { name: string }[]).map((c) => c.name));
@@ -248,8 +262,8 @@ export class HiveDb {
       .run(name, owner ?? "", Date.now());
   }
   /** How to start this agent again (any process: serve, CLI, UI). */
-  setAgentConfig(name: string, policy: string, preset: string | null) {
-    this.db.prepare(`UPDATE agents SET policy=?, preset=? WHERE name=?`).run(policy, preset, name);
+  setAgentConfig(name: string, policy: string, preset: string | null, briefing?: string | null) {
+    this.db.prepare(`UPDATE agents SET policy=?, preset=?, briefing=COALESCE(?, briefing) WHERE name=?`).run(policy, preset, briefing ?? null, name);
   }
   /** Status as others should see it: a dead owner means asleep, whatever the row says. */
   effectiveStatus(a: AgentRow): AgentRow["status"] {
@@ -307,36 +321,37 @@ export class HiveDb {
    */
   inbox(agent: string, unreadOnly = true, limit = 50): Message[] {
     const base = `SELECT m.id, m.ts, m.from_agent, m.to_agent, m.subject, m.body, m.thread,
-        CASE WHEN m.to_agent='*' THEN r.read_at ELSE m.read_at END AS read_at
+        CASE WHEN ${SHARED} THEN r.read_at ELSE m.read_at END AS read_at
       FROM messages m LEFT JOIN message_reads r ON r.message_id=m.id AND r.agent=@agent
       WHERE (m.to_agent=@agent OR ${BCAST}) AND m.from_agent<>@agent`;
     const sql = unreadOnly
-      ? `${base} AND (CASE WHEN m.to_agent='*' THEN r.read_at ELSE m.read_at END) IS NULL ORDER BY m.id LIMIT @limit`
+      ? `${base} AND (CASE WHEN ${SHARED} THEN r.read_at ELSE m.read_at END) IS NULL ORDER BY m.id LIMIT @limit`
       : `${base} ORDER BY m.id DESC LIMIT @limit`;
     return this.db.prepare(sql).all({ agent, limit }) as Message[];
   }
   unreadCount(agent: string): number {
     return this.unreadRows(agent).length;
   }
-  private unreadRows(agent: string): { from_agent: string; subject: string }[] {
+  private unreadRows(agent: string): { from_agent: string; subject: string; to_agent: string }[] {
     return this.db
       .prepare(
-        `SELECT m.from_agent, m.subject FROM messages m
+        `SELECT m.from_agent, m.subject, m.to_agent FROM messages m
          LEFT JOIN message_reads r ON r.message_id=m.id AND r.agent=@agent
          WHERE (m.to_agent=@agent OR ${BCAST}) AND m.from_agent<>@agent
-           AND (CASE WHEN m.to_agent='*' THEN r.read_at ELSE m.read_at END) IS NULL
+           AND (CASE WHEN ${SHARED} THEN r.read_at ELSE m.read_at END) IS NULL
          ORDER BY m.id`,
       )
-      .all({ agent }) as { from_agent: string; subject: string }[];
+      .all({ agent }) as { from_agent: string; subject: string; to_agent: string }[];
   }
   /** Unread mail grouped by sender, for the wake-up prompt. */
   unreadSummary(agent: string): { from: string; count: number; subjects: string[] }[] {
     const by = new Map<string, { from: string; count: number; subjects: string[] }>();
     for (const r of this.unreadRows(agent)) {
-      const e = by.get(r.from_agent) ?? { from: r.from_agent, count: 0, subjects: [] };
+      const from = r.to_agent.startsWith("@") ? `${r.from_agent} via ${r.to_agent}` : r.from_agent;
+      const e = by.get(from) ?? { from, count: 0, subjects: [] };
       e.count++;
       e.subjects.push(r.subject);
-      by.set(r.from_agent, e);
+      by.set(from, e);
     }
     return [...by.values()];
   }
@@ -344,9 +359,9 @@ export class HiveDb {
   markRead(ids: number[], agent?: string) {
     if (!ids.length) return;
     const now = Date.now();
-    const direct = this.db.prepare(`UPDATE messages SET read_at=? WHERE id=? AND to_agent<>'*'`);
+    const direct = this.db.prepare(`UPDATE messages SET read_at=? WHERE id=? AND to_agent<>'*' AND to_agent NOT LIKE '@%'`);
     const bcast = this.db.prepare(
-      `INSERT OR IGNORE INTO message_reads (message_id, agent, read_at) SELECT id, ?, ? FROM messages WHERE id=? AND to_agent='*'`,
+      `INSERT OR IGNORE INTO message_reads (message_id, agent, read_at) SELECT id, ?, ? FROM messages WHERE id=? AND (to_agent='*' OR to_agent LIKE '@%')`,
     );
     this.db.transaction(() =>
       ids.forEach((id) => {
@@ -357,6 +372,28 @@ export class HiveDb {
   }
   thread(thread: string): Message[] {
     return this.db.prepare(`SELECT * FROM messages WHERE thread=? ORDER BY id`).all(thread) as Message[];
+  }
+
+  // ---- groups ----
+  addToGroup(grp: string, members: string[]) {
+    const stmt = this.db.prepare(`INSERT OR IGNORE INTO group_members (grp, member, added_at) VALUES (?,?,?)`);
+    const now = Date.now();
+    this.db.transaction(() => members.forEach((m) => stmt.run(grp, m, now)))();
+  }
+  removeFromGroup(grp: string, member: string) {
+    this.db.prepare(`DELETE FROM group_members WHERE grp=? AND member=?`).run(grp, member);
+  }
+  deleteGroup(grp: string) {
+    this.db.prepare(`DELETE FROM group_members WHERE grp=?`).run(grp);
+  }
+  groups(): { name: string; members: string[] }[] {
+    const rows = this.db.prepare(`SELECT grp, member FROM group_members ORDER BY grp, member`).all() as { grp: string; member: string }[];
+    const by = new Map<string, string[]>();
+    for (const r of rows) by.set(r.grp, [...(by.get(r.grp) ?? []), r.member]);
+    return [...by].map(([name, members]) => ({ name, members }));
+  }
+  groupMembers(grp: string): string[] {
+    return (this.db.prepare(`SELECT member FROM group_members WHERE grp=? ORDER BY member`).all(grp) as { member: string }[]).map((r) => r.member);
   }
 
   // ---- blackboard ----
@@ -397,9 +434,9 @@ export class HiveDb {
     const r = this.db
       .prepare(
         `INSERT INTO jobs (agent, prompt, kind, remaining, until_ts, every_ms, watch_path, watch_min_lines,
-           fresh_session, next_run, enabled, created_at, agent_kind, cwd, policy, role, briefing, worktree, owner, lease_until)
+           fresh_session, next_run, enabled, created_at, agent_kind, cwd, policy, role, briefing, worktree, owner, lease_until, cooldown_ms)
          VALUES (@agent, @prompt, @kind, @remaining, @until_ts, @every_ms, @watch_path, @watch_min_lines,
-           @fresh_session, @next_run, 1, @created_at, @agent_kind, @cwd, @policy, @role, @briefing, @worktree, @owner, @lease_until)`,
+           @fresh_session, @next_run, 1, @created_at, @agent_kind, @cwd, @policy, @role, @briefing, @worktree, @owner, @lease_until, @cooldown_ms)`,
       )
       .run({
         remaining: null,
@@ -415,6 +452,7 @@ export class HiveDb {
         worktree: 0,
         owner: null,
         lease_until: null,
+        cooldown_ms: null,
         ...j,
         created_at: Date.now(),
       });

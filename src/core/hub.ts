@@ -138,7 +138,7 @@ export class Hub {
     });
     await s.start();
     this.db.setPid(o.name, s.pid ?? null);
-    this.db.setAgentConfig(o.name, rest.policy ?? "ask", preset ?? null);
+    this.db.setAgentConfig(o.name, rest.policy ?? "ask", preset ?? null, rest.briefing ?? null);
     this.sessions.set(o.name, s);
     return s;
   }
@@ -176,7 +176,7 @@ export class Hub {
         role: a.role,
         policy: (a.policy as SessionOptions["policy"]) ?? "allow-reads",
         preset: a.preset ?? undefined,
-        briefing: preset?.briefing,
+        briefing: a.briefing ?? preset?.briefing,
         resume: true,
         askTimeoutMs: 15 * 60_000,
       }).catch(() => this.woken.delete(a.name));

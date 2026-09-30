@@ -14,6 +14,10 @@
  *   hive every <agent> 10m "prompt"           on an interval
  *   hive watch <agent> <path> [--min-lines 50] [--max-wait 30m] "prompt"
   hive watch <agent> --branches "prompt"  fire on new commits on agents' hive/* branches
+  hive watch <agent> --bb ideas/raw/ "prompt"   fire when agents post blackboard entries under a prefix
+      watch options: --min-lines N (or min new entries)  --max-wait 30m (any change after T)  --cooldown 10m (at most every T)
+  hive groups · hive group create|add|rm|delete <name> [members…]   mail "@name" reaches all members
+  hive recipe list · hive recipe apply <id> [--agent claude] [--alt codex]   a ready-made team (review-loop, solid-code, idea-pipeline, studio)
  *   hive once <agent> [--in 20m | --at 2026-10-01T09:00] "prompt"
  *   hive jobs [--all]                         list jobs
  *   hive job stop|start|runs|rm <id>
@@ -47,8 +51,9 @@ import { Scheduler, parseDuration, formatDuration, describeSchedule as schedule,
 import { probe, installed } from "../core/doctor.js";
 import { ROLES, type RolePreset } from "../core/roles.js";
 import { defaultDb } from "../core/home.js";
-import { BRANCHES } from "../core/watch.js";
+import { BB_PREFIX, BRANCHES } from "../core/watch.js";
 import { buildReport, renderReport } from "../core/report.js";
+import { RECIPES, applyRecipe } from "../core/recipes.js";
 import { listWorktrees, mergeWorktree, removeWorktree, syncWorktree } from "../core/worktree.js";
 import { HiveDb, type JobRow, type NewJob } from "../hive/db.js";
 
@@ -79,6 +84,11 @@ const { values, positionals } = parseArgs({
     worktree: { type: "boolean", default: false },
     force: { type: "boolean", default: false },
     branches: { type: "boolean", default: false },
+    bb: { type: "string" },
+    alt: { type: "string" },
+    agent: { type: "string" },
+    prefix: { type: "string" },
+    cooldown: { type: "string" },
     help: { type: "boolean", short: "h", default: false },
   },
 });
@@ -107,6 +117,10 @@ const USAGE = `hive — local multi-agent harness
   hive every <agent> 10m "prompt"         on an interval
   hive watch <agent> <path> [--min-lines 50] [--max-wait 30m] "prompt"
   hive watch <agent> --branches "prompt"  fire on new commits on agents' hive/* branches
+  hive watch <agent> --bb ideas/raw/ "prompt"   fire when agents post blackboard entries under a prefix
+      watch options: --min-lines N (or min new entries)  --max-wait 30m (any change after T)  --cooldown 10m (at most every T)
+  hive groups · hive group create|add|rm|delete <name> [members…]   mail "@name" reaches all members
+  hive recipe list · hive recipe apply <id> [--agent claude] [--alt codex]   a ready-made team (review-loop, solid-code, idea-pipeline, studio)
   hive once <agent> [--in 20m | --at 2026-10-01T09:00] "prompt"
   hive jobs [--all]                       list jobs
   hive job stop|start|runs|rm <id>
@@ -540,9 +554,10 @@ async function main() {
           cwd,
           role: values.role ?? (reuse ? prev!.role : (r?.role ?? "")),
           policy: (values.policy as PermissionPolicy) ?? (reuse && prev!.policy ? (prev!.policy as PermissionPolicy) : policyArg("ask")),
-          briefing: r?.briefing,
+          briefing: r?.briefing ?? (reuse ? (prev!.briefing ?? undefined) : undefined),
           preset: presetId,
-          worktree: !reuse && (values.worktree || r?.worktree),
+          // ensureWorktree finds the agent's existing worktree, so this is safe on reopen too.
+          worktree: values.worktree || r?.worktree,
           resume: !values.fresh,
         });
       } catch (e: any) {
@@ -587,6 +602,9 @@ async function main() {
       if (values.branches) {
         path = BRANCHES;
         text = prompt(rest.slice(1));
+      } else if (values.bb !== undefined) {
+        path = BB_PREFIX + values.bb;
+        text = prompt(rest.slice(1));
       } else {
         if (!rest[1]) die(`usage: hive watch <agent> <path>|--branches [--min-lines 50] "prompt"`);
         path = resolve(values.cwd ?? process.cwd(), rest[1]);
@@ -599,8 +617,9 @@ async function main() {
         agentKind: agent,
         prompt: text,
         watch_path: path,
-        watch_min_lines: values["min-lines"] ? positiveInt(values["min-lines"], "--min-lines") : 50,
+        watch_min_lines: values["min-lines"] ? positiveInt(values["min-lines"], "--min-lines") : path.startsWith(BB_PREFIX) ? 1 : 50,
         every_ms: values["max-wait"] ? duration(values["max-wait"], "--max-wait") : null,
+        cooldown_ms: values.cooldown ? duration(values.cooldown, "--cooldown") : null,
       });
     }
 
@@ -778,7 +797,8 @@ async function main() {
       if (!to) die(`usage: hive send <agent|*> "text" [--subject S]`);
       const body = prompt(words);
       const db = new HiveDb(values.db!);
-      if (to !== "*" && !db.getAgent(to)) die(`no agent "${to}" (known: ${db.listAgents().map((a) => a.name).join(", ") || "none"})`);
+      if (to.startsWith("@") ? !db.groupMembers(to.slice(1)).length : to !== "*" && !db.getAgent(to))
+        die(`no agent or group "${to}" (agents: ${db.listAgents().map((a) => a.name).join(", ") || "none"}; groups: ${db.groups().map((g) => "@" + g.name).join(", ") || "none"})`);
       const id = db.send("owner", to, values.subject ?? body.split("\n")[0].slice(0, 80), body);
       const a = to === "*" ? undefined : db.getAgent(to);
       console.log(`sent #${id} to ${to}${a && a.status === "asleep" ? dim(` (${to} is asleep; it gets this when it next runs)`) : ""}`);
@@ -825,6 +845,63 @@ async function main() {
       const r = await mergeWorktree(values.cwd ?? process.cwd(), rest[0]);
       (r.ok ? console.log : console.error)(r.ok ? green(r.message) : red(r.message));
       if (!r.ok) process.exitCode = 1;
+      return;
+    }
+
+    case "recipes":
+    case "recipe": {
+      const [sub, id] = cmd === "recipes" ? ["list"] : rest;
+      if (!sub || sub === "list") {
+        for (const r of Object.values(RECIPES)) {
+          console.log(`${cyan(r.id.padEnd(14))} ${r.label}`);
+          console.log(dim(`               ${r.description}`));
+        }
+        console.log(dim(`\napply: hive recipe apply <id> [--agent claude] [--alt codex] [--prefix x-] [--cwd DIR]`));
+        return;
+      }
+      if (sub !== "apply" || !id) die("usage: hive recipe list | hive recipe apply <id> [--agent K] [--alt K]");
+      const r = RECIPES[id];
+      if (!r) die(`unknown recipe "${id}" (${Object.keys(RECIPES).join(", ")})`);
+      const kind = values.agent ?? rest[2] ?? "claude";
+      if (!AGENTS[kind]) die(`unknown agent "${kind}"`);
+      if (values.alt && !AGENTS[values.alt]) die(`unknown agent "${values.alt}"`);
+      const db = new HiveDb(values.db!);
+      const res = applyRecipe(db, r, { cwd: resolve(values.cwd ?? process.cwd()), kind, alt: values.alt, prefix: values.prefix });
+      console.log(green(`recipe ${r.id} applied`));
+      for (const a of res.agents)
+        console.log(`  ${cyan(a.name.padEnd(12))} ${a.kind.padEnd(8)} ${a.policy.padEnd(11)} ${a.interactive ? "you talk to it" : "automatic"}${a.worktree ? " · own worktree" : ""}`);
+      if (res.groups.length) console.log(`  groups: ${res.groups.map((g) => "@" + g).join(", ")}`);
+      const jobs = res.jobs.map((jid) => db.getJob(jid)!).filter(Boolean);
+      for (const j of jobs) console.log(`  job #${j.id} ${j.kind} on ${j.agent}: ${schedule(j)}`);
+      console.log(dim(`\nnext: ${r.next}`));
+      db.close();
+      return;
+    }
+
+    case "groups": {
+      const db = new HiveDb(values.db!);
+      const gs = db.groups();
+      if (!gs.length) console.log(dim("no groups (hive group create <name> <agents…>)"));
+      for (const g of gs) console.log(`${cyan("@" + g.name)}  ${g.members.join(", ")}`);
+      db.close();
+      return;
+    }
+
+    case "group": {
+      const [sub, name, ...members] = rest;
+      if (!sub || !name) die("usage: hive group create|add|rm|delete <name> [members…]");
+      if (!/^[\w.-]{1,40}$/.test(name)) die(`invalid group name "${name}"`);
+      const db = new HiveDb(values.db!);
+      if (sub === "create" || sub === "add") {
+        const unknown = members.filter((m) => m !== "owner" && !db.getAgent(m));
+        if (unknown.length) die(`unknown agents: ${unknown.join(", ")} (use "owner" for yourself)`);
+        if (!members.length) die("give at least one member");
+        db.addToGroup(name, members);
+      } else if (sub === "rm") for (const m of members) db.removeFromGroup(name, m);
+      else if (sub === "delete") db.deleteGroup(name);
+      else die(`unknown group subcommand "${sub}"`);
+      console.log(`@${name}: ${db.groupMembers(name).join(", ") || "(deleted)"}`);
+      db.close();
       return;
     }
 
