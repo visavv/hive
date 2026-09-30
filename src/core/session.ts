@@ -49,6 +49,12 @@ export interface SessionOptions {
   briefing?: string;
   /** Try to resume this ACP session (session/resume, else session/load) before creating a new one. */
   resumeSessionId?: string;
+  /**
+   * Give up on a human answer after this long (permission → rejected,
+   * question → cancelled). The scheduler sets it for agents it starts so an
+   * unattended job can't hang forever on a prompt nobody sees.
+   */
+  askTimeoutMs?: number;
   /** Mail wake-ups allowed per agent per 10 minutes (stops agent ping-pong). Default 30. */
   maxWakesPer10Min?: number;
   /** Max ms to wait for the agent to initialize and open a session. */
@@ -720,12 +726,21 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
     return opt ? { outcome: { outcome: "selected", optionId: opt.optionId } } : { outcome: { outcome: "cancelled" } };
   }
 
-  /** Race a human answer against cancel(). */
+  /** Race a human answer against cancel() and the ask timeout. */
   private withCancel<T>(p: Promise<T>): Promise<T | typeof CANCELLED> {
     let abort!: () => void;
     const cancelled = new Promise<typeof CANCELLED>((r) => (abort = () => r(CANCELLED)));
     this.pendingAsks.add(abort);
-    return Promise.race([p, cancelled]).finally(() => this.pendingAsks.delete(abort));
+    let timer: NodeJS.Timeout | undefined;
+    if (this.opts.askTimeoutMs)
+      timer = setTimeout(() => {
+        this.emitEv({ type: "notice", text: `no answer after ${Math.round(this.opts.askTimeoutMs! / 60_000)} min; declining` });
+        abort();
+      }, this.opts.askTimeoutMs);
+    return Promise.race([p, cancelled]).finally(() => {
+      clearTimeout(timer);
+      this.pendingAsks.delete(abort);
+    });
   }
 
   private async onElicitation(req: schema.CreateElicitationRequest): Promise<schema.CreateElicitationResponse> {

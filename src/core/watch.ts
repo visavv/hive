@@ -142,3 +142,51 @@ export function describeDiff(d: DiffStat, max = 30): string {
   if (d.files.length > max) rows.push(`  … and ${d.files.length - max} more files`);
   return `${d.lines} changed lines in ${d.files.length} file${d.files.length === 1 ? "" : "s"}:\n${rows.join("\n")}`;
 }
+
+/** watch_path value meaning "watch the agents' hive/* branches" instead of a folder. */
+export const BRANCHES = "@branches";
+
+/** Current tip of every hive/* branch: { "hive/zucchini": sha }. */
+export async function branchTips(repo: string): Promise<Record<string, string>> {
+  const out = await git(["for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads/hive/"], repo);
+  const tips: Record<string, string> = {};
+  for (const line of out.split("\n")) {
+    const [ref, sha] = line.trim().split(" ");
+    if (ref && sha) tips[ref] = sha;
+  }
+  return tips;
+}
+
+export interface BranchChange {
+  branch: string;
+  from: string;
+  to: string;
+  diff: DiffStat;
+}
+
+/**
+ * Lines committed on each hive/* branch since `prev`. A branch not seen
+ * before is counted from its merge-base with `base`.
+ */
+export async function branchChanges(repo: string, base: string, prev: Record<string, string>, cur: Record<string, string>): Promise<BranchChange[]> {
+  const out: BranchChange[] = [];
+  for (const [branch, to] of Object.entries(cur)) {
+    if (prev[branch] === to) continue;
+    let from = prev[branch];
+    if (!from) from = (await git(["merge-base", base, to], repo).catch(() => "")).trim();
+    if (!from) continue;
+    const ns = await git(["diff", "--numstat", "--no-renames", `${from}..${to}`], repo).catch(() => "");
+    const files: DiffStat["files"] = [];
+    let lines = 0;
+    for (const row of ns.split("\n")) {
+      const m = row.match(/^(\d+|-)\t(\d+|-)\t(.+)$/);
+      if (!m) continue;
+      const added = m[1] === "-" ? 0 : Number(m[1]);
+      const deleted = m[2] === "-" ? 0 : Number(m[2]);
+      lines += added + deleted;
+      files.push({ path: m[3], added, deleted });
+    }
+    if (lines) out.push({ branch, from, to, diff: { lines, files } });
+  }
+  return out;
+}

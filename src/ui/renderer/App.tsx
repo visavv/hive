@@ -657,9 +657,18 @@ function JobDialog({ agent, onClose }: { agent: string; onClose: () => void }) {
         {kind === "watch" && (
           <>
             <label>
-              <span>Path</span>
-              <input value={path} onChange={(e) => setPath(e.target.value)} placeholder="relative to the agent's folder" />
+              <span>Watch</span>
+              <select value={path === "@branches" ? "@branches" : "path"} onChange={(e) => setPath(e.target.value === "@branches" ? "@branches" : ".")}>
+                <option value="path">a folder</option>
+                <option value="@branches">agents' branches (hive/*) — coders in worktrees</option>
+              </select>
             </label>
+            {path !== "@branches" && (
+              <label>
+                <span>Path</span>
+                <input value={path} onChange={(e) => setPath(e.target.value)} placeholder="relative to the agent's folder" />
+              </label>
+            )}
             <label>
               <span>Min lines</span>
               <input value={minLines} onChange={(e) => setMinLines(e.target.value)} />
