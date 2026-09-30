@@ -1,0 +1,21 @@
+P1 empty name: {"ok":false,"err":"name: letters, digits, _ . - only"}
+P1 space name: {"ok":false,"err":"name: letters, digits, _ . - only"}
+P1 unicode name: {"ok":false,"err":"name: letters, digits, _ . - only"}
+P1 owner: {"ok":false,"err":null}
+P1 owner toasts: []
+P1 panes after owner: ["owner:Could not start: \"owner\" is reserved for the humanRetry"]
+P1 41 chars: {"ok":false,"err":"name: letters, digits, _ . - only"}
+P2 9 agents horizontal grid: {"scrollH":1130,"clientH":910,"overflowY":"auto"}
+P2 duplicate: {"ok":true,"err":"\"agent1\" is already open"}
+P3 vertical scroll: {"scrollH":3660,"clientH":1180}
+P3 pane height: 360
+P3b active element pane: agent8
+P3b Ctrl+9 brings the 9th pane (agent8, owner pane is 1st) into view: true
+P4 send disabled for whitespace: true
+P5 60k-char prompt rendered ms: 51
+P6 focus style on pane action button: {"outline":"auto 1px","boxShadow":"none"}
+P6 buttons without a text/aria-label/title: 0
+P6 icon-only buttons relying on title only (sample): ["add agent","maximize / restore","close pane","schedule a loop / interval / watch job","fresh session (clears context)","maximize / restore","close pane","send (Enter)","schedule a loop / interval / watch job","fresh session (clears context)","maximize / restore","close pane"]
+P7 closed agent listed under other agents: 1
+P8 dim text contrast: {".pane-sub":5.45,".side-head":5.45,".dim":5.45,".kind":5.45}
+renderer errors: []

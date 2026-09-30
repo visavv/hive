@@ -6,3 +6,4 @@ dist
 .hive-test*/
 dist-ui
 .hive-test-home/
+.hive-audit*/
