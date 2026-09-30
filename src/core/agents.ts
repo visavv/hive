@@ -7,6 +7,7 @@
  *
  * Add a new vendor by adding an entry; nothing else in the hub changes.
  */
+import { nodeEntry } from "./paths.js";
 
 export interface AgentDef {
   /** Short id used in config and hive addressing, e.g. "claude". */
@@ -23,6 +24,7 @@ export interface AgentDef {
 }
 
 const npx = process.platform === "win32" ? "npx.cmd" : "npx";
+const mockEntry = nodeEntry("mock/agent");
 
 export const AGENTS: Record<string, AgentDef> = {
   claude: {
@@ -73,8 +75,10 @@ export const AGENTS: Record<string, AgentDef> = {
   mock: {
     id: "mock",
     label: "Mock agent (tests)",
-    command: npx,
-    args: ["-y", "tsx", new URL("../mock/agent.ts", import.meta.url).pathname],
+    // Run with the current node binary (no npx) so tests are fast and paths
+    // stay valid on Windows (a file URL's .pathname is "/C:/..." there).
+    command: mockEntry.command,
+    args: mockEntry.args,
     install: "Built in. No auth. Echoes prompts and exercises hive tools.",
   },
 };
@@ -87,4 +91,23 @@ export function resolveEnv(def: AgentDef): Record<string, string> {
     if (expanded) out[k] = expanded;
   }
   return out;
+}
+
+/**
+ * How to spawn an agent. On Windows, `npx.cmd` and other .cmd shims need a
+ * shell (Node refuses to spawn .cmd/.bat directly since CVE-2024-27980), and
+ * with `shell: true` Node joins args with spaces without quoting, so quote
+ * them ourselves for cmd.exe.
+ */
+export function spawnSpec(def: AgentDef, platform = process.platform): { command: string; args: string[]; shell: boolean } {
+  if (platform !== "win32") return { command: def.command, args: def.args, shell: false };
+  const needsShell = /\.(cmd|bat)$/i.test(def.command) || !/[\\/]/.test(def.command);
+  if (!needsShell) return { command: def.command, args: def.args, shell: false };
+  return { command: winQuote(def.command), args: def.args.map(winQuote), shell: true };
+}
+
+/** Quote one argument for cmd.exe. */
+export function winQuote(a: string): string {
+  if (a !== "" && !/[\s"&|<>^()%!]/.test(a)) return a;
+  return `"${a.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, "$1$1")}"`;
 }
