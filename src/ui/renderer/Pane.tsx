@@ -66,7 +66,11 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
       </header>
       {agent && (
         <div className="pane-sub" title={agent.cwd}>
-          <span>{shortPath(agent.cwd)}</span>
+          {/[\\/]\.hive[\\/]worktrees[\\/]/.test(agent.cwd) ? (
+            <span className="branch">⎇ hive/{agent.cwd.split(/[\\/]/).pop()}</span>
+          ) : (
+            <span>{shortPath(agent.cwd)}</span>
+          )}
           {agent.role && <span>· {agent.role}</span>}
           <span>· {agent.policy}</span>
           {agent.auth && <span className={agent.auth === "not logged in" ? "warn" : ""}>· {agent.auth}</span>}

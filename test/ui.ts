@@ -3,7 +3,9 @@
  * Needs a display (on Linux CI run under xvfb-run). `npm run test:ui`.
  */
 import { _electron as electron, type ElectronApplication, type Page } from "playwright-core";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { assert, finish, freshDir, sleep } from "./util.js";
 
@@ -24,13 +26,15 @@ async function launch(): Promise<{ app: ElectronApplication; page: Page }> {
   return { app, page };
 }
 
-async function addAgent(page: Page, name: string, policy = "ask") {
+async function addAgent(page: Page, name: string, policy = "ask", extra?: { cwd?: string; preset?: string }) {
   await page.keyboard.press("Control+N");
   const dlg = page.locator(".modal");
   await dlg.waitFor();
   await dlg.locator("select").first().selectOption("mock");
   await dlg.locator("label:has-text('Name') input").fill(name);
-  await dlg.locator("label:has-text('Permissions') select").selectOption(policy);
+  if (extra?.cwd) await dlg.locator("label:has-text('Folder') input").fill(extra.cwd);
+  if (extra?.preset) await dlg.locator("label:has-text('Preset') select").selectOption(extra.preset);
+  else await dlg.locator("label:has-text('Permissions') select").selectOption(policy);
   await dlg.locator("button[type=submit]").click();
   await page.locator(`[data-pane="${name}"] textarea:not([disabled])`).waitFor({ timeout: 20_000 });
 }
@@ -108,6 +112,35 @@ try {
   await page.screenshot({ path: join(shots, "hive-ui.png") });
   const layout = JSON.parse(readFileSync(join(dir, ".hive", "ui.json"), "utf8"));
   assert(layout.panes.length === 2 && layout.columns === 2, "layout persisted to .hive/ui.json");
+
+  // coder preset in a git repo → own worktree; merge it from the sidebar
+  const repo = mkdtempSync(join(tmpdir(), "hive-ui-repo-"));
+  const g = (args: string[], cwd = repo) => execFileSync("git", args, { cwd, encoding: "utf8" });
+  g(["init", "-q", "-b", "main"]);
+  g(["config", "user.email", "t@t"]);
+  g(["config", "user.name", "t"]);
+  writeFileSync(join(repo, "a.txt"), "a\n");
+  g(["add", "."]);
+  g(["commit", "-qm", "init"]);
+  await addAgent(page, "gamma", "ask", { cwd: repo, preset: "coder" });
+  await pane(page, "gamma").locator(".branch", { hasText: "hive/gamma" }).waitFor({ timeout: 10_000 });
+  assert(true, "coder preset puts the agent in its own worktree (branch shown in pane)");
+  const wt = join(repo, ".hive", "worktrees", "gamma");
+  writeFileSync(join(wt, "feature.txt"), "x\ny\n");
+  g(["add", "."], wt);
+  g(["commit", "-qm", "agent feature"], wt);
+  await page.locator(".wt-list button[title='refresh'], .side-head button[title='refresh']").first().click();
+  const wtItem = page.locator(".wt-list li", { hasText: "gamma" });
+  await wtItem.locator("text=↑1").waitFor({ timeout: 10_000 });
+  page.once("dialog", (d) => void d.accept());
+  await wtItem.locator("button", { hasText: "merge" }).click();
+  await page.locator(".toast", { hasText: "merged hive/gamma into main" }).waitFor({ timeout: 10_000 });
+  assert(existsSync(join(repo, "feature.txt")), "merge button merged the agent branch into main");
+  await page.screenshot({ path: join(shots, "hive-ui-worktree.png") });
+  await pane(page, "gamma").locator("button.close").click();
+} catch (e) {
+  await page.screenshot({ path: join(shots, "hive-ui-failure.png") }).catch(() => {});
+  throw e;
 } finally {
   await app.close();
 }

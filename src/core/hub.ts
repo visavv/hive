@@ -6,6 +6,7 @@
 import { AgentSession, type SessionOptions, type SessionEvent } from "./session.js";
 import { HiveDb } from "../hive/db.js";
 import { resolve } from "node:path";
+import { ensureWorktree } from "./worktree.js";
 
 export interface HubOptions {
   hiveDb: string;
@@ -22,6 +23,8 @@ export type AddOptions = Omit<SessionOptions, "hiveDb"> & {
    * it was the same vendor in the same cwd and the vendor supports it.
    */
   resume?: boolean;
+  /** Run in <repo>/.hive/worktrees/<name> on branch hive/<name> (created if missing). */
+  worktree?: boolean;
 };
 
 export class Hub {
@@ -58,12 +61,13 @@ export class Hub {
   }
 
   private async start(o: AddOptions): Promise<AgentSession> {
-    const { resume, ...rest } = o;
+    const { resume, worktree, ...rest } = o;
+    if (worktree) rest.cwd = (await ensureWorktree(o.cwd, o.name)).path;
     let resumeSessionId = rest.resumeSessionId;
     if (resume && !resumeSessionId) {
       const prev = this.db.getAgent(o.name);
       const kind = typeof o.agent === "string" ? o.agent : o.agent.id;
-      if (prev?.session_id && prev.kind === kind && prev.cwd === resolve(o.cwd)) resumeSessionId = prev.session_id;
+      if (prev?.session_id && prev.kind === kind && prev.cwd === resolve(rest.cwd)) resumeSessionId = prev.session_id;
     }
     const s = new AgentSession({ ...this.opts.defaults, ...rest, resumeSessionId, hiveDb: this.hiveDb });
     s.on("event", (e) => {

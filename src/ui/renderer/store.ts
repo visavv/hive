@@ -5,7 +5,7 @@
  * every pane.
  */
 import { useSyncExternalStore } from "react";
-import type { AgentView, BackendEvent, ElicitationAsk, JobView, Layout, PermissionAsk } from "../protocol.js";
+import type { AgentView, BackendEvent, ElicitationAsk, JobView, Layout, PermissionAsk, PresetView } from "../protocol.js";
 
 export type Item =
   | { k: "user"; text: string; ts: number }
@@ -36,6 +36,7 @@ class Store {
   starting = new Map<string, { kind: string; error?: string }>();
   jobs: JobView[] = [];
   kinds: { id: string; label: string }[] = [];
+  presets: PresetView[] = [];
   cwd = "";
   db = "";
   layout: Layout = { panes: [], columns: 2, hoverFocus: true, sidebar: true, maximized: null };
@@ -98,6 +99,7 @@ class Store {
     switch (ev.event) {
       case "ready":
         this.kinds = ev.kinds;
+        this.presets = ev.presets ?? [];
         this.cwd = ev.cwd;
         this.db = ev.db;
         if (!this.ready) this.layout = ev.layout;
