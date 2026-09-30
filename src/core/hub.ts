@@ -27,16 +27,35 @@ export type AddOptions = Omit<SessionOptions, "hiveDb"> & {
   worktree?: boolean;
 };
 
+/** The agent is running in another hive process (CLI chat, serve, UI). */
+export class AgentElsewhereError extends Error {
+  constructor(
+    readonly agent: string,
+    readonly owner: string,
+  ) {
+    super(`agent "${agent}" is already running in another hive process (${owner})`);
+  }
+}
+
+const AGENT_LEASE_MS = 30_000;
+
 export class Hub {
   readonly sessions = new Map<string, AgentSession>();
   readonly db: HiveDb;
   readonly hiveDb: string;
+  /** Lease owner id for agents this process runs. */
+  readonly id = `${process.pid}@${Math.random().toString(36).slice(2, 8)}`;
   private timer?: NodeJS.Timeout;
+  private leaseTimer: NodeJS.Timeout;
   private starting = new Map<string, Promise<AgentSession>>();
 
   constructor(private opts: HubOptions) {
     this.hiveDb = resolve(opts.hiveDb);
     this.db = new HiveDb(this.hiveDb);
+    this.leaseTimer = setInterval(() => {
+      if (this.db.db.open) this.db.renewAgents(this.id, [...this.sessions.keys(), ...this.starting.keys()], AGENT_LEASE_MS);
+    }, AGENT_LEASE_MS / 3);
+    this.leaseTimer.unref?.();
   }
 
   async add(o: AddOptions): Promise<AgentSession> {
@@ -61,6 +80,18 @@ export class Hub {
   }
 
   private async start(o: AddOptions): Promise<AgentSession> {
+    // Only one process may run a given agent name, or both would answer its mail.
+    const claim = this.db.claimAgent(o.name, this.id, AGENT_LEASE_MS);
+    if (!claim.ok) throw new AgentElsewhereError(o.name, claim.owner);
+    try {
+      return await this.startClaimed(o);
+    } catch (e) {
+      if (this.db.db.open) this.db.releaseAgent(o.name, this.id);
+      throw e;
+    }
+  }
+
+  private async startClaimed(o: AddOptions): Promise<AgentSession> {
     const { resume, worktree, ...rest } = o;
     // Worktrees live next to the hive db (the per-user project dir by default).
     if (worktree) rest.cwd = (await ensureWorktree(o.cwd, o.name, join(dirname(this.hiveDb), "worktrees"))).path;
@@ -73,7 +104,10 @@ export class Hub {
     const s = new AgentSession({ ...this.opts.defaults, ...rest, resumeSessionId, hiveDb: this.hiveDb });
     s.on("event", (e) => {
       this.opts.onEvent?.(o.name, e);
-      if (e.type === "exit" && this.sessions.get(o.name) === s) this.sessions.delete(o.name);
+      if (e.type === "exit" && this.sessions.get(o.name) === s) {
+        this.sessions.delete(o.name);
+        if (this.db.db.open) this.db.releaseAgent(o.name, this.id);
+      }
     });
     await s.start();
     this.sessions.set(o.name, s);
@@ -88,11 +122,15 @@ export class Hub {
       this.sessions.delete(name);
     }
     if (forget) this.db.removeAgent(name);
+    else this.db.releaseAgent(name, this.id);
   }
 
   /** Start the mail delivery loop. */
   run(): void {
     if (this.timer) return;
+    try {
+      this.db.prune();
+    } catch {}
     const ms = this.opts.pollMs ?? 1500;
     this.timer = setInterval(() => {
       for (const s of this.sessions.values()) void s.poke().catch(() => {});
@@ -115,8 +153,10 @@ export class Hub {
 
   async close() {
     if (this.timer) clearInterval(this.timer);
+    clearInterval(this.leaseTimer);
     this.timer = undefined;
     await Promise.all([...this.sessions.values()].map((s) => s.close()));
+    if (this.db.db.open) for (const n of this.sessions.keys()) this.db.releaseAgent(n, this.id);
     this.sessions.clear();
     this.db.close();
   }

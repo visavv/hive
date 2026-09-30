@@ -5,7 +5,7 @@
  * ignores itself so the main checkout never sees it as untracked files.
  */
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { projectDir } from "./home.js";
 
@@ -70,6 +70,10 @@ export async function ensureWorktree(
   if (existing && existsSync(existing.path)) return { path: existing.path, branch, repo, created: false };
   const path = join(baseDir ?? join(projectDir(repo), "worktrees"), name);
   mkdirSync(dirname(path), { recursive: true });
+  if (existsSync(path)) {
+    if (readdirSync(path).length) throw new Error(`${path} exists but is not a worktree of ${repo}; move or delete it`);
+    rmSync(path, { recursive: true });
+  }
   // Needs at least one commit to branch from.
   try {
     await git(["rev-parse", "--verify", "HEAD"], repo);

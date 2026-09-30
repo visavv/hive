@@ -35,6 +35,9 @@ export interface AgentRow {
   status_note: string;
   last_seen: number;
   session_id: string | null;
+  owner?: string | null;
+  lease_until?: number | null;
+  joined_at?: number | null;
 }
 
 export type JobKind = "once" | "loop" | "interval" | "watch";
@@ -71,7 +74,7 @@ export interface JobRow {
 }
 
 export type NewJob = Pick<JobRow, "agent" | "prompt" | "kind" | "agent_kind" | "cwd"> &
-  Partial<Pick<JobRow, "remaining" | "until_ts" | "every_ms" | "watch_path" | "watch_min_lines" | "fresh_session" | "next_run" | "policy" | "role" | "briefing" | "worktree">>;
+  Partial<Pick<JobRow, "remaining" | "until_ts" | "every_ms" | "watch_path" | "watch_min_lines" | "fresh_session" | "next_run" | "policy" | "role" | "briefing" | "worktree" | "owner" | "lease_until">>;
 
 export interface JobRunRow {
   id: number;
@@ -86,6 +89,9 @@ export interface JobRunRow {
   /** Tail of the agent's final reply for this run (what it found / did). */
   summary: string | null;
 }
+
+/** Broadcasts sent before an agent joined the hive aren't its mail. */
+const JOINED = `COALESCE((SELECT joined_at FROM agents WHERE name=@agent), 0)`;
 
 export class HiveDb {
   readonly db: Database.Database;
@@ -193,6 +199,13 @@ export class HiveDb {
       ["worktree", "INTEGER NOT NULL DEFAULT 0"],
     ];
     for (const [name, type] of add) if (!cols.has(name)) this.db.exec(`ALTER TABLE jobs ADD COLUMN ${name} ${type}`);
+    const agentCols = new Set((this.db.prepare(`PRAGMA table_info(agents)`).all() as { name: string }[]).map((c) => c.name));
+    for (const [name, type] of [
+      ["owner", "TEXT"],
+      ["lease_until", "INTEGER"],
+      ["joined_at", "INTEGER"],
+    ] as const)
+      if (!agentCols.has(name)) this.db.exec(`ALTER TABLE agents ADD COLUMN ${name} ${type}`);
     const runCols = new Set((this.db.prepare(`PRAGMA table_info(job_runs)`).all() as { name: string }[]).map((c) => c.name));
     if (!runCols.has("summary")) this.db.exec(`ALTER TABLE job_runs ADD COLUMN summary TEXT`);
   }
@@ -201,8 +214,8 @@ export class HiveDb {
   upsertAgent(a: Omit<AgentRow, "last_seen">) {
     this.db
       .prepare(
-        `INSERT INTO agents (name, kind, cwd, role, status, status_note, last_seen, session_id)
-         VALUES (@name, @kind, @cwd, @role, @status, @status_note, @last_seen, @session_id)
+        `INSERT INTO agents (name, kind, cwd, role, status, status_note, last_seen, session_id, joined_at)
+         VALUES (@name, @kind, @cwd, @role, @status, @status_note, @last_seen, @session_id, @last_seen)
          ON CONFLICT(name) DO UPDATE SET kind=excluded.kind, cwd=excluded.cwd, role=excluded.role,
            status=excluded.status, status_note=excluded.status_note, last_seen=excluded.last_seen,
            session_id=excluded.session_id`,
@@ -223,6 +236,35 @@ export class HiveDb {
   removeAgent(name: string) {
     this.db.prepare(`DELETE FROM agents WHERE name=?`).run(name);
   }
+  /**
+   * Claim the right to run agent `name` in this process (lease). Returns the
+   * current owner if another live process holds it.
+   */
+  claimAgent(name: string, owner: string, leaseMs: number): { ok: true } | { ok: false; owner: string } {
+    const now = Date.now();
+    return this.db.transaction(() => {
+      this.db
+        .prepare(
+          `INSERT OR IGNORE INTO agents (name, kind, cwd, role, status, status_note, last_seen, session_id, joined_at)
+           VALUES (?, '', '', '', 'asleep', '', ?, NULL, ?)`,
+        )
+        .run(name, now, now);
+      const r = this.db
+        .prepare(`UPDATE agents SET owner=?, lease_until=? WHERE name=? AND (owner IS NULL OR owner=? OR lease_until<?)`)
+        .run(owner, now + leaseMs, name, owner, now);
+      if (r.changes) return { ok: true as const };
+      const row = this.db.prepare(`SELECT owner FROM agents WHERE name=?`).get(name) as { owner: string };
+      return { ok: false as const, owner: row.owner };
+    })();
+  }
+  renewAgents(owner: string, names: string[], leaseMs: number) {
+    const stmt = this.db.prepare(`UPDATE agents SET lease_until=? WHERE name=? AND owner=?`);
+    const until = Date.now() + leaseMs;
+    this.db.transaction(() => names.forEach((n) => stmt.run(until, n, owner)))();
+  }
+  releaseAgent(name: string, owner: string) {
+    this.db.prepare(`UPDATE agents SET owner=NULL, lease_until=NULL WHERE name=? AND owner=?`).run(name, owner);
+  }
 
   // ---- messages ----
   send(from: string, to: string, subject: string, body: string, thread?: string): number {
@@ -241,7 +283,7 @@ export class HiveDb {
     const base = `SELECT m.id, m.ts, m.from_agent, m.to_agent, m.subject, m.body, m.thread,
         CASE WHEN m.to_agent='*' THEN r.read_at ELSE m.read_at END AS read_at
       FROM messages m LEFT JOIN message_reads r ON r.message_id=m.id AND r.agent=@agent
-      WHERE (m.to_agent=@agent OR m.to_agent='*') AND m.from_agent<>@agent`;
+      WHERE (m.to_agent=@agent OR (m.to_agent='*' AND m.ts >= ${JOINED})) AND m.from_agent<>@agent`;
     const sql = unreadOnly
       ? `${base} AND (CASE WHEN m.to_agent='*' THEN r.read_at ELSE m.read_at END) IS NULL ORDER BY m.id LIMIT @limit`
       : `${base} ORDER BY m.id DESC LIMIT @limit`;
@@ -255,7 +297,7 @@ export class HiveDb {
       .prepare(
         `SELECT m.from_agent, m.subject FROM messages m
          LEFT JOIN message_reads r ON r.message_id=m.id AND r.agent=@agent
-         WHERE (m.to_agent=@agent OR m.to_agent='*') AND m.from_agent<>@agent
+         WHERE (m.to_agent=@agent OR (m.to_agent='*' AND m.ts >= ${JOINED})) AND m.from_agent<>@agent
            AND (CASE WHEN m.to_agent='*' THEN r.read_at ELSE m.read_at END) IS NULL
          ORDER BY m.id`,
       )
@@ -329,9 +371,9 @@ export class HiveDb {
     const r = this.db
       .prepare(
         `INSERT INTO jobs (agent, prompt, kind, remaining, until_ts, every_ms, watch_path, watch_min_lines,
-           fresh_session, next_run, enabled, created_at, agent_kind, cwd, policy, role, briefing, worktree)
+           fresh_session, next_run, enabled, created_at, agent_kind, cwd, policy, role, briefing, worktree, owner, lease_until)
          VALUES (@agent, @prompt, @kind, @remaining, @until_ts, @every_ms, @watch_path, @watch_min_lines,
-           @fresh_session, @next_run, 1, @created_at, @agent_kind, @cwd, @policy, @role, @briefing, @worktree)`,
+           @fresh_session, @next_run, 1, @created_at, @agent_kind, @cwd, @policy, @role, @briefing, @worktree, @owner, @lease_until)`,
       )
       .run({
         remaining: null,
@@ -345,6 +387,8 @@ export class HiveDb {
         role: "",
         briefing: "",
         worktree: 0,
+        owner: null,
+        lease_until: null,
         ...j,
         created_at: Date.now(),
       });
@@ -372,10 +416,11 @@ export class HiveDb {
    * lease. A job owned by another live scheduler is left alone, so `hive serve`
    * and a foreground `hive loop` never run the same job twice.
    */
-  claimJobs(owner: string, leaseMs: number, onlyIds?: number[]): JobRow[] {
+  claimJobs(owner: string, leaseMs: number, onlyIds?: number[], skipIds: number[] = []): JobRow[] {
     const now = Date.now();
     return this.db.transaction(() => {
-      const filter = onlyIds ? ` AND id IN (${onlyIds.map(Number).join(",") || "NULL"})` : "";
+      let filter = onlyIds ? ` AND id IN (${onlyIds.map(Number).join(",") || "NULL"})` : "";
+      if (skipIds.length) filter += ` AND id NOT IN (${skipIds.map(Number).join(",")})`;
       this.db
         .prepare(
           `UPDATE jobs SET owner=?, lease_until=? WHERE enabled=1 AND (owner IS NULL OR owner=? OR lease_until<?)${filter}`,
@@ -413,6 +458,17 @@ export class HiveDb {
     return this.db
       .prepare(`SELECT * FROM job_runs WHERE job_id=? ORDER BY id DESC LIMIT ?`)
       .all(jobId, limit) as JobRunRow[];
+  }
+
+  /** Drop events (and finished job runs) older than `days`. */
+  prune(days = 30) {
+    const cutoff = Date.now() - days * 86_400_000;
+    this.db.prepare(`DELETE FROM events WHERE ts < ?`).run(cutoff);
+    this.db.prepare(`DELETE FROM job_runs WHERE ended IS NOT NULL AND ended < ?`).run(cutoff);
+    this.db.prepare(`DELETE FROM message_reads WHERE read_at < ?`).run(cutoff);
+  }
+  threadLength(thread: string): number {
+    return (this.db.prepare(`SELECT COUNT(*) AS n FROM messages WHERE thread=?`).get(thread) as { n: number }).n;
   }
 
   /** Recent events for one agent, oldest first (UI history). */

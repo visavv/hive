@@ -137,5 +137,24 @@ racer.on("event", (e) => e.type === "session" && sessions.add(e.sessionId));
 const [a, b] = await Promise.all([racer.runOnce("one", { fresh: true }), racer.runOnce("two", { fresh: true })]);
 assert(a.sessionId && b.sessionId && a.sessionId !== b.sessionId && sessions.size === 1, "concurrent fresh runs get their own sessions, no orphans");
 
+// ---- one process per agent name ----
+const other = new Hub({ hiveDb: dbPath });
+let elsewhere = "";
+await other.add({ name: "racer", agent: mock("racer"), cwd: process.cwd() }).catch((e) => (elsewhere = e.message));
+assert(/already running in another hive process/.test(elsewhere), "a second process can't start an agent that is already running");
+await hub.remove("racer", false);
+const moved = await other.add({ name: "racer", agent: mock("racer"), cwd: process.cwd() });
+assert(!!moved.sessionId, "after the first process releases it, another process can take the agent");
+await other.close();
+
+// ---- late joiners don't inherit old broadcasts ----
+hub.db.send("dave", "*", "old news", "before newbie joined");
+await new Promise((r) => setTimeout(r, 5));
+const newbie = await hub.add({ name: "newbie", agent: mock("newbie"), cwd: process.cwd() });
+assert(hub.db.unreadCount("newbie") === 0, "broadcasts sent before an agent joined are not its mail");
+hub.db.send("dave", "*", "fresh news", "after");
+assert(hub.db.unreadCount("newbie") === 1, "broadcasts after joining are");
+void newbie;
+
 await hub.close();
 finish("session");
