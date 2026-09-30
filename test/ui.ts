@@ -140,6 +140,30 @@ try {
   await page.locator(".job-list li.ended", { hasText: "done" }).waitFor({ timeout: 20_000 });
   assert(true, "job scheduled from a pane runs and shows as done in the sidebar");
 
+  // hive drawer: mail to the owner, report, blackboard, send as owner
+  await pane(page, "alpha").locator("textarea").fill("tellowner: overnight run finished; bb ideas/dark-mode=add a dark mode toggle");
+  await pane(page, "alpha").locator("textarea").press("Enter");
+  await page.locator(".hive-btn .badge").waitFor({ timeout: 10_000 });
+  assert(true, "owner mail shows a badge on the Hive button");
+  await page.keyboard.press("Control+I");
+  await page.locator(".drawer .mail", { hasText: "overnight run finished" }).waitFor({ timeout: 5000 });
+  assert(true, "inbox tab lists mail agents sent to the owner");
+  await page.locator(".hive-btn .badge").waitFor({ state: "detached", timeout: 5000 });
+  assert(true, "opening the inbox marks it read");
+  await page.locator(".drawer .seg button", { hasText: "Since you left" }).click();
+  await page.locator(".drawer .rep-job", { hasText: "loop" }).waitFor({ timeout: 5000 });
+  assert(true, "report tab summarizes job runs");
+  await page.locator(".drawer .seg button", { hasText: "Blackboard" }).click();
+  await page.locator(".drawer .bb-row", { hasText: "ideas/dark-mode" }).waitFor({ timeout: 5000 });
+  assert(true, "blackboard tab shows entries agents wrote");
+  await page.locator(".drawer .compose select").selectOption("beta");
+  await page.locator(".drawer .compose input").fill("please look at the auth module");
+  await page.locator(".drawer .compose input").press("Enter");
+  await pane(page, "beta").locator(".msg.user", { hasText: "1 from owner" }).waitFor({ timeout: 10_000 });
+  assert(true, "mail sent as owner wakes the agent");
+  await page.screenshot({ path: join(shots, "hive-ui-drawer.png") });
+  await page.keyboard.press("Escape");
+
   await page.screenshot({ path: join(shots, "hive-ui.png") });
   const layout = JSON.parse(readFileSync(join(projectDir(dir), "ui.json"), "utf8"));
   assert(layout.panes.length === 2 && layout.columns === 2, "layout persisted to .hive/ui.json");

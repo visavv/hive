@@ -10,4 +10,5 @@ contextBridge.exposeInMainWorld("hiveBridge", {
     ipcRenderer.on("hive:focus-last", () => fn());
   },
   hello: (): Promise<boolean> => ipcRenderer.invoke("hive:hello"),
+  attention: () => ipcRenderer.send("hive:attention"),
 });
