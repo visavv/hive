@@ -39,7 +39,7 @@
  */
 import { parseArgs } from "node:util";
 import readline from "node:readline";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
@@ -57,6 +57,8 @@ import { buildReport, renderReport } from "../core/report.js";
 import { RECIPES, applyRecipe } from "../core/recipes.js";
 import { findSkill, listSkills, parseSkill, projectSkillsDir, skillTemplate, userSkillsDir } from "../core/skills.js";
 import { runSkill, writeSkill } from "../core/skill-run.js";
+import { createBridges } from "../bridges/index.js";
+import type { Bridge } from "../bridges/router.js";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { listWorktrees, mergeWorktree, removeWorktree, syncWorktree } from "../core/worktree.js";
 import { HiveDb, type JobRow, type NewJob } from "../hive/db.js";
@@ -95,6 +97,7 @@ const { values, positionals } = parseArgs({
     describe: { type: "string" },
     project: { type: "boolean", default: false },
     out: { type: "string" },
+    bridge: { type: "string" },
     cooldown: { type: "string" },
     help: { type: "boolean", short: "h", default: false },
   },
@@ -132,7 +135,7 @@ const USAGE = `hive — local multi-agent harness
   hive once <agent> [--in 20m | --at 2026-10-01T09:00] "prompt"
   hive jobs [--all]                       list jobs
   hive job stop|start|runs|rm <id>
-  hive serve                              run all jobs + mail delivery until Ctrl-C
+  hive serve [--bridge discord,whatsapp]  run all jobs + mail delivery until Ctrl-C (optionally reachable from chat)
   hive start <agent> --as security|scout|bughunter    run a preset's default job
 
   hive report [--since 12h]               what happened: job runs + summaries, commits, mail to you
@@ -1019,8 +1022,41 @@ async function main() {
     }
 
     case "serve": {
-      const hub = newHub({ wakeSleeping: true });
-      const sched = new Scheduler({ hub, onJob: renderJob, closeIdleAgents: true });
+      // Chat bridges (optional): permission prompts go to chat instead of this terminal.
+      let bridges: Bridge[] = [];
+      let bridgeAsk: Bridge["askPermission"] | undefined;
+      const hub = new Hub({
+        hiveDb: values.db!,
+        wakeSleeping: true,
+        onEvent: (agent, e) => {
+          render(agent, e);
+          for (const b of bridges) b.onAgentEvent(agent, e);
+        },
+        defaults: {
+          askPermission: (req, agent, signal) => (bridgeAsk ? bridgeAsk(req, agent, signal) : askPermission(req, agent, signal)),
+          elicit,
+        },
+      });
+      const sched = new Scheduler({
+        hub,
+        onJob: (e) => {
+          renderJob(e);
+          for (const b of bridges) b.onJobEvent(e as any);
+        },
+        closeIdleAgents: true,
+      });
+      if (values.bridge) {
+        const cwd = resolve(values.cwd ?? process.cwd());
+        try {
+          bridges = createBridges(values.bridge.split(",").map((x) => x.trim()).filter(Boolean), hub, { cwd, stateDir: dirname(values.db!) });
+          for (const b of bridges) await b.start();
+        } catch (e: any) {
+          await hub.close();
+          die(`bridge: ${e?.message ?? e}\nsee docs/BRIDGES.md`);
+        }
+        bridgeAsk = bridges[0]?.askPermission;
+        console.log(dim(`bridges: ${values.bridge} (permission prompts go to chat)`));
+      }
       hub.run();
       sched.start();
       console.log(`hive serve: running jobs from ${resolve(values.db!)} ${dim("(Ctrl-C to stop; jobs stay queued)")}`);
@@ -1029,6 +1065,7 @@ async function main() {
         const onInt = async () => {
           if (n++) process.exit(130);
           console.log(dim("\nshutting down…"));
+          for (const b of bridges) await b.stop().catch(() => {});
           await sched.stop();
           await hub.close();
           res();
