@@ -167,6 +167,11 @@ void deaf.prompt("hello human prompt");
 await until(() => hub.db.events(0, 100_000).some((e) => e.agent === "deaf" && e.type === "prompt" && JSON.parse(e.data).text === "hello human prompt"), 8000, "typed prompt").catch(() => {});
 assert(hub.db.events(0, 100_000).some((e) => e.agent === "deaf" && e.type === "prompt" && JSON.parse(e.data).text === "hello human prompt"), "typed prompts run even while mail delivery is backed off");
 
+// ---- hive's own MCP tools never need a human, even under "ask" ----
+await deaf.prompt("hivetool please");
+await until(() => texts("deaf").includes("hive tool"), 8000, "hive tool").catch(() => {});
+assert(texts("deaf").includes("hive tool allowed"), "hive MCP tool calls are auto-allowed under any policy but reject-all");
+
 // ---- failed start leaves no ghost agent row ----
 await hub.add({ name: "ghosty", agent: { ...mock("ghosty"), command: "/nonexistent/binary", args: [] }, cwd: process.cwd(), startTimeoutMs: 5000 }).catch(() => {});
 assert(!hub.db.getAgent("ghosty"), "a failed start doesn't leave a ghost agent in the hive");
@@ -180,6 +185,18 @@ const daveUnread = hub.db.unreadCount("dave");
 hub.db.db.prepare("UPDATE message_reads SET read_at = read_at - 40*86400000").run();
 hub.db.prune(30);
 assert(hub.db.unreadCount("dave") === daveUnread, "pruning old events doesn't make read broadcasts unread again");
+
+// ---- a hub with wakeSleeping starts an agent that has mail but isn't running ----
+const sl = await hub.add({ name: "sleeper", agent: "mock", cwd: process.cwd(), policy: "allow-all" });
+const slSession = sl.sessionId;
+await hub.remove("sleeper", false);
+hub.db.send("owner", "sleeper", "overnight task", "please do it");
+const waker = new Hub({ hiveDb: dbPath, pollMs: 200, wakeSleeping: true, onEvent });
+waker.run();
+await until(() => hub.db.unreadCount("sleeper") === 0, 20_000, "sleeper woken").catch(() => {});
+assert(hub.db.unreadCount("sleeper") === 0, "serve-style hub wakes a sleeping agent to deliver its mail");
+assert(waker.sessions.get("sleeper")?.sessionId === slSession, "the woken agent resumed its previous session");
+await waker.close();
 
 await hub.close();
 finish("session");

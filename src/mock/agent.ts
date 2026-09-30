@@ -196,7 +196,18 @@ acp
     }
 
     // 3. a permission-gated fake edit, to exercise policy
-    if (/edit/.test(text)) {
+    if (/\bhivetool\b/.test(text)) {
+      const perm = await cx.request(acp.methods.client.session.requestPermission, {
+        sessionId,
+        toolCall: { toolCallId: `t${++n}`, title: "mcp__hive__hive_send", kind: "other", status: "pending" },
+        options: [
+          { optionId: "allow", name: "Allow", kind: "allow_once" },
+          { optionId: "reject", name: "Reject", kind: "reject_once" },
+        ],
+      });
+      await say(cx, sessionId, perm.outcome.outcome === "selected" && perm.outcome.optionId === "allow" ? "hive tool allowed\n" : "hive tool rejected\n");
+    }
+    if (/\bedit\b/.test(text) && !/Read and update/.test(text)) {
       const perm = await cx.request(acp.methods.client.session.requestPermission, {
         sessionId,
         toolCall: { toolCallId: `t${++n}`, title: "Write src/fake.ts", kind: "edit", status: "pending" },
@@ -220,9 +231,21 @@ acp
       await say(cx, sessionId, `elicit: ${r.action} ${JSON.stringify((r as any).content ?? null)}\n`);
     }
 
-    // 5. scheduler notes file: read it through the client and append a line
+    // 5. scheduler notes file: read it through the client and append a line.
+    // Like a real agent, ask permission for the edit first (allow-reads jobs must be allowed).
     const notesM = text.match(/Read and update (\S+\.md)/);
     if (notesM) {
+      const perm = await cx.request(acp.methods.client.session.requestPermission, {
+        sessionId,
+        toolCall: { toolCallId: `t${++n}`, title: `Edit ${notesM[1]}`, kind: "edit", status: "pending", locations: [{ path: notesM[1] }] },
+        options: [
+          { optionId: "allow", name: "Allow", kind: "allow_once" },
+          { optionId: "reject", name: "Reject", kind: "reject_once" },
+        ],
+      });
+      if (!(perm.outcome.outcome === "selected" && perm.outcome.optionId === "allow")) {
+        await say(cx, sessionId, "notes edit rejected\n");
+      } else {
       const path = notesM[1];
       const head = await cx.request(acp.methods.client.fs.readTextFile, { sessionId, path, line: 1, limit: 1 });
       const all = await cx.request(acp.methods.client.fs.readTextFile, { sessionId, path });
@@ -232,6 +255,7 @@ acp
         content: all.content.trimEnd() + `\n- iteration by ${sessionId} (turn ${sess.turns})\n`,
       });
       await say(cx, sessionId, `notes head: ${head.content}\n`);
+      }
     }
 
     // 6. a long turn that honours session/cancel

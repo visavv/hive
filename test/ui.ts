@@ -72,8 +72,13 @@ try {
 
   // phase 4: hover focus, Ctrl+N jump, Ctrl+Tab
   await pane(page, "beta").locator(".transcript").hover();
-  await sleep(100);
-  assert(await activeIn(page, "beta"), "hovering a pane focuses its input");
+  await sleep(700);
+  assert(await activeIn(page, "beta"), "hovering a pane focuses its input (after a short dwell)");
+  await pane(page, "beta").locator("textarea").fill("draft in progress");
+  await pane(page, "alpha").locator(".transcript").hover();
+  await sleep(700);
+  assert(await activeIn(page, "beta"), "hover doesn't steal focus from an input with an unsent draft");
+  await pane(page, "beta").locator("textarea").fill("");
   await page.keyboard.press("Control+1");
   assert(await activeIn(page, "alpha"), "Ctrl+1 focuses the first pane");
   await page.keyboard.press("Control+Tab");

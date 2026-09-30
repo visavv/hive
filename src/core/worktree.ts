@@ -141,15 +141,49 @@ export async function listWorktrees(cwd: string): Promise<{ repo: string; base: 
 export async function mergeWorktree(cwd: string, name: string): Promise<{ ok: boolean; message: string }> {
   const repo = await repoRoot(cwd);
   const branch = branchFor(name);
+  const wt = (await worktreeEntries(repo)).find((w) => w.branch === branch);
+  const exists = await git(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], repo).then(
+    () => true,
+    () => false,
+  );
+  if (!exists) return { ok: false, message: `no agent branch ${branch} (see \`hive worktrees\`)` };
   const dirty = (await git(["status", "--porcelain", "--untracked-files=no"], repo)).trim();
   if (dirty) return { ok: false, message: `main checkout has uncommitted changes; commit or stash them first:\n${dirty}` };
   const base = await baseBranch(repo);
+  const agentDirty = wt ? (await git(["status", "--porcelain"], wt.path).catch(() => "")).split("\n").filter(Boolean).length : 0;
   try {
     const out = await git(["merge", "--no-ff", "--no-edit", "-m", `Merge ${branch} (hive agent ${name})`, branch], repo);
-    return { ok: true, message: `merged ${branch} into ${base}\n${out.trim()}` };
+    let msg = `merged ${branch} into ${base}\n${out.trim()}`;
+    // Bring the agent's branch up to date so it continues from the merged base.
+    if (wt && !agentDirty) {
+      await git(["merge", "--ff-only", "--quiet", base], wt.path).then(
+        () => (msg += `\n${branch} fast-forwarded to ${base}`),
+        () => {},
+      );
+    }
+    if (agentDirty) msg += `\nnote: ${agentDirty} uncommitted change${agentDirty === 1 ? "" : "s"} in the agent's worktree were not merged`;
+    return { ok: true, message: msg };
   } catch (e: any) {
     await git(["merge", "--abort"], repo).catch(() => {});
-    return { ok: false, message: `merge of ${branch} into ${base} conflicted and was aborted — ask the agent to rebase on ${base}:\n${e.message}` };
+    return { ok: false, message: `merge of ${branch} into ${base} conflicted and was aborted — run \`hive sync ${name}\` or ask the agent to merge ${base} into its branch:\n${e.message}` };
+  }
+}
+
+/** Merge the base branch into the agent's worktree (catch it up). Aborts on conflict. */
+export async function syncWorktree(cwd: string, name: string): Promise<{ ok: boolean; message: string }> {
+  const repo = await repoRoot(cwd);
+  const branch = branchFor(name);
+  const wt = (await worktreeEntries(repo)).find((w) => w.branch === branch);
+  if (!wt) return { ok: false, message: `no worktree for ${branch}` };
+  if ((await git(["status", "--porcelain", "--untracked-files=no"], wt.path)).trim())
+    return { ok: false, message: `${name}'s worktree has uncommitted changes; let the agent commit first` };
+  const base = await baseBranch(repo);
+  try {
+    const out = await git(["-c", "user.name=hive", "-c", "user.email=hive@localhost", "merge", "--no-edit", base], wt.path);
+    return { ok: true, message: `${branch} now includes ${base}\n${out.trim()}` };
+  } catch (e: any) {
+    await git(["merge", "--abort"], wt.path).catch(() => {});
+    return { ok: false, message: `merging ${base} into ${branch} conflicts; ask ${name} to merge ${base} and resolve:\n${e.message}` };
   }
 }
 

@@ -25,7 +25,8 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
     <section
       className={`pane status-${status}${waiting ? " needs-you" : ""}`}
       data-pane={name}
-      onMouseEnter={() => hoverFocus && focus.hover(name)}
+      onMouseEnter={() => hoverFocus && focus.hoverStart(name)}
+      onMouseLeave={() => focus.hoverEnd()}
       onMouseDown={() => focus.setActive(name)}
     >
       <header className="pane-head" onDoubleClick={onMaximize} title="double-click to maximize">

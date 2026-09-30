@@ -36,6 +36,8 @@ export interface AgentRow {
   last_seen: number;
   session_id: string | null;
   pid?: number | null;
+  policy?: string | null;
+  preset?: string | null;
   owner?: string | null;
   lease_until?: number | null;
   joined_at?: number | null;
@@ -208,6 +210,8 @@ export class HiveDb {
       ["lease_until", "INTEGER"],
       ["joined_at", "INTEGER"],
       ["pid", "INTEGER"],
+      ["policy", "TEXT"],
+      ["preset", "TEXT"],
     ] as const)
       if (!agentCols.has(name)) this.db.exec(`ALTER TABLE agents ADD COLUMN ${name} ${type}`);
     const runCols = new Set((this.db.prepare(`PRAGMA table_info(job_runs)`).all() as { name: string }[]).map((c) => c.name));
@@ -242,6 +246,16 @@ export class HiveDb {
     this.db
       .prepare(`DELETE FROM agents WHERE name=? AND (owner IS NULL OR owner=? OR lease_until<?)`)
       .run(name, owner ?? "", Date.now());
+  }
+  /** How to start this agent again (any process: serve, CLI, UI). */
+  setAgentConfig(name: string, policy: string, preset: string | null) {
+    this.db.prepare(`UPDATE agents SET policy=?, preset=? WHERE name=?`).run(policy, preset, name);
+  }
+  /** Status as others should see it: a dead owner means asleep, whatever the row says. */
+  effectiveStatus(a: AgentRow): AgentRow["status"] {
+    if (a.status === "asleep") return a.status;
+    if (!a.owner || (a.lease_until ?? 0) < Date.now()) return "asleep";
+    return a.status;
   }
   setPid(name: string, pid: number | null) {
     this.db.prepare(`UPDATE agents SET pid=? WHERE name=?`).run(pid, name);

@@ -109,6 +109,12 @@ class Queue<T> {
   clear() {
     this.items = [];
   }
+  /** Take whatever is queued right now without waiting. */
+  takeAll(): T[] {
+    const out = this.items;
+    this.items = [];
+    return out;
+  }
 }
 
 const hiveServer = nodeEntry("hive/server");
@@ -613,6 +619,12 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
         }
         if (msg.kind === "stop") {
           result = { stopReason: msg.response.stopReason, usage: msg.response.usage ?? undefined };
+          // Notifications are dispatched asynchronously and the last chunks of a
+          // turn can land after the prompt response: let them in before ending.
+          for (let i = 0; i < 3; i++) {
+            await new Promise((r) => setImmediate(r));
+            for (const late of this.updates.takeAll()) if (late.kind === "update") this.handleUpdate(late.update);
+          }
         } else {
           const err = errorText(msg.error);
           result = { stopReason: "error", error: err };
@@ -706,7 +718,12 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
     const kind = (req.toolCall as any).kind as string | undefined;
     let opt: schema.PermissionOption | undefined;
     let decided = false;
-    switch (this.policy) {
+    // Always fine, whatever the policy (except reject-all): hive's own MCP tools,
+    // and edits to files the hub handed this agent (a job's notes file).
+    if (this.policy !== "reject-all" && (isHiveTool(req) || this.touchesOnly(req, this.allowedPaths))) {
+      opt = pick(["allow_once", "allow_always"]);
+      decided = true;
+    } else switch (this.policy) {
       case "allow-all":
         opt = pick(["allow_once", "allow_always"]);
         decided = true;
@@ -738,6 +755,25 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
     this.emitEv({ type: "permission", title, decision });
     this.dbLog(this.name, "permission", { title, kind, decision });
     return opt ? { outcome: { outcome: "selected", optionId: opt.optionId } } : { outcome: { outcome: "cancelled" } };
+  }
+
+  /** Files this agent may always write (e.g. a scheduler notes file). */
+  readonly allowedPaths = new Set<string>();
+
+  /** True if every path the tool call names is in `paths`. */
+  private touchesOnly(req: schema.RequestPermissionRequest, paths: Set<string>): boolean {
+    if (!paths.size) return false;
+    const tc = req.toolCall as any;
+    const named = new Set<string>();
+    for (const l of tc.locations ?? []) if (l?.path) named.add(resolve(l.path));
+    for (const c of tc.content ?? []) if (c?.type === "diff" && c.path) named.add(resolve(c.path));
+    const ri = tc.rawInput ?? {};
+    for (const k of ["file_path", "path", "notebook_path"]) if (typeof ri[k] === "string") named.add(resolve(this.cwd, ri[k]));
+    if (!named.size) return false;
+    for (const p of named) if (!paths.has(p)) return false;
+    // Only file edits/reads, never shell commands that merely mention the path.
+    const kind = tc.kind as string | undefined;
+    return kind === undefined || kind === "edit" || kind === "read";
   }
 
   /** Race a human answer against cancel() and the ask timeout. */
@@ -823,4 +859,12 @@ export function errorText(e: unknown): string {
     if (detail && detail !== "{}") text += `: ${typeof detail === "string" ? detail : JSON.stringify(detail)}`;
   }
   return text.slice(0, 2000);
+}
+
+/** Calls to hive's own MCP tools (mail, blackboard, status, read-only git). */
+export function isHiveTool(req: schema.RequestPermissionRequest): boolean {
+  const title = String(req.toolCall.title ?? "");
+  const ri = (req.toolCall as any).rawInput ?? {};
+  const name = `${title} ${typeof ri.tool === "string" ? ri.tool : ""} ${typeof ri.name === "string" ? ri.name : ""}`;
+  return /(^|[\s_:.])(mcp__hive__)?hive_(agents|send|inbox|thread|bb_get|bb_set|bb_list|bb_delete|status|diff|log)\b/.test(name);
 }

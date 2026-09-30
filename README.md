@@ -14,30 +14,42 @@ Design goals, in order:
 ```
 npm install
 npm test                         # mock-agent end-to-end suites (no vendor login needed)
-npm run dev -- doctor            # installed? speaks ACP? logged in?
-npm run ui                       # the pane UI (Electron)
-npm run dev -- chat claude --cwd ~/code/myproject
+npm run build && npm link        # puts `hive` on your PATH (or use `npm run dev --` from this checkout)
+cd ~/code/myproject
+hive doctor                      # installed? speaks ACP? logged in?
+hive ui                          # the pane UI for this project
+hive chat claude --as coder      # or a terminal chat
 ```
+
+All state lives outside your repo, in one hive per project: `%LOCALAPPDATA%\hive\projects\<repo>-<hash>\` on Windows (`~/.local/state/hive/…` on Linux, `~/Library/Application Support/hive/…` on macOS; override with `HIVE_HOME`). That's the SQLite db, `ui.json`, watch snapshots and agent worktrees. Run `hive` from anywhere inside the repo (or pass `--cwd`) and you get the same hive.
 
 ## CLI
 
 ```
 hive run <agent> "prompt"                  one prompt, wait for replies to settle, exit
-hive chat <agent>                          interactive; resumes the last session (--fresh for new)
+hive chat <agent>                          interactive; reopening a name resumes its session, folder and preset (--fresh for new)
 hive agents                                who's in the hive, status, unread mail
 hive doctor [agent...] [--quick]           probes each adapter with ACP initialize + auth push
+hive ui                                    the pane UI for this project
 
 hive loop  <agent> --times 5 "prompt"      back-to-back runs, fresh session each, shared notes file
 hive loop  <agent> --for 8h  "prompt"      … until the time is up
 hive every <agent> 10m "prompt"            on an interval
 hive watch <agent> <path> --min-lines 50 "prompt"   when enough lines change (untracked files count)
+hive watch <agent> --branches "prompt"     when enough lines are committed on agents' hive/* branches
 hive once  <agent> --in 20m "prompt"
-hive start <agent> --as security|scout|bughunter    a role preset's default job
-hive jobs [--all] · hive job stop|start|runs|rm <id>
-hive serve                                 run every queued job + mail delivery (use with --detach)
+hive start <agent> --as security|scout|bughunter    a role preset's default job (agent named after the preset)
+hive jobs [--all] · hive job stop|start|runs|show|rm <id|agent>
+hive serve                                 run queued jobs, deliver mail (waking sleeping agents)
+
+hive report [--since 12h]                  job runs + summaries, commits on agent branches, mail to you
+hive inbox · hive send <agent|*> "text"    mail between you ("owner") and agents
+hive bb [prefix] · hive bb rm <key>        the shared blackboard
+hive log <agent>                           what an agent was asked and answered
 
 hive worktrees                             agent branches: ahead/behind, diffstat, uncommitted
-hive merge <name>                          merge hive/<name> into the main checkout (--no-ff)
+hive merge <name>                          merge hive/<name> into the main checkout (--no-ff), then fast-forward the agent
+hive sync <name>                           merge the main branch into the agent's worktree
 hive worktree rm <name> [--force]
 ```
 
@@ -49,12 +61,13 @@ In `chat`: type while the agent works (prompts queue), Ctrl-C cancels a turn, Ct
 
 ## Pane UI
 
-`npm run ui` builds and starts the Electron app in the current folder (`--cwd`, `--db` to override).
+`hive ui` (or `npm run ui`) builds and starts the Electron app for the current project (`--cwd` to pick another).
 
-- Grid of panes, N per row, drag the gaps to resize, Ctrl+M maximizes. Layout persists in `.hive/ui.json`, panes come back (and their ACP sessions resume) on restart.
-- Sidebar: every agent with model/effort, idle time, ctx %, unread mail, status note; worktrees with a merge button; jobs with stop.
+- Grid of panes, N per row, drag the gaps to resize, Ctrl+M maximizes, Ctrl+= / Ctrl+- zoom. Layout persists per project; panes come back (and their ACP sessions resume) on restart.
+- Sidebar: every agent with model/effort, idle time, ctx %, unread mail, status note; other agents in the hive (e.g. run by `hive serve`); worktrees with a merge button; jobs (click for run history and summaries).
+- ✉ Hive drawer (Ctrl+I): since-you-left report, mail agents sent you, the blackboard, all mail, and a box to message agents.
 - Each pane: markdown replies, collapsible thinking, tool cards with diffs, plan checklist, permission prompts and agent questions answered inline, model/effort selectors, ctx meter, ⏱ to schedule a loop / interval / watch job on that agent.
-- Input routing for voice typing (Handy): hover a pane to focus its input (toggle in the top bar), Ctrl+1..9 jump, Ctrl+Tab cycle, Ctrl+Alt+H (global) brings hive forward on the last active pane. Enter sends (queues while busy), Esc cancels, ↑ recalls.
+- Input routing for voice typing (Handy): hover a pane to focus its input (short dwell; never leaves an unsent draft; toggle in the top bar), Ctrl+1..9 jump, Ctrl+Tab cycle, Ctrl+Alt+H (global) brings hive forward on the last active pane. Enter sends (queues while busy), Esc cancels, ↑ recalls.
 - Broadcast box: send one prompt to the ticked panes, or all.
 
 Architecture: Electron main is a relay; the hub runs in a system-Node child process (`src/ui/backend.ts`) that speaks NDJSON over stdio, so native modules need no Electron rebuild and no socket is ever opened. Renderer is sandboxed with a strict CSP.
@@ -76,12 +89,14 @@ Architecture: Electron main is a relay; the hub runs in a system-Node child proc
 Jobs live in the SQLite `jobs` table; runs in `job_runs` (stop reason, usage, session id, error).
 
 - **Fresh session per run** plus `<cwd>/.hive/notes/job-<id>.md`, which the prompt tells the agent to read first and update before finishing (the Ralph-loop pattern: iterations hand over through the notes file, not one ever-growing context).
-- **watch** snapshots the tree into a shadow git index under `.hive/watch/` and counts `git diff --numstat` lines between snapshots, so new untracked files count and your own index is never touched. `.git`, `node_modules`, `.hive` are ignored; `.gitignore` is honoured. The prompt lists what changed.
-- Jobs are claimed with a lease, so `hive serve`, the UI and a foreground `hive loop` never run the same job twice. Stopping a job cancels its in-flight turn. Five failures in a row end a job as `failed`.
+- **watch** snapshots the tree into a shadow git index in the project's state dir and counts `git diff --numstat` lines between snapshots, so new untracked files count and your own index is never touched. `.git`, `node_modules`, `.hive` are ignored; `.gitignore` is honoured. The prompt lists what changed.
+- **watch --branches** follows the agents' `hive/*` branches instead, so a security reviewer sees coders' commits in their worktrees; the prompt lists each branch range for `hive_diff`.
+- Jobs are claimed with a lease, so `hive serve`, the UI and a foreground `hive loop` never run the same job twice. Stopping a job cancels its in-flight turn. Five failures in a row end a job as `failed`. A usage limit (e.g. the 5-hour window) pauses the job until the reset instead.
+- Unattended job agents may always edit their own notes file and call hive's tools; any other prompt nobody answers is declined after 15 minutes.
 
 ## Worktrees
 
-`--worktree` (or the coder/bughunter presets) runs an agent in `<repo>/.hive/worktrees/<name>` on branch `hive/<name>`. `.hive/` ignores itself, so nothing shows up in your `git status`. `hive merge <name>` does a `--no-ff` merge into the main checkout, refusing if it has uncommitted changes and aborting cleanly on conflict.
+`--worktree` (or the coder/bughunter presets) runs an agent in its own git worktree (in the project's state dir, outside your checkout) on branch `hive/<name>`. Reviewers read it with the `hive_diff` / `hive_log` tools, no shell needed. `hive merge <name>` does a `--no-ff` merge into the main checkout, refusing if it has uncommitted changes and aborting cleanly on conflict.
 
 ## How a message flows
 
@@ -126,7 +141,9 @@ src/core/worktree.ts   git worktree per agent, status, merge
 src/core/roles.ts      role presets
 src/core/doctor.ts     adapter probe
 src/hive/db.ts         SQLite: agents, messages, blackboard, events, jobs, job_runs
-src/hive/server.ts     the MCP server each agent gets (hive_send / hive_inbox / hive_bb_* / hive_status / hive_agents)
+src/hive/server.ts     the MCP server each agent gets (hive_send / inbox / thread / bb_* / status / agents / diff / log)
+src/core/home.ts       per-user state dir (one hive per project)
+src/core/report.ts     "since you left" report
 src/mock/agent.ts      scripted ACP agent for tests; really calls the hive tools
 src/cli/index.ts       the CLI
 src/ui/                Electron main, preload, NDJSON backend, React renderer

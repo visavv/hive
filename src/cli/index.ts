@@ -49,7 +49,7 @@ import { ROLES, type RolePreset } from "../core/roles.js";
 import { defaultDb } from "../core/home.js";
 import { BRANCHES } from "../core/watch.js";
 import { buildReport, renderReport } from "../core/report.js";
-import { listWorktrees, mergeWorktree, removeWorktree } from "../core/worktree.js";
+import { listWorktrees, mergeWorktree, removeWorktree, syncWorktree } from "../core/worktree.js";
 import { HiveDb, type JobRow, type NewJob } from "../hive/db.js";
 
 const { values, positionals } = parseArgs({
@@ -120,7 +120,16 @@ const USAGE = `hive — local multi-agent harness
 
   hive worktrees                          agent branches: ahead/behind, diffstat, dirty
   hive merge <name>                       merge hive/<name> into the main checkout
+  hive sync <name>                        merge the main branch into the agent's worktree
+  hive log <agent> [--times N]            what an agent was asked and answered
   hive worktree rm <name> [--force]
+
+examples (the four everyday setups):
+  hive chat claude --as coder                            a coder you talk to, in its own worktree
+  hive loop claude --as bughunter --for 8h -d "hunt bugs in src/"    overnight bug hunt (then: hive serve)
+  hive start codex --as security -d                      rescans when enough new lines land (agent branches too)
+  hive start claude --as scout -d                        feature ideas every 10 minutes → hive bb ideas/
+  hive serve        ·  hive report --since 12h  ·  hive inbox  ·  hive ui
 
 agents:  ${Object.keys(AGENTS).join(", ")}
 presets: ${Object.values(ROLES).map((r) => r.id).join(", ")}  (--as: role + policy + briefing [+ worktree])
@@ -348,8 +357,17 @@ function duration(s: string, what: string): number {
   }
 }
 
-function newHub(): Hub {
-  return new Hub({ hiveDb: values.db!, onEvent: render, defaults: { askPermission, elicit } });
+function newHub(opts: { wakeSleeping?: boolean } = {}): Hub {
+  return new Hub({ hiveDb: values.db!, onEvent: render, defaults: { askPermission, elicit }, ...opts });
+}
+
+/** Paths inside the project print relative to it. */
+function shortCwd(p: string): string {
+  const base = resolve(values.cwd ?? process.cwd());
+  if (p === base) return ".";
+  if (p.startsWith(base + "/") || p.startsWith(base + "\\")) return p.slice(base.length + 1);
+  const wt = p.match(/[\\/]worktrees[\\/]([^\\/]+)$/);
+  return wt ? `(worktree ${wt[1]})` : p;
 }
 
 function ago(ts: number | null): string {
@@ -399,8 +417,18 @@ async function submitJob(j: Omit<NewJob, "agent" | "cwd" | "policy" | "role" | "
     // A foreground job is ours from the start, so a running `hive serve` can't grab it.
     ...(values.detach ? {} : { owner: fgOwner, lease_until: Date.now() + 30_000 }),
   });
-  if (!values.name) db.updateJob(id, { agent: `${j.agent_kind}-${id}` });
+  // Preset jobs get the preset's name (security, scout, bughunter); others <kind>-<id>.
+  if (!values.name) {
+    const taken = db.getAgent(r?.id ?? "");
+    const name = r && (!taken || taken.kind === j.agent_kind) ? r.id : `${j.agent_kind}-${id}`;
+    db.updateJob(id, { agent: name });
+  }
   const job = db.getJob(id)!;
+  // Visible in the hive (hive agents, hive send) before its first run.
+  if (!db.getAgent(job.agent)) {
+    db.upsertAgent({ name: job.agent, kind: job.agent_kind, cwd, role: job.role, status: "asleep", status_note: `waiting for job ${id}`, session_id: null });
+    db.setAgentConfig(job.agent, policy, r?.id ?? null);
+  }
   db.close();
   console.log(`${green(`job ${id}`)} ${job.kind} on ${job.agent} (${job.agent_kind}, ${policy}) — ${schedule(job)}`);
   if (values.detach) {
@@ -425,15 +453,15 @@ async function main() {
       if (!rows.length) console.log(dim("no agents yet"));
       else
         console.table(
-          rows.map(({ name, kind, role, status, status_note, cwd, last_seen }) => ({
-            name,
-            kind,
-            role,
-            status,
-            unread: db.unreadCount(name),
-            seen: ago(last_seen),
-            note: status_note.slice(0, 50),
-            cwd,
+          rows.map((a) => ({
+            name: a.name,
+            kind: a.kind,
+            role: a.role || a.preset || "",
+            status: db.effectiveStatus(a),
+            unread: db.unreadCount(a.name),
+            seen: ago(a.last_seen),
+            note: a.status_note.slice(0, 40),
+            where: shortCwd(a.cwd),
           })),
         );
       db.close();
@@ -470,21 +498,34 @@ async function main() {
     case "chat": {
       const agent = agentArg(rest[0], `hive ${cmd} <agent> [--name N] [--cwd D] [--policy P] ${cmd === "run" ? '"prompt"' : ""}`);
       const name = values.name ?? agent;
-      const cwd = values.cwd ?? process.cwd();
+      const hub = newHub();
+      // Reopening a known agent: same folder (its worktree), role, policy and
+      // preset — and so the same ACP session — unless flags say otherwise.
+      const prev = hub.db.getAgent(name);
+      const reuse = !!prev && prev.kind === agent && !values.cwd && !values.as && !values.worktree && !!prev.cwd && existsSync(prev.cwd);
+      if (prev && prev.kind && prev.kind !== agent) {
+        await hub.close();
+        die(`"${name}" is a ${prev.kind} agent in this hive; pick another --name`);
+      }
+      if (prev?.kind && !reuse && prev.cwd && (values.cwd || values.as || values.worktree))
+        console.log(dim(`note: ${name} previously ran in ${prev.cwd}${prev.preset ? ` as ${prev.preset}` : ""}; starting with the new settings`));
+      const cwd = reuse ? prev!.cwd : (values.cwd ?? process.cwd());
       if (!existsSync(cwd)) die(`--cwd ${cwd} does not exist`);
       const text = cmd === "run" ? prompt(rest.slice(1)) : "";
-      const hub = newHub();
+      const presetId = values.as ?? (reuse ? (prev!.preset ?? undefined) : undefined);
+      const r = presetId ? ROLES[presetId] : undefined;
+      if (presetId && !r) die(`unknown preset "${presetId}"`);
       let s: AgentSession;
       try {
-        const r = preset();
         s = await hub.add({
           name,
           agent,
           cwd,
-          role: values.role ?? r?.role ?? "",
-          policy: policyArg("ask"),
+          role: values.role ?? (reuse ? prev!.role : (r?.role ?? "")),
+          policy: (values.policy as PermissionPolicy) ?? (reuse && prev!.policy ? (prev!.policy as PermissionPolicy) : policyArg("ask")),
           briefing: r?.briefing,
-          worktree: values.worktree || r?.worktree,
+          preset: presetId,
+          worktree: !reuse && (values.worktree || r?.worktree),
           resume: !values.fresh,
         });
       } catch (e: any) {
@@ -584,9 +625,18 @@ async function main() {
 
     case "job": {
       const [sub, idS] = rest;
-      if (!sub || !idS) die(`usage: hive job stop|start|runs|rm <id>`);
-      const id = positiveInt(idS, "job id");
+      if (!sub || !idS) die(`usage: hive job stop|start|runs|show|rm <id|agent>`);
       const db = new HiveDb(values.db!);
+      let id: number;
+      if (/^\d+$/.test(idS)) id = Number(idS);
+      else {
+        // An agent name: its active job (or latest job).
+        const js = db.listJobs(true).filter((x) => x.agent === idS);
+        const pick = js.filter((x) => x.enabled).at(-1) ?? js.at(-1);
+        if (!pick) die(`no job for agent "${idS}"`);
+        if (js.filter((x) => x.enabled).length > 1) console.log(dim(`${idS} has several active jobs; using #${pick.id}`));
+        id = pick.id;
+      }
       const j = db.getJob(id);
       if (!j) die(`no job ${id}`);
       switch (sub) {
@@ -612,9 +662,20 @@ async function main() {
                 took: r.ended ? formatDuration(r.ended - r.started) : "running",
                 stop: r.stop_reason ?? "",
                 tokens: r.usage ? (JSON.parse(r.usage).totalTokens ?? "") : "",
-                error: (r.error ?? "").slice(0, 60),
+                summary: (r.error ?? r.summary ?? "").replace(/\s+/g, " ").slice(-70),
               })),
             );
+          console.log(dim(`full summaries: hive job show ${id}`));
+          break;
+        }
+        case "show": {
+          console.log(`${green(`job ${id}`)} ${j.kind} on ${j.agent} — ${schedule(j)} — ${j.enabled ? "active" : (j.ended_reason ?? "ended")}\n${dim(j.prompt)}\n`);
+          for (const r of db.jobRuns(id, 500).reverse()) {
+            console.log(`${cyan(`run ${r.iteration}`)} ${dim(new Date(r.started).toLocaleString())} ${r.stop_reason ?? "running"}${r.ended ? dim(` · ${formatDuration(r.ended - r.started)}`) : ""}`);
+            if (r.summary) console.log("  " + r.summary.trim().replace(/\n/g, "\n  "));
+            if (r.error) console.log(red("  " + r.error));
+            console.log();
+          }
           break;
         }
         case "rm":
@@ -624,7 +685,7 @@ async function main() {
           console.log(`job ${id} removed`);
           break;
         default:
-          die(`unknown job subcommand "${sub}" (stop|start|runs|rm)`);
+          die(`unknown job subcommand "${sub}" (stop|start|runs|show|rm)`);
       }
       db.close();
       return;
@@ -633,7 +694,8 @@ async function main() {
     case "start": {
       const agent = agentArg(rest[0], `hive start <agent> --as ${Object.values(ROLES).filter((r) => r.job).map((r) => r.id).join("|")}`);
       const r = preset();
-      if (!r?.job) die(`hive start needs --as with a preset that has a default job: ${Object.values(ROLES).filter((x) => x.job).map((x) => x.id).join(", ")}`);
+      if (!r) die(`hive start needs --as <preset>: ${Object.values(ROLES).filter((x) => x.job).map((x) => x.id).join(", ")}`);
+      if (!r.job) die(`the ${r.id} preset has no job to start — talk to it with \`hive chat ${agent} --as ${r.id}\` (or \`hive ui\`)`);
       const extra = rest.slice(1).join(" ").trim();
       const cwd = resolve(values.cwd ?? process.cwd());
       return submitJob({
@@ -749,6 +811,33 @@ async function main() {
       return;
     }
 
+    case "sync": {
+      if (!rest[0]) die("usage: hive sync <agent-name>");
+      const r = await syncWorktree(values.cwd ?? process.cwd(), rest[0]);
+      (r.ok ? console.log : console.error)(r.ok ? green(r.message) : red(r.message));
+      if (!r.ok) process.exitCode = 1;
+      return;
+    }
+
+    case "log": {
+      if (!rest[0]) die("usage: hive log <agent> [--times N]");
+      const db = new HiveDb(values.db!);
+      const n = values.times ? positiveInt(values.times, "--times") : 20;
+      const rows = db.agentEvents(rest[0], ["prompt", "reply", "turn_end", "permission", "session"], n * 4);
+      if (!rows.length) console.log(dim(`nothing logged for ${rest[0]}`));
+      for (const e of rows) {
+        const d = JSON.parse(e.data);
+        const t = dim(new Date(e.ts).toLocaleTimeString());
+        if (e.type === "prompt") console.log(`\n${t} ${cyan("›")} ${d.text.slice(0, 600)}`);
+        else if (e.type === "reply") console.log(`${t} ${d.text.slice(-1500)}`);
+        else if (e.type === "permission") console.log(`${t} ${yellow("🔐")} ${d.title} → ${d.decision}`);
+        else if (e.type === "session") console.log(`${t} ${dim(`session ${d.how} ${d.sessionId}`)}`);
+        else if (e.type === "turn_end") console.log(`${t} ${dim(`— ${d.stopReason}${d.error ? `: ${d.error}` : ""}`)}`);
+      }
+      db.close();
+      return;
+    }
+
     case "worktree": {
       const [sub, name] = rest;
       if (sub !== "rm" || !name) die("usage: hive worktree rm <name> [--force]");
@@ -758,7 +847,7 @@ async function main() {
     }
 
     case "serve": {
-      const hub = newHub();
+      const hub = newHub({ wakeSleeping: true });
       const sched = new Scheduler({ hub, onJob: renderJob, closeIdleAgents: true });
       hub.run();
       sched.start();
