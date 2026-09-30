@@ -35,6 +35,7 @@ export interface AgentRow {
   status_note: string;
   last_seen: number;
   session_id: string | null;
+  pid?: number | null;
   owner?: string | null;
   lease_until?: number | null;
   joined_at?: number | null;
@@ -92,6 +93,8 @@ export interface JobRunRow {
 
 /** Broadcasts sent before an agent joined the hive aren't its mail. */
 const JOINED = `COALESCE((SELECT joined_at FROM agents WHERE name=@agent), 0)`;
+/** The human ("owner") gets mail addressed to "owner", not agents' broadcasts. */
+const BCAST = `(m.to_agent='*' AND @agent<>'owner' AND m.ts >= ${JOINED})`;
 
 export class HiveDb {
   readonly db: Database.Database;
@@ -204,6 +207,7 @@ export class HiveDb {
       ["owner", "TEXT"],
       ["lease_until", "INTEGER"],
       ["joined_at", "INTEGER"],
+      ["pid", "INTEGER"],
     ] as const)
       if (!agentCols.has(name)) this.db.exec(`ALTER TABLE agents ADD COLUMN ${name} ${type}`);
     const runCols = new Set((this.db.prepare(`PRAGMA table_info(job_runs)`).all() as { name: string }[]).map((c) => c.name));
@@ -233,8 +237,14 @@ export class HiveDb {
   getAgent(name: string): AgentRow | undefined {
     return this.db.prepare(`SELECT * FROM agents WHERE name=?`).get(name) as AgentRow | undefined;
   }
-  removeAgent(name: string) {
-    this.db.prepare(`DELETE FROM agents WHERE name=?`).run(name);
+  /** Forget an agent — unless another live process holds its lease. */
+  removeAgent(name: string, owner?: string) {
+    this.db
+      .prepare(`DELETE FROM agents WHERE name=? AND (owner IS NULL OR owner=? OR lease_until<?)`)
+      .run(name, owner ?? "", Date.now());
+  }
+  setPid(name: string, pid: number | null) {
+    this.db.prepare(`UPDATE agents SET pid=? WHERE name=?`).run(pid, name);
   }
   /**
    * Claim the right to run agent `name` in this process (lease). Returns the
@@ -263,6 +273,8 @@ export class HiveDb {
     this.db.transaction(() => names.forEach((n) => stmt.run(until, n, owner)))();
   }
   releaseAgent(name: string, owner: string) {
+    // A placeholder from claimAgent whose start failed never became an agent.
+    this.db.prepare(`DELETE FROM agents WHERE name=? AND owner=? AND kind=''`).run(name, owner);
     this.db.prepare(`UPDATE agents SET owner=NULL, lease_until=NULL WHERE name=? AND owner=?`).run(name, owner);
   }
 
@@ -283,7 +295,7 @@ export class HiveDb {
     const base = `SELECT m.id, m.ts, m.from_agent, m.to_agent, m.subject, m.body, m.thread,
         CASE WHEN m.to_agent='*' THEN r.read_at ELSE m.read_at END AS read_at
       FROM messages m LEFT JOIN message_reads r ON r.message_id=m.id AND r.agent=@agent
-      WHERE (m.to_agent=@agent OR (m.to_agent='*' AND m.ts >= ${JOINED})) AND m.from_agent<>@agent`;
+      WHERE (m.to_agent=@agent OR ${BCAST}) AND m.from_agent<>@agent`;
     const sql = unreadOnly
       ? `${base} AND (CASE WHEN m.to_agent='*' THEN r.read_at ELSE m.read_at END) IS NULL ORDER BY m.id LIMIT @limit`
       : `${base} ORDER BY m.id DESC LIMIT @limit`;
@@ -297,7 +309,7 @@ export class HiveDb {
       .prepare(
         `SELECT m.from_agent, m.subject FROM messages m
          LEFT JOIN message_reads r ON r.message_id=m.id AND r.agent=@agent
-         WHERE (m.to_agent=@agent OR (m.to_agent='*' AND m.ts >= ${JOINED})) AND m.from_agent<>@agent
+         WHERE (m.to_agent=@agent OR ${BCAST}) AND m.from_agent<>@agent
            AND (CASE WHEN m.to_agent='*' THEN r.read_at ELSE m.read_at END) IS NULL
          ORDER BY m.id`,
       )
@@ -465,7 +477,7 @@ export class HiveDb {
     const cutoff = Date.now() - days * 86_400_000;
     this.db.prepare(`DELETE FROM events WHERE ts < ?`).run(cutoff);
     this.db.prepare(`DELETE FROM job_runs WHERE ended IS NOT NULL AND ended < ?`).run(cutoff);
-    this.db.prepare(`DELETE FROM message_reads WHERE read_at < ?`).run(cutoff);
+    // message_reads are never pruned: dropping them would make old broadcasts unread again.
   }
   messagesSince(ts: number, limit = 500): Message[] {
     return this.db.prepare(`SELECT * FROM messages WHERE ts>=? ORDER BY id DESC LIMIT ?`).all(ts, limit) as Message[];

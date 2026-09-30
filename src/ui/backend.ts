@@ -73,6 +73,8 @@ process.on("exit", () => {
 // ---- pending interactive requests (permission / elicitation) ----
 
 let seq = 0;
+// Request ids must never repeat across backend restarts, or a stale card could answer a new request.
+const bootId = `${process.pid.toString(36)}${Date.now().toString(36)}`;
 const pendingPerm = new Map<string, { agent: string; resolve: (optionId: string) => void; reject: string; ask: PermissionAsk }>();
 const pendingElicit = new Map<string, { agent: string; resolve: (r: schema.CreateElicitationResponse) => void; ask: ElicitationAsk }>();
 
@@ -98,8 +100,8 @@ function diffLines(a: string, b: string): string {
   return rows.slice(0, 400).join("\n");
 }
 
-async function askPermission(req: schema.RequestPermissionRequest, agent: string): Promise<string> {
-  const reqId = `p${++seq}`;
+async function askPermission(req: schema.RequestPermissionRequest, agent: string, signal?: AbortSignal): Promise<string> {
+  const reqId = `p-${bootId}-${++seq}`;
   const reject = req.options.find((o) => o.kind.startsWith("reject"))?.optionId ?? req.options[0].optionId;
   const ask: PermissionAsk = {
     reqId,
@@ -112,11 +114,17 @@ async function askPermission(req: schema.RequestPermissionRequest, agent: string
   return new Promise((res) => {
     pendingPerm.set(reqId, { agent, resolve: res, reject, ask });
     send({ event: "permission", ask });
+    // The session gave up (cancel, ask timeout, close): withdraw the card.
+    signal?.addEventListener("abort", () => {
+      if (!pendingPerm.delete(reqId)) return;
+      res(reject);
+      send({ event: "permission_done", reqId, outcome: "withdrawn (cancelled or timed out)" });
+    });
   });
 }
 
-async function elicit(req: schema.CreateElicitationRequest, agent: string): Promise<schema.CreateElicitationResponse> {
-  const reqId = `e${++seq}`;
+async function elicit(req: schema.CreateElicitationRequest, agent: string, signal?: AbortSignal): Promise<schema.CreateElicitationResponse> {
+  const reqId = `e-${bootId}-${++seq}`;
   const r = req as any;
   const props = (r.requestedSchema?.properties ?? {}) as Record<string, any>;
   const ask: ElicitationAsk = {
@@ -137,6 +145,11 @@ async function elicit(req: schema.CreateElicitationRequest, agent: string): Prom
   return new Promise((res) => {
     pendingElicit.set(reqId, { agent, resolve: res, ask });
     send({ event: "elicitation", ask });
+    signal?.addEventListener("abort", () => {
+      if (!pendingElicit.delete(reqId)) return;
+      res({ action: "cancel" });
+      send({ event: "elicitation_done", reqId, outcome: "withdrawn (cancelled or timed out)" });
+    });
   });
 }
 

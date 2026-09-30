@@ -60,9 +60,10 @@ export class ChangeCounter {
   async snapshot(): Promise<string> {
     this.ready ??= this.init();
     await this.ready;
-    // Every snapshot writes blobs; collect the unreferenced ones now and then
-    // (the baseline is kept alive by refs/hive/base, see keep()).
-    if (++this.snapshots % 100 === 0) await this.git(["gc", "--prune=now", "--quiet"]).catch(() => {});
+    // Every snapshot writes blobs; let git collect old unreferenced ones now and
+    // then. Default expiry (2 weeks), never --prune=now: a pending tree that a
+    // run is about to review must survive until it becomes the baseline.
+    if (++this.snapshots % 100 === 0) await this.git(["gc", "--auto", "--quiet"]).catch(() => {});
     await this.git(["add", "-A", "--ignore-errors", ...(this.pathspec.length ? this.pathspec : ["--", "."])]);
     return (await this.git(["write-tree"])).trim();
   }
@@ -90,7 +91,8 @@ export class ChangeCounter {
   async keep(tree: string) {
     this.ready ??= this.init();
     await this.ready;
-    const commit = (await this.git(["commit-tree", tree, "-m", "hive watch baseline"]).catch(() => "")).trim();
+    // Shadow repo commits need an identity even when the user has none configured.
+    const commit = (await this.git(["-c", "user.name=hive", "-c", "user.email=hive@localhost", "commit-tree", tree, "-m", "hive watch baseline"]).catch(() => "")).trim();
     if (commit) await this.git(["update-ref", "refs/hive/base", commit]).catch(() => {});
   }
 

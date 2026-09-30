@@ -7,6 +7,7 @@ import { AgentSession, type SessionOptions, type SessionEvent } from "./session.
 import { HiveDb } from "../hive/db.js";
 import { dirname, join, resolve } from "node:path";
 import { ensureWorktree } from "./worktree.js";
+import { killGroup } from "./agents.js";
 
 export interface HubOptions {
   hiveDb: string;
@@ -88,12 +89,21 @@ export class Hub {
 
   private async start(o: AddOptions): Promise<AgentSession> {
     // Only one process may run a given agent name, or both would answer its mail.
+    const prev = this.db.getAgent(o.name);
     const claim = this.db.claimAgent(o.name, this.id, AGENT_LEASE_MS);
     if (!claim.ok) throw new AgentElsewhereError(o.name, claim.owner);
+    // Reclaiming our own agent after a crash (same hub id): its old process
+    // tree may still be running — stop it before starting a new one.
+    // Only if the lease is recent, so a long-dead pid can't have been reused.
+    if (prev?.owner === this.id && prev.pid && (prev.lease_until ?? 0) > Date.now() - 60_000) killGroup(prev.pid, "SIGKILL");
     try {
       return await this.startClaimed(o);
     } catch (e) {
-      if (this.db.db.open) this.db.releaseAgent(o.name, this.id);
+      if (this.db.db.open) {
+        // An agent that never existed before this failed start shouldn't linger.
+        if (!prev || !prev.kind) this.db.removeAgent(o.name, this.id);
+        else this.db.releaseAgent(o.name, this.id);
+      }
       throw e;
     }
   }
@@ -117,6 +127,7 @@ export class Hub {
       }
     });
     await s.start();
+    this.db.setPid(o.name, s.pid ?? null);
     this.sessions.set(o.name, s);
     return s;
   }
@@ -128,7 +139,7 @@ export class Hub {
       await s.close();
       this.sessions.delete(name);
     }
-    if (forget) this.db.removeAgent(name);
+    if (forget) this.db.removeAgent(name, this.id);
     else this.db.releaseAgent(name, this.id);
   }
 

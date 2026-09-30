@@ -136,24 +136,35 @@ export function winQuote(a: string): string {
  * Stop an agent and everything it spawned. On Windows a shell-launched
  * adapter is cmd.exe → npx → node → claude; kill() would only end cmd.exe.
  */
-export function killTree(proc: ChildProcess | undefined) {
+export async function killTree(proc: ChildProcess | undefined, graceMs = 3000): Promise<void> {
   if (!proc || proc.exitCode !== null || proc.signalCode !== null || proc.pid == null) return;
+  const exited = new Promise<void>((r) => proc.once("exit", () => r()));
   if (process.platform === "win32") {
     spawnSync("taskkill", ["/pid", String(proc.pid), "/T", "/F"], { windowsHide: true });
+    await Promise.race([exited, new Promise((r) => setTimeout(r, graceMs))]);
     return;
   }
-  // Agents are spawned as process-group leaders (spawnOptions): signal the group.
-  try {
-    process.kill(-proc.pid, "SIGTERM");
-  } catch {
-    proc.kill();
-  }
+  // Agents are spawned as process-group leaders (groupSpawn): signal the group.
   const pid = proc.pid;
-  setTimeout(() => {
-    try {
-      process.kill(-pid, "SIGKILL");
-    } catch {}
-  }, 3000).unref();
+  killGroup(pid, "SIGTERM") || proc.kill();
+  const t = await Promise.race([exited.then(() => "exited"), new Promise((r) => setTimeout(() => r("timeout"), graceMs))]);
+  // Anything that ignored SIGTERM (or children left in the group) goes now.
+  killGroup(pid, "SIGKILL");
+  if (t === "timeout") await Promise.race([exited, new Promise((r) => setTimeout(r, 500))]);
+}
+
+/** Signal a whole process group (POSIX). Returns false if there is none. */
+export function killGroup(pid: number, sig: NodeJS.Signals): boolean {
+  if (process.platform === "win32") {
+    spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true });
+    return true;
+  }
+  try {
+    process.kill(-pid, sig);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Spawn options that let killTree reach everything an agent starts. */

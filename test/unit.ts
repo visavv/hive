@@ -35,7 +35,7 @@ const s = summarize({
 assert(s.auth === "not reported" && s.features?.includes("resume") && s.features.includes("queueing"), "summarize: empty authStatus marker = not reported until pushed");
 
 // usage-limit detection
-assert(isRateLimit("Claude AI usage limit reached|1760000000") && isRateLimit("429 Too Many Requests") && !isRateLimit("file not found"), "isRateLimit");
+assert(isRateLimit("Claude AI usage limit reached|1760000000") && isRateLimit("429 Too Many Requests") && !isRateLimit("file not found") && !isRateLimit("429 insufficient_quota: check your billing"), "isRateLimit (billing errors are real failures)");
 const now = 1_760_000_000_000;
 assert(resetTime("limit reached|1760003600", now) === 1_760_003_600_000 + 60_000, "resetTime from unix epoch");
 assert(resetTime("try again in 5 minutes", now) === now + 300_000 + 5_000, "resetTime from 'in N minutes'");
