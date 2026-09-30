@@ -46,7 +46,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import type * as schema from "@agentclientprotocol/sdk";
 import { Hub } from "../core/hub.js";
-import { AGENTS } from "../core/agents.js";
+import { AGENTS, customAgentsPath, readCustomAgents, saveCustomAgent } from "../core/agents.js";
 import { POLICIES, type AgentSession, type PermissionPolicy, type SessionEvent } from "../core/session.js";
 import { Scheduler, parseDuration, formatDuration, describeSchedule as schedule, type JobEvent } from "../core/scheduler.js";
 import { probe, installed } from "../core/doctor.js";
@@ -100,6 +100,11 @@ const { values, positionals } = parseArgs({
     out: { type: "string" },
     bridge: { type: "string" },
     cooldown: { type: "string" },
+    base: { type: "string" },
+    "key-env": { type: "string" },
+    model: { type: "string" },
+    label: { type: "string" },
+    context: { type: "string" },
     help: { type: "boolean", short: "h", default: false },
   },
 });
@@ -120,7 +125,10 @@ const USAGE = `hive — local multi-agent harness
   hive run <agent> [opts] "prompt"        one prompt, wait for replies, exit
   hive chat <agent> [opts]                interactive; resumes last session (--fresh for new)
   hive agents                             list hive members
-  hive doctor [agent...] [--quick]        installed? speaks ACP? logged in?
+  hive doctor [agent...] [--quick]        installed? speaks ACP? logged in / key set?
+  hive providers                          agent types: CLIs (subscriptions) and API models (keys)
+  hive providers add <id> --base URL --key-env VAR --model M [--label L]   any OpenAI-compatible API
+  hive providers rm <id>
   hive ui [--cwd DIR]                     open the pane UI for this project
 
   hive loop <agent> --times 5 "prompt"    run N times, fresh session each, shared notes file
@@ -509,6 +517,49 @@ async function main() {
           })),
         );
       db.close();
+      return;
+    }
+
+    case "providers": {
+      const sub = rest[0] ?? "list";
+      if (sub === "add") {
+        const id = rest[1] ?? die("usage: hive providers add <id> --base URL --key-env VAR --model M [--label L] [--context N]");
+        if (AGENTS[id] && !AGENTS[id].custom) die(`"${id}" is a built-in agent; pick another id`);
+        const keyEnv = values["key-env"];
+        if (keyEnv && !/^\w+$/.test(keyEnv)) die("--key-env takes the NAME of an environment variable (e.g. GROQ_API_KEY), not the key");
+        try {
+          saveCustomAgent(id, {
+            type: "api",
+            label: values.label ?? id,
+            base: values.base ?? die("--base is required (e.g. https://api.groq.com/openai/v1)"),
+            keyEnv,
+            model: values.model ?? die("--model is required (the default model id)"),
+            context: values.context ? Number(values.context) : undefined,
+          });
+        } catch (e: any) {
+          die(e.message);
+        }
+        console.log(`added ${cyan(id)} to ${customAgentsPath()}`);
+        if (keyEnv && !process.env[keyEnv])
+          console.log(yellow(`set ${keyEnv} before using it`) + dim(process.platform === "win32" ? `  (setx ${keyEnv} "…", then open a new terminal)` : `  (export ${keyEnv}=…)`));
+        console.log(dim(`try: hive doctor ${id}  ·  hive chat ${id}`));
+        return;
+      }
+      if (sub === "rm") {
+        const id = rest[1] ?? die("usage: hive providers rm <id>");
+        if (!readCustomAgents()[id]) die(`"${id}" isn't a custom provider (${customAgentsPath()})`);
+        saveCustomAgent(id, null);
+        console.log(`removed ${id}`);
+        return;
+      }
+      if (sub !== "list") die(`unknown subcommand "${sub}" (list|add|rm)`);
+      for (const d of Object.values(AGENTS)) {
+        if (d.id === "mock") continue;
+        const kind = d.api ? "API" : "CLI";
+        const ready = d.needs ? (process.env[d.needs] ? green(`${d.needs} set`) : yellow(`needs ${d.needs}`)) : d.api ? dim("no key needed") : dim(installed(d));
+        console.log(`${cyan(d.id.padEnd(12))} ${kind}  ${d.label.padEnd(44)} ${ready}${d.custom ? dim("  (agents.json)") : ""}`);
+      }
+      console.log(dim(`\nCLI agents use your subscriptions (claude login, codex login). API agents bill per token to your key.\ncustom providers: ${customAgentsPath()}`));
       return;
     }
 

@@ -49,7 +49,7 @@ class Store {
   others: OtherAgent[] = [];
   starting = new Map<string, { kind: string; error?: string }>();
   jobs: JobView[] = [];
-  kinds: { id: string; label: string }[] = [];
+  kinds: import("../protocol.js").KindView[] = [];
   presets: PresetView[] = [];
   /** Unread mail agents sent to the owner. */
   ownerUnread = 0;

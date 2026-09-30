@@ -96,7 +96,7 @@ export async function probe(def: AgentDef, timeoutMs = 90_000, authWaitMs = 8000
       }),
     ]);
     Object.assign(res, summarize(init));
-    if (pushed) res.auth = pushed.kind === "none" ? "not logged in" : authLabel(pushed);
+    if (pushed) res.auth = pushed.kind === "none" ? `not logged in${pushed.detail ? ` · ${pushed.detail}` : ""}` : authLabel(pushed);
     res.ok = true;
   } catch (e: any) {
     res.error = String(e?.message ?? e);

@@ -254,7 +254,7 @@ function view(s: AgentSession): AgentView {
       currentValue: o.currentValue,
       options: o.options?.flatMap((g: any) => (g.options ? g.options : [g])).map((x: any) => ({ value: x.value, name: x.name })),
     })),
-    auth: s.authStatus ? (s.authStatus.kind === "none" ? "not logged in" : (s.authStatus.label ?? s.authStatus.kind)) : undefined,
+    auth: s.authStatus ? (s.authStatus.kind === "none" ? `not logged in${s.authStatus.detail ? ` · ${s.authStatus.detail}` : ""}` : (s.authStatus.label ?? s.authStatus.kind)) : undefined,
     jobs: hub.db.listJobs(false).filter((j) => j.agent === s.name).length,
     branch: branchOf(s.cwd),
   };
@@ -579,7 +579,13 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
 function readyEvent(): Extract<BackendEvent, { event: "ready" }> {
   return {
     event: "ready",
-    kinds: Object.values(AGENTS).map((a) => ({ id: a.id, label: a.label })),
+    kinds: Object.values(AGENTS).map((a) => ({
+      id: a.id,
+      label: a.api ? `${a.label} · API` : a.label,
+      api: a.api,
+      missing: a.needs && !process.env[a.needs] ? a.needs : undefined,
+      install: a.install,
+    })),
     presets: Object.values(ROLES).map((r) => ({
       id: r.id,
       label: r.label,

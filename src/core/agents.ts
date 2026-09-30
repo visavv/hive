@@ -10,8 +10,9 @@
 import { nodeEntry } from "./paths.js";
 import { spawnSync, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { hiveHome } from "./home.js";
 
 export interface AgentDef {
   /** Short id used in config and hive addressing, e.g. "claude". */
@@ -25,6 +26,12 @@ export interface AgentDef {
   env?: Record<string, string>;
   /** Notes on install/auth for the README and `hive doctor`. */
   install: string;
+  /** Env var that must be set for this agent to work (doctor / UI hint). */
+  needs?: string;
+  /** Built-in API agent (api/agent.ts) rather than a vendor CLI. */
+  api?: boolean;
+  /** Came from <HIVE_HOME>/agents.json. */
+  custom?: boolean;
 }
 
 const npx = process.platform === "win32" ? "npx.cmd" : "npx";
@@ -47,6 +54,30 @@ function pinned(pkg: string): { command: string; args: string[] } {
 const claudeAcp = pinned("@agentclientprotocol/claude-agent-acp");
 const codexAcp = pinned("@agentclientprotocol/codex-acp");
 const mockEntry = nodeEntry("mock/agent");
+const apiEntry = nodeEntry("api/agent");
+
+/** An agent backed by any OpenAI-compatible chat API (see api/agent.ts). */
+export function apiAgent(o: { id: string; label: string; base: string; keyEnv?: string; model: string; models?: string; context?: number; tools?: boolean; install?: string; custom?: boolean }): AgentDef {
+  return {
+    id: o.id,
+    label: o.label,
+    ...apiEntry,
+    api: true,
+    custom: o.custom,
+    needs: o.keyEnv,
+    env: {
+      HIVE_API_BASE: o.base,
+      HIVE_API_KEY: o.keyEnv ? `\${${o.keyEnv}}` : "",
+      HIVE_API_KEY_NAME: o.keyEnv ?? "",
+      HIVE_API_MODEL: o.model,
+      HIVE_API_MODELS: o.models ?? "",
+      HIVE_API_LABEL: o.label,
+      HIVE_API_CONTEXT: o.context ? String(o.context) : "",
+      HIVE_API_TOOLS: o.tools === false ? "0" : "",
+    },
+    install: o.install ?? `Set ${o.keyEnv ?? "nothing (no key needed)"}. Talks to ${o.base} directly; pick the model in the pane.`,
+  };
+}
 
 export const AGENTS: Record<string, AgentDef> = {
   claude: {
@@ -92,6 +123,40 @@ export const AGENTS: Record<string, AgentDef> = {
     args: ["--experimental-acp"],
     install: "npm i -g @google/gemini-cli; `gemini` once to auth.",
   },
+  // ---- API models (pay per token with your own keys; no CLI to install) ----
+  "gemini-api": apiAgent({
+    id: "gemini-api",
+    label: "Google Gemini (API)",
+    base: "https://generativelanguage.googleapis.com/v1beta/openai",
+    keyEnv: "GEMINI_API_KEY",
+    model: "${GEMINI_MODEL:-gemini-2.5-flash}",
+    context: 1_000_000,
+    install: "Get a key at https://aistudio.google.com/apikey and set GEMINI_API_KEY (free tier available). GEMINI_MODEL picks the default model.",
+  }),
+  openrouter: apiAgent({
+    id: "openrouter",
+    label: "OpenRouter (Meta Llama, Mistral, DeepSeek, …)",
+    base: "https://openrouter.ai/api/v1",
+    keyEnv: "OPENROUTER_API_KEY",
+    model: "${OPENROUTER_MODEL:-meta-llama/llama-4-maverick}",
+    install: "Key at https://openrouter.ai/keys → OPENROUTER_API_KEY. One key for hundreds of models (Meta Llama, Mistral, Qwen, DeepSeek, Gemini, GPT…); pick in the pane or set OPENROUTER_MODEL.",
+  }),
+  "openai-api": apiAgent({
+    id: "openai-api",
+    label: "OpenAI (API)",
+    base: "${OPENAI_BASE_URL:-https://api.openai.com/v1}",
+    keyEnv: "OPENAI_API_KEY",
+    model: "${OPENAI_MODEL:-gpt-4.1-mini}",
+    install: "OPENAI_API_KEY (platform.openai.com, billed per token — separate from a ChatGPT subscription; use `codex` for that). OPENAI_MODEL picks the default.",
+  }),
+  ollama: apiAgent({
+    id: "ollama",
+    label: "Ollama (local / T550)",
+    base: "${OLLAMA_BASE_URL:-http://localhost:11434/v1}",
+    model: "${OLLAMA_MODEL:-llama3.1}",
+    context: 32_000,
+    install: "Run Ollama (ollama.com) here or on the T550; set OLLAMA_BASE_URL=http://<host>:11434/v1 and OLLAMA_MODEL. No key. Use a model with tool support (llama3.1, qwen2.5, qwen3…).",
+  }),
   mock: {
     id: "mock",
     label: "Mock agent (tests)",
@@ -103,15 +168,97 @@ export const AGENTS: Record<string, AgentDef> = {
   },
 };
 
-/** Expand ${VAR} references against process.env; drop unset vars. */
+/** Expand ${VAR} and ${VAR:-default} against process.env. */
+export function expandVars(v: string, e: NodeJS.ProcessEnv = process.env): string {
+  return v.replace(/\$\{(\w+)(?::-([^}]*))?\}/g, (_, name, def) => e[name] || def || "");
+}
+
+/** Resolved env for an agent's subprocess; unset vars are dropped. */
 export function resolveEnv(def: AgentDef): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(def.env ?? {})) {
-    const expanded = v.replace(/\$\{(\w+)\}/g, (_, name) => process.env[name] ?? "");
+    const expanded = expandVars(v);
     if (expanded) out[k] = expanded;
   }
+  // An API agent must not pick up a stale HIVE_API_* from the parent env.
+  if (def.api) for (const k of Object.keys(def.env ?? {})) out[k] ??= "";
   return out;
 }
+
+// ---- custom agents: <HIVE_HOME>/agents.json ----
+//
+// {
+//   "groq":   { "type": "api", "label": "Groq", "base": "https://api.groq.com/openai/v1", "keyEnv": "GROQ_API_KEY", "model": "llama-3.3-70b-versatile" },
+//   "mistral":{ "type": "api", "base": "https://api.mistral.ai/v1", "keyEnv": "MISTRAL_API_KEY", "model": "mistral-large-latest" },
+//   "aider":  { "type": "acp", "label": "Some ACP agent", "command": "some-agent", "args": ["--acp"] }
+// }
+// Keys never go in this file — only the name of the env var that holds them.
+
+export interface CustomAgent {
+  type: "api" | "acp";
+  label?: string;
+  base?: string;
+  keyEnv?: string;
+  model?: string;
+  models?: string[];
+  context?: number;
+  tools?: boolean;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+}
+
+export function customAgentsPath(): string {
+  return join(hiveHome(), "agents.json");
+}
+
+export function readCustomAgents(path = customAgentsPath()): Record<string, CustomAgent> {
+  if (!existsSync(path)) return {};
+  try {
+    const j = JSON.parse(readFileSync(path, "utf8"));
+    return j && typeof j === "object" ? j : {};
+  } catch (e: any) {
+    process.stderr.write(`hive: ignoring ${path}: ${e.message}\n`);
+    return {};
+  }
+}
+
+export function customAgentDef(id: string, c: CustomAgent): AgentDef {
+  if (!/^[\w.-]{1,40}$/.test(id)) throw new Error(`agent id "${id}": letters, digits, _ . - only`);
+  if (c.type === "acp") {
+    if (!c.command) throw new Error(`agent ${id}: "command" is required for type acp`);
+    return { id, label: c.label ?? id, command: c.command, args: c.args ?? [], env: c.env, install: "Custom ACP agent from agents.json.", custom: true };
+  }
+  if (!c.base || !c.model) throw new Error(`agent ${id}: "base" and "model" are required for type api`);
+  if (c.keyEnv && !/^\w+$/.test(c.keyEnv)) throw new Error(`agent ${id}: keyEnv must be an environment variable name, not the key itself`);
+  return apiAgent({ id, label: c.label ?? id, base: c.base, keyEnv: c.keyEnv, model: c.model, models: c.models?.join(","), context: c.context, tools: c.tools, custom: true });
+}
+
+export function saveCustomAgent(id: string, c: CustomAgent | null, path = customAgentsPath()) {
+  const all = readCustomAgents(path);
+  if (c) {
+    customAgentDef(id, c); // validate
+    all[id] = c;
+  } else delete all[id];
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(all, null, 2) + "\n");
+}
+
+/** Merge agents.json into AGENTS (built-ins keep their ids). */
+export function loadCustomAgents(path = customAgentsPath()): string[] {
+  const added: string[] = [];
+  for (const [id, c] of Object.entries(readCustomAgents(path))) {
+    if (AGENTS[id] && !AGENTS[id].custom) continue;
+    try {
+      AGENTS[id] = customAgentDef(id, c);
+      added.push(id);
+    } catch (e: any) {
+      process.stderr.write(`hive: agents.json: ${e.message}\n`);
+    }
+  }
+  return added;
+}
+loadCustomAgents();
 
 /**
  * How to spawn an agent. On Windows, `npx.cmd` and other .cmd shims need a
