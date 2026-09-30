@@ -14,6 +14,8 @@
  *   hive_bb_get/set/list   shared blackboard (project facts, decisions, task claims)
  *   hive_status      publish my own status line (shown in the UI)
  *   hive_bb_delete   remove a blackboard key (retire an idea, release a claim)
+ *   hive_group       groups of agents: mail to "@name" reaches all members
+ *   hive_followup    schedule a one-off turn later for me or another agent
  *   hive_diff        another agent's changes (its hive/<name> branch vs base, plus uncommitted)
  *   hive_log         commits on an agent's branch that aren't on the base branch
  *
@@ -54,6 +56,7 @@ server.registerTool(
       status: db.effectiveStatus(a),
       note: a.status_note,
       me: a.name === me,
+      groups: db.groups().filter((g) => g.members.includes(a.name)).map((g) => g.name),
       unread: db.unreadCount(a.name),
     }));
     return text(JSON.stringify(rows, null, 2));
@@ -66,15 +69,18 @@ server.registerTool(
     description:
       'Send a message to another agent (by name), to "*" for everyone, or to "owner" for the human (use sparingly: decisions you need, finished work, blockers). Keep subject short. Use thread to continue a conversation. The recipient will see it as a work order on its next turn; you will not get a reply inline — check hive_inbox later.',
     inputSchema: {
-      to: z.string().describe('Agent name or "*"'),
+      to: z.string().describe('Agent name, "*" for everyone, "@group" for a group, or "owner" for the human'),
       subject: z.string().max(120),
       body: z.string(),
       thread: z.string().optional().describe("Thread id to reply into; omit to start a new one"),
     },
   },
   async ({ to, subject, body, thread }) => {
-    if (to !== "*" && to !== "owner" && !db.getAgent(to)) {
-      return text(`No agent named "${to}". Known: owner (the human), ${db.listAgents().map((a) => a.name).join(", ")}`);
+    if (to.startsWith("@")) {
+      if (!db.groupMembers(to.slice(1)).length)
+        return text(`No group "${to}". Groups: ${db.groups().map((g) => "@" + g.name).join(", ") || "none"} (create one with hive_group)`);
+    } else if (to !== "*" && to !== "owner" && !db.getAgent(to)) {
+      return text(`No agent named "${to}". Known: owner (the human), ${db.listAgents().map((a) => a.name).join(", ")}${db.groups().length ? `; groups: ${db.groups().map((g) => "@" + g.name).join(", ")}` : ""}`);
     }
     const t = thread ?? `${me}-${Date.now().toString(36)}`;
     // Stop runaway back-and-forth between agents.
@@ -85,7 +91,7 @@ server.registerTool(
       );
     const id = db.send(me, to, subject, body, t);
     db.log(me, "send", { id, to, subject, thread: t });
-    const target = to === "*" || to === "owner" ? undefined : db.getAgent(to);
+    const target = to === "*" || to === "owner" || to.startsWith("@") ? undefined : db.getAgent(to);
     const asleep = target && (target.status === "asleep" || target.status === "error");
     return text(`sent #${id} to ${to} (thread ${t})${asleep ? ` — ${to} is ${target!.status}; it will get this when it next runs` : ""}`);
   },
@@ -179,6 +185,69 @@ server.registerTool(
   async ({ status, note }) => {
     db.setStatus(me, status ?? "working", note);
     return text("ok");
+  },
+);
+
+server.registerTool(
+  "hive_group",
+  {
+    description:
+      'Groups of agents that talk together: mail to "@<name>" reaches every member. list: all groups; create/add: add members (agent names, or "owner" for the human); remove: take a member out; leave: remove yourself.',
+    inputSchema: {
+      action: z.enum(["list", "create", "add", "remove", "leave"]),
+      name: z.string().regex(/^[\w.-]{1,40}$/).optional(),
+      members: z.array(z.string()).optional(),
+    },
+  },
+  async ({ action, name, members }) => {
+    if (action === "list") return text(JSON.stringify(db.groups(), null, 2));
+    if (!name) return text("name is required");
+    if (action === "leave") {
+      db.removeFromGroup(name, me!);
+      return text(`left @${name}`);
+    }
+    if (action === "remove") {
+      for (const m of members ?? []) db.removeFromGroup(name, m);
+      return text(`@${name}: ${db.groupMembers(name).join(", ") || "(empty)"}`);
+    }
+    const unknown = (members ?? []).filter((m) => m !== "owner" && !db.getAgent(m));
+    if (unknown.length) return text(`unknown agents: ${unknown.join(", ")}`);
+    db.addToGroup(name, action === "create" ? [...new Set([me!, ...(members ?? [])])] : (members ?? []));
+    db.log(me!, "group", { action, name, members });
+    return text(`@${name}: ${db.groupMembers(name).join(", ")}`);
+  },
+);
+
+server.registerTool(
+  "hive_followup",
+  {
+    description:
+      "Schedule a one-off follow-up turn later, for yourself or another agent: e.g. re-check CI in 30 minutes, or ask the reviewer to look again tomorrow. The target runs with its own permission policy. Max 7 days ahead; at most 20 pending follow-ups per agent.",
+    inputSchema: {
+      prompt: z.string().min(1).max(4000),
+      in_minutes: z.number().min(1).max(7 * 24 * 60),
+      agent: z.string().optional().describe("Who should do it (default: me)"),
+    },
+  },
+  async ({ prompt, in_minutes, agent }) => {
+    const target = db.getAgent(agent ?? me!);
+    if (!target?.kind) return text(`No agent named "${agent}".`);
+    const pending = db.listJobs(false).filter((j) => j.kind === "once" && j.prompt.startsWith(`[follow-up from ${me}]`)).length;
+    if (pending >= 20) return text("You already have 20 pending follow-ups; let some run first.");
+    const id = db.addJob({
+      agent: target.name,
+      agent_kind: target.kind,
+      cwd: target.cwd,
+      kind: "once",
+      prompt: `[follow-up from ${me}] ${prompt}`,
+      next_run: Date.now() + in_minutes * 60_000,
+      policy: target.policy ?? "allow-reads",
+      role: target.role,
+      // Keep the target's conversation: a follow-up continues its context.
+      fresh_session: 0,
+    });
+    db.log(me!, "followup", { id, agent: target.name, in_minutes });
+    return text(`follow-up job #${id} for ${target.name} in ${in_minutes} min (runs when hive serve or the UI is open)`);
   },
 );
 

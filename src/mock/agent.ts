@@ -175,7 +175,11 @@ acp
     // 2. scripted commands in the prompt
     const ownerM = text.match(/tellowner: (.+)/);
     if (ownerM) await say(cx, sessionId, (await callTool(sess, "hive_send", { to: "owner", subject: "fyi", body: ownerM[1] })) + "\n");
-    const sendM = text.match(/(?<!tell)send (\w+|\*): (.+)/);
+    const grpM = text.match(/grp (create|add) ([\w.-]+) ([\w., -]+)/);
+    if (grpM) await say(cx, sessionId, (await callTool(sess, "hive_group", { action: grpM[1], name: grpM[2], members: grpM[3].split(/[ ,]+/).filter(Boolean) })) + "\n");
+    const fuM = text.match(/followup (\d+)(?: for (\w+))?: (.+)/);
+    if (fuM) await say(cx, sessionId, (await callTool(sess, "hive_followup", { in_minutes: Number(fuM[1]), prompt: fuM[3], ...(fuM[2] ? { agent: fuM[2] } : {}) })) + "\n");
+    const sendM = text.match(/(?<!tell)send (@?[\w.-]+|\*): (.+)/);
     if (sendM) {
       await toolCall(cx, sessionId, `t${++n}`, `hive_send → ${sendM[1]}`, "pending");
       const r = await callTool(sess, "hive_send", { to: sendM[1], subject: "task", body: sendM[2] });

@@ -655,10 +655,15 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
       .filter((a) => a.name !== this.name)
       .map((a) => `- ${a.name} (${a.kind}${a.role ? ", " + a.role : ""})`)
       .join("\n");
+    const groups = this.db
+      .groups()
+      .filter((g) => g.members.includes(this.name))
+      .map((g) => `@${g.name} (${g.members.filter((m) => m !== this.name).join(", ")})`);
     return [
       `You are agent "${this.name}"${this.role ? ` with role: ${this.role}` : ""} in a local multi-agent hive.`,
       `Other agents:\n${others || "- (none yet)"}`,
-      `You have MCP tools prefixed hive_: use hive_inbox at the start of each turn, hive_send to hand work or findings to another agent, hive_bb_* for shared project facts and task claims (key "claim/<task>"), hive_status to publish what you're doing.`,
+      groups.length ? `Your groups (mail "@name" reaches all members): ${groups.join("; ")}` : "",
+      `You have MCP tools prefixed hive_: use hive_inbox at the start of each turn, hive_send to hand work or findings to another agent (or "@group" for a group you share), hive_bb_* for shared project facts and task claims (key "claim/<task>"), hive_status to publish what you're doing, hive_diff/hive_log to read another agent's branch.`,
       `Never wait or poll for replies inside a turn; send, finish your own work, and the hub will wake you when mail arrives.`,
       `To reach the human, hive_send to "owner" — only for decisions you need, finished work worth their attention, or blockers.`,
       this.opts.briefing ?? "",
@@ -866,5 +871,5 @@ export function isHiveTool(req: schema.RequestPermissionRequest): boolean {
   const title = String(req.toolCall.title ?? "");
   const ri = (req.toolCall as any).rawInput ?? {};
   const name = `${title} ${typeof ri.tool === "string" ? ri.tool : ""} ${typeof ri.name === "string" ? ri.name : ""}`;
-  return /(^|[\s_:.])(mcp__hive__)?hive_(agents|send|inbox|thread|bb_get|bb_set|bb_list|bb_delete|status|diff|log)\b/.test(name);
+  return /(^|[\s_:.])(mcp__hive__)?hive_(agents|send|inbox|thread|bb_get|bb_set|bb_list|bb_delete|status|diff|log|group|followup)\b/.test(name);
 }
