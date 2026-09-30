@@ -18,6 +18,7 @@
  *   hive_followup    schedule a one-off turn later for me or another agent
  *   hive_diff        another agent's changes (its hive/<name> branch vs base, plus uncommitted)
  *   hive_log         commits on an agent's branch that aren't on the base branch
+ *   hive_tts / hive_voices / hive_image / hive_image_edit   media APIs, only when their keys are set (media.ts)
  *
  * hive_diff / hive_log run git read-only inside this server, so reviewers
  * with an allow-reads policy can read diffs without a shell permission prompt.
@@ -348,6 +349,72 @@ server.registerTool(
     }
   },
 );
+
+// ---- media ----
+// The hub that started this agent sets HIVE_MEDIA to the kinds it can run
+// (tts, image). The call goes through the db and the hub makes it, so API
+// keys stay in the hive process and never reach the vendor agent.
+const mediaKinds = new Set((process.env.HIVE_MEDIA ?? "").split(",").filter(Boolean));
+async function media(kind: "tts" | "image" | "voices", params: Record<string, unknown>) {
+  const id = db.addMedia(me!, kind, params);
+  const t0 = Date.now();
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 250));
+    const m = db.getMedia(id);
+    if (m?.status === "done") return text(m.result ?? "done");
+    if (m?.status === "failed") return { ...text(`failed: ${m.error}`), isError: true };
+    if (m?.status === "pending" && Date.now() - t0 > 30_000) {
+      db.finishMedia(id, null, "no hive process with the API key picked this up");
+      return { ...text("failed: no running hive process has the API key (start hive with the key set in its environment)"), isError: true };
+    }
+    if (Date.now() - t0 > 6 * 60_000) return { ...text("failed: timed out after 6 minutes"), isError: true };
+  }
+}
+const SIZE = z.enum(["1024x1024", "1536x1024", "1024x1536", "auto"]);
+if (mediaKinds.has("tts")) {
+  server.registerTool(
+    "hive_tts",
+    {
+      description: "Turn text into speech with ElevenLabs and save an .mp3 under out/media/ in your working folder. Costs API credits; counts toward the daily media budget.",
+      inputSchema: {
+        text: z.string().describe("What to say (max 10,000 characters)"),
+        voice: z.string().optional().describe("ElevenLabs voice id (hive_voices lists them); default from ELEVENLABS_VOICE"),
+        name: z.string().optional().describe("Short file name, e.g. intro-hook"),
+      },
+    },
+    async (a) => media("tts", a),
+  );
+  server.registerTool("hive_voices", { description: "List ElevenLabs voices (id, name, labels) for hive_tts.", inputSchema: {} }, async () => media("voices", {}));
+}
+if (mediaKinds.has("image")) {
+  server.registerTool(
+    "hive_image",
+    {
+      description: "Generate an image from a prompt and save it as .png under out/media/ in your working folder (e.g. thumbnail drafts). Costs API credits; counts toward the daily media budget.",
+      inputSchema: {
+        prompt: z.string(),
+        size: SIZE.optional().describe("1536x1024 is landscape (thumbnails)"),
+        n: z.number().optional().describe("How many (1-4, default 1)"),
+        name: z.string().optional(),
+      },
+    },
+    async (a) => media("image", a),
+  );
+  server.registerTool(
+    "hive_image_edit",
+    {
+      description: "Edit an image in your working folder with a prompt (optionally a mask: transparent areas get repainted). Saves a new .png under out/media/; the original is untouched.",
+      inputSchema: {
+        image: z.string().describe("Path to a .png/.jpg/.webp inside the working folder"),
+        prompt: z.string(),
+        mask: z.string().optional(),
+        size: SIZE.optional(),
+        name: z.string().optional(),
+      },
+    },
+    async (a) => media("image", { edit: true, ...a }),
+  );
+}
 
 const transport = new StdioServerTransport();
 await server.connect(transport);

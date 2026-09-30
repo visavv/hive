@@ -162,15 +162,15 @@ export const RECIPES: Record<string, Recipe> = {
     id: "studio",
     label: "Creator studio (chat + skills)",
     description:
-      "A chat agent for creative work (titles, descriptions, chapters, hooks) in a content folder. It can't edit files; use skills (hive skill run yt-titles …) for repeatable tasks.",
+      "A chat agent for creative work (titles, descriptions, chapters, hooks) in a content folder. It asks before touching files or paid APIs (voice-overs with ElevenLabs, thumbnail drafts with an image API, when those keys are set). Use skills (hive skill run yt-titles …) for repeatable tasks.",
     agents: [
       {
         name: "studio",
         role: "creative assistant for a YouTube creator",
-        policy: "reject-all",
+        policy: "ask",
         interactive: true,
         briefing:
-          "You help a YouTube creator with titles, descriptions, chapters, hooks, thumbnail text and scripts. Match the creator's voice and advice when given; prefer specific, curiosity-driven, honest wording over clickbait. Give options, not essays.",
+          "You help a YouTube creator with titles, descriptions, chapters, hooks, thumbnail text and scripts. Match the creator's voice and advice when given; prefer specific, curiosity-driven, honest wording over clickbait. Give options, not essays. If the hive_tts / hive_image / hive_image_edit tools are available you can draft voice-overs and thumbnails (saved under out/media/); each call costs money, so only use them when asked.",
       },
     ],
     groups: [],

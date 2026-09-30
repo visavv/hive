@@ -205,6 +205,9 @@ acp
     const diffM = text.match(/hivediff (\w+)(?: branch=(\S+))?/);
     if (diffM)
       await say(cx, sessionId, (await callTool(sess, "hive_diff", { agent: diffM[1], stat_only: true, ...(diffM[2] ? { branch: diffM[2] } : {}) })) + "\n");
+    // "calltool <name> {json}" calls any MCP tool it was given and prints the result
+    const ctM = text.match(/calltool (\w+) (\{.*\})/);
+    if (ctM) await say(cx, sessionId, `tool ${ctM[1]}: ${await callTool(sess, ctM[1], JSON.parse(ctM[2]))}\n`);
     if (/agents\?/.test(text)) {
       await say(cx, sessionId, (await callTool(sess, "hive_agents", {})) + "\n");
     }

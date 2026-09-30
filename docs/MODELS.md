@@ -48,3 +48,19 @@ Options for API entries: `base`, `keyEnv`, `model`, `models` (fixed list for the
 - It can't leave its folder (paths outside are refused) and can't run commands. For coding with a shell on an API model, use `opencode` or `qwen` with that API instead.
 - Token usage is recorded per provider (`hive usage`) and counts toward budgets. At most 25 tool rounds per prompt (`HIVE_API_MAX_STEPS`).
 - Conversations are saved under `<hive state dir>\api-sessions\` so panes resume after a restart.
+
+## Voice and images (ElevenLabs, image generation / editing)
+
+Set the keys where hive runs (not in the repo):
+
+```powershell
+setx ELEVENLABS_API_KEY "..."        # optional: ELEVENLABS_VOICE (voice id), ELEVENLABS_MODEL
+setx HIVE_IMAGE_KEY "..."            # or OPENAI_API_KEY; any OpenAI-compatible images API:
+# setx HIVE_IMAGE_BASE "https://api.openai.com/v1"   setx HIVE_IMAGE_MODEL "gpt-image-1"
+```
+
+- From the terminal: `hive tts "Welcome back…" --out intro`, `hive tts --voices`, `hive image "bold thumbnail, red arrow" --size 1536x1024`, `hive image "make the text yellow" --edit out/media/thumb.png`.
+- Agents get the tools `hive_tts`, `hive_voices`, `hive_image`, `hive_image_edit` when the keys are set. Ask e.g. the studio agent: "make 3 thumbnail drafts for this title". Files land in `out/media/` in the agent's folder; inputs must be inside that folder.
+- The **hive process** makes these calls, not the agent: the agent asks through the hive database. The keys aren't passed to Claude/Codex/etc. `ELEVENLABS_API_KEY` and `HIVE_IMAGE_KEY` are removed from agent processes' environment. `OPENAI_API_KEY` stays, because Codex / openai-api may need it.
+- These tools aren't in the always-allowed hive set, so agents with the `ask` or `allow-reads` policy ask you before each paid call. `reject-all` agents can't use them.
+- Hard cap: `media_daily` calls per day (default 40): `hive budget set media_daily=10`.

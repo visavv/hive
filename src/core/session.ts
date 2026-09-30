@@ -59,6 +59,8 @@ export interface SessionOptions {
    * May an automatic turn (mail wake-up) start now? Set by the hub from the
    * budget rules; when it says no, mail waits.
    */
+  /** Media tools the hub can run for this agent (tts, image). */
+  mediaKinds?: string[];
   autoGuard?: () => { ok: true } | { ok: false; reason: string; until?: number };
   /** Mail wake-ups allowed per agent per 10 minutes (stops agent ping-pong). Default 30. */
   maxWakesPer10Min?: number;
@@ -199,7 +201,9 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
   }
 
   async start(): Promise<void> {
-    const env = { ...process.env, ...resolveEnv(this.def) };
+    const env: NodeJS.ProcessEnv = { ...process.env, ...resolveEnv(this.def) };
+    // Media keys are only used by the hub (media.ts); agents don't need to see them.
+    for (const k of ["ELEVENLABS_API_KEY", "HIVE_IMAGE_KEY"]) if (!JSON.stringify(this.def.env ?? {}).includes(k)) delete env[k];
     const spec = spawnSpec(this.def);
     this.proc = spawn(spec.command, spec.args, {
       cwd: this.cwd,
@@ -421,6 +425,8 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
       env: [
         { name: "HIVE_DB", value: resolve(this.opts.hiveDb) },
         { name: "HIVE_AGENT", value: this.name },
+        // Which media tools to offer (the hub runs them; no keys are passed).
+        ...(this.opts.mediaKinds?.length ? [{ name: "HIVE_MEDIA", value: this.opts.mediaKinds.join(",") }] : []),
       ],
     };
   }
