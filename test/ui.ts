@@ -139,6 +139,10 @@ try {
   await page.locator(".modal button[type=submit]").click();
   await page.locator(".job-list li.ended", { hasText: "done" }).waitFor({ timeout: 20_000 });
   assert(true, "job scheduled from a pane runs and shows as done in the sidebar");
+  await page.locator(".job-list li.ended", { hasText: "done" }).click();
+  await page.locator(".modal .rep-job", { hasText: "run 2" }).waitFor({ timeout: 5000 });
+  assert(await page.locator(".modal .rep-sum").count(), "clicking a job shows its runs with summaries");
+  await page.keyboard.press("Escape");
 
   // hive drawer: mail to the owner, report, blackboard, send as owner
   await pane(page, "alpha").locator("textarea").fill("tellowner: overnight run finished; bb ideas/dark-mode=add a dark mode toggle");

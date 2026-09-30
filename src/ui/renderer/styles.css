@@ -246,3 +246,7 @@ button.small.on { color: var(--accent); border-color: var(--line); }
 .compose input { flex: 1; }
 .hive-btn { display: flex; align-items: center; gap: 4px; }
 .hive-btn.has-mail { border-color: var(--magenta); }
+.clickable { cursor: pointer; }
+.job-list li.clickable:hover { background: var(--bg3); }
+.runs { max-height: 60vh; overflow-y: auto; }
+.modal:has(.runs) { width: min(820px, 94vw); }
