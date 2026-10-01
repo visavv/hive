@@ -299,6 +299,10 @@ try {
   await page.locator(".modal textarea").fill("hunt bugs");
   await page.locator(".modal label:has-text('Times') input").fill("2");
   await page.locator(".modal button[type=submit]").click();
+  // the job must exist before we wait for it to finish: report the dialog if it didn't take
+  const scheduled = await page.locator(".toast", { hasText: "scheduled on beta" }).waitFor({ timeout: 10_000 }).then(() => true, () => false);
+  if (!scheduled)
+    console.error(`[job dialog] no "scheduled" toast; dialog: ${(await page.locator(".modal").allInnerTexts().catch(() => [])).join(" | ").replace(/\s+/g, " ").slice(0, 400)}; toasts: ${JSON.stringify(await page.locator(".toast").allInnerTexts().catch(() => []))}`);
   await page
     .locator(".job-list li.ended", { hasText: "done" })
     .waitFor({ timeout: 40_000 }) // two runs; slow 2-core CI runners need the room
