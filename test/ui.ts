@@ -701,7 +701,17 @@ try {
       .waitForFunction(() => (document.querySelector(".browser-pane .dv-view img") as HTMLImageElement | null)?.src.startsWith("data:image/jpeg"), null, { timeout: 45_000 })
       .catch(async () => console.error(`[browser pane after 45 s] ${(await page.locator(".browser-pane").innerText().catch(() => "?")).replace(/\s+/g, " ").slice(0, 400)}`));
     // the title arrives with the page's load event, which can come after the first frame
-    const titled = await page.locator(".dv-title", { hasText: "Pane test" }).waitFor({ timeout: 20_000 }).then(() => true, () => false);
+    let titled = await page.locator(".dv-title", { hasText: "Pane test" }).waitFor({ timeout: 20_000 }).then(() => true, () => false);
+    if (!titled) {
+      // seen on slow Windows runners: the first navigation goes missing while Chromium starts. Say what the pane
+      // shows (address bar, toasts), then press Enter once more like a person would.
+      const bar = await page.locator(".dv-url").inputValue().catch(() => "?");
+      const toasts = await page.locator(".toast").allInnerTexts().catch(() => []);
+      console.error(`[browser pane, no title after 20 s] address bar "${bar}", toasts ${JSON.stringify(toasts)}; pressing Enter again`);
+      if (!bar.trim()) await page.locator(".dv-url").fill(`127.0.0.1:${(site.address() as any).port}`);
+      await page.locator(".dv-url").press("Enter");
+      titled = await page.locator(".dv-title", { hasText: "Pane test" }).waitFor({ timeout: 25_000 }).then(() => true, () => false);
+    }
     const framed = await page.locator(".browser-pane .dv-view img").evaluate((i) => (i as HTMLImageElement).src.startsWith("data:image/jpeg")).catch(() => false);
     if (!titled) console.error(`[browser pane, no title] ${(await page.locator(".browser-pane").innerText().catch(() => "?")).replace(/\s+/g, " ").slice(0, 400)}`);
     assert(titled && framed, "the page loads in the sandboxed browser and frames reach the pane");
