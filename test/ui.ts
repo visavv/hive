@@ -3,7 +3,7 @@
  * Needs a display (on Linux CI run under xvfb-run). `npm run test:ui`.
  */
 import { _electron as electron, type ElectronApplication, type Page } from "playwright-core";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
@@ -144,8 +144,29 @@ try {
   await pane(page, "beta").locator("textarea").fill("");
   await page.keyboard.press("Control+1");
   assert(await activeIn(page, "alpha"), "Ctrl+1 focuses the first pane");
+  await page.locator(".agent-item.current", { hasText: "alpha" }).waitFor({ timeout: 2000 });
   await page.keyboard.press("Control+Tab");
   assert(await activeIn(page, "beta"), "Ctrl+Tab cycles to the next pane");
+  await page.locator(".agent-item.current", { hasText: "beta" }).waitFor({ timeout: 2000 });
+  assert(true, "the sidebar's current-agent highlight follows focus");
+
+  // stacked overlays: pane shortcuts and the palette don't act behind a dialog; Esc closes only the top one
+  await page.keyboard.press("Control+N");
+  await page.locator(".modal").waitFor();
+  await page.keyboard.press("Control+1");
+  await page.keyboard.press("Control+k");
+  await sleep(200);
+  assert(
+    (await page.locator(".palette").count()) === 0 && (await page.evaluate(() => !!document.activeElement?.closest(".modal"))),
+    "inside a dialog, Ctrl+1 and Ctrl+K don't reach the panes or open the palette",
+  );
+  await page.keyboard.press("Escape");
+  await page.locator(".modal").waitFor({ state: "detached", timeout: 2000 });
+  await page.keyboard.press("Control+k");
+  await page.locator(".palette").waitFor();
+  await page.keyboard.press("Escape");
+  await page.locator(".palette").waitFor({ state: "detached", timeout: 2000 });
+  assert((await page.locator(".pane").count()) === 2, "Esc closes the palette only");
 
   // ↑ recalls last prompt
   await page.keyboard.press("Control+1");
@@ -233,6 +254,19 @@ try {
   assert(true, "missing required skill parameters are reported in the dialog");
   await page.keyboard.press("Escape");
   await pane(page, "skill-yt-titles").locator("button.close").click();
+  // a required choice without a default runs with the option the dialog shows (the first)
+  mkdirSync(join(process.env.HIVE_HOME!, "skills"), { recursive: true });
+  writeFileSync(
+    join(process.env.HIVE_HOME!, "skills", "choice-test.md"),
+    "---\nname: choice-test\ndescription: required choice\nparams:\n  - name: tone\n    type: choice\n    required: true\n    choices: [curious, bold]\n---\nWrite one {{tone}} line.\n",
+  );
+  await page.keyboard.press("Control+Shift+K");
+  await page.locator(".modal .skill", { hasText: "choice-test" }).click();
+  await page.locator(".modal label:has-text('Agent') select").selectOption("mock");
+  await page.locator(".modal button[type=submit]").click();
+  await pane(page, "skill-choice-test").locator(".msg.user", { hasText: "Write one curious line." }).first().waitFor({ timeout: 15_000 });
+  assert(true, "a required choice parameter is sent with the option shown");
+  await pane(page, "skill-choice-test").locator("button.close").click();
 
   // recipes: studio opens a chat pane
   await command(page, "set up a team");
@@ -242,6 +276,26 @@ try {
   await page.locator(`[data-pane="studio"] textarea:not([disabled])`).waitFor({ timeout: 20_000 });
   assert(true, "a recipe sets up its team and opens the agent you talk to");
   await pane(page, "studio").locator("button.close").click();
+
+  // Esc closes the Hive drawer without cancelling the turn of the pane you came from
+  await pane(page, "beta").locator("textarea").fill("slow esc-check");
+  await pane(page, "beta").locator("textarea").press("Enter");
+  await pane(page, "beta").locator(".msg.agent", { hasText: "working slowly" }).waitFor({ timeout: 10_000 });
+  await pane(page, "beta").locator("textarea").click();
+  await page.keyboard.press("Control+I");
+  await page.locator(".drawer").waitFor();
+  assert(await page.evaluate(() => !!document.activeElement?.closest(".drawer")), "the drawer takes keyboard focus when it opens");
+  await page.keyboard.press("Escape");
+  await page.locator(".drawer").waitFor({ state: "detached", timeout: 2000 });
+  await sleep(500);
+  assert(
+    (await pane(page, "beta").locator(".turn", { hasText: "cancelled" }).count()) === 0 && (await pane(page, "beta").locator(".st.st-working").count()) === 1,
+    "Esc in the drawer closes it and leaves the agent's turn running",
+  );
+  assert(await activeIn(page, "beta"), "closing the drawer gives focus back to the pane");
+  await page.keyboard.press("Escape");
+  await pane(page, "beta").locator(".turn", { hasText: "cancelled" }).waitFor({ timeout: 10_000 });
+  assert(true, "Esc in a pane still cancels its turn");
 
   // hive drawer: mail to the owner, report, blackboard, send as owner
   await pane(page, "alpha").locator("textarea").fill("tellowner: overnight run finished; bb ideas/dark-mode=add a dark mode toggle");
@@ -440,7 +494,17 @@ try {
   await page.locator(".toast", { hasText: "merged hive/gamma into main" }).waitFor({ timeout: 10_000 });
   assert(existsSync(join(repo, "feature.txt")), "merge button merged the agent branch into main");
   await page.screenshot({ path: join(shots, "hive-ui-worktree.png") });
+  // Ctrl+M right after closing the focused pane: nothing to maximize, the grid keeps its columns
+  await pane(page, "gamma").locator("textarea").click();
   await pane(page, "gamma").locator("button.close").click();
+  await pane(page, "gamma").waitFor({ state: "detached", timeout: 5000 });
+  await page.keyboard.press("Control+M");
+  await sleep(300);
+  const after = JSON.parse(readFileSync(join(projectDir(dir), "ui.json"), "utf8"));
+  assert(
+    (await page.locator(".pane").count()) === 2 && !after.maximized && (await page.locator(".grid").evaluate((g) => getComputedStyle(g).gridTemplateColumns.split(" ").length)) === 2,
+    "Ctrl+M after closing the focused pane doesn't save a stale maximized pane",
+  );
 } catch (e) {
   await page.screenshot({ path: join(shots, "hive-ui-failure.png") }).catch(() => {});
   throw e;

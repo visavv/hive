@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { JobView, Layout, PaneSpec, Policy, WorktreeView } from "../protocol.js";
 import { connect, hello, onEvent, onFocusLast, rpc } from "./bridge.js";
 import { ping, store, useStore } from "./store.js";
@@ -12,15 +12,26 @@ import { Palette, type PaletteAction } from "./Palette.js";
 import { agentState, rollup, STATE_LABEL, StatePill } from "./state.js";
 import { IconBell, IconBellOff, IconColumns, IconInbox, IconMenu, IconPlus, IconRows, IconScale, IconSearch, IconSpark, IconTeam } from "./Icons.js";
 import { RecipesDialog, SkillsDialog } from "./Extras.js";
-import { focus } from "./focus.js";
+import { focus, onActivate, overlays, useOverlay } from "./focus.js";
 import { ctxPct, fmtIdle, parseDuration, statusLabel, suggestName, noteLabel } from "./format.js";
 
 const POLICIES: Policy[] = ["ask", "allow-reads", "allow-all", "reject-all"];
 
-function saveLayout(patch: Partial<Layout>) {
+export function saveLayout(patch: Partial<Layout>) {
   store.layout = { ...store.layout, ...patch };
   store.changed();
   void rpc("saveLayout", store.layout);
+}
+
+/** The maximized pane, or null when none is (or the saved name is no longer open). */
+export function maxedName(l: Layout): string | null {
+  return l.maximized && l.panes.some((p) => p.name === l.maximized) ? l.maximized : null;
+}
+
+/** Maximize / restore a pane; ignores names that aren't open (e.g. a pane just closed). */
+export function toggleMaximize(name: string | undefined) {
+  if (!name || !store.layout.panes.some((p) => p.name === name)) return;
+  saveLayout({ maximized: maxedName(store.layout) === name ? null : name });
 }
 
 export async function openPane(spec: PaneSpec, persist = true, startJob = false) {
@@ -97,7 +108,8 @@ export function App() {
   const groupOpen = useStore((s) => s.groupOpen);
 
   const names = layout.panes.map((p) => p.name);
-  const visible = layout.maximized && names.includes(layout.maximized) ? [layout.maximized] : names;
+  const maximized = maxedName(layout);
+  const visible = maximized ? [maximized] : names;
   useEffect(() => focus.setOrder(names), [names.join("|")]);
 
   // Title shows how many agents need you, so it's visible from the taskbar.
@@ -117,10 +129,22 @@ export function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
+      // Read the layout now, not from the render this handler was made in.
+      const names = store.layout.panes.map((p) => p.name);
+      const maximized = maxedName(store.layout);
+      // A dialog, the drawer or the palette is open: pane shortcuts would act on
+      // what's hidden behind it. Only zoom, and the key that closes the top overlay, pass.
+      const top = overlays.top;
+      if (top) {
+        const zoom = mod && (e.key === "=" || e.key === "+" || e.key === "-" || e.key === "0");
+        const k = e.key.toLowerCase();
+        const closesTop = mod && !e.shiftKey && ((top === "palette" && k === "k") || (top === "drawer" && k === "i"));
+        if (!zoom && !closesTop) return;
+      }
       if (mod && /^[1-9]$/.test(e.key)) {
         e.preventDefault();
         const i = Number(e.key) - 1;
-        if (layout.maximized && layout.maximized !== names[i]) {
+        if (maximized && maximized !== names[i]) {
           saveLayout({ maximized: null });
           // the target pane mounts on the next frame
           requestAnimationFrame(() => requestAnimationFrame(() => focus.nth(i)));
@@ -159,13 +183,12 @@ export function App() {
         setDrawer((d) => (d ? false : "default"));
       } else if (mod && e.key.toLowerCase() === "m") {
         e.preventDefault();
-        const a = focus.active;
-        if (a) saveLayout({ maximized: store.layout.maximized === a ? null : a });
+        toggleMaximize(focus.active);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [layout.maximized]);
+  }, []);
 
   useEffect(() => {
     (document.documentElement.style as any).zoom = String(layout.zoom ?? 1);
@@ -186,7 +209,7 @@ export function App() {
     { id: "stats", label: "Token stats: by provider, model, task, project", hint: "all projects, kept for good", run: () => setDialog("stats") },
     { id: "broadcast", label: "Message all agents", keys: "Ctrl+Shift+B", run: () => setTimeout(() => document.querySelector<HTMLInputElement>(".broadcast input")?.focus(), 0) },
     { id: "sidebar", label: "Toggle sidebar", keys: "Ctrl+B", run: () => toggleSidebar() },
-    { id: "max", label: "Maximize / restore the focused agent", keys: "Ctrl+M", run: () => focus.active && saveLayout({ maximized: store.layout.maximized === focus.active ? null : focus.active }) },
+    { id: "max", label: "Maximize / restore the focused agent", keys: "Ctrl+M", run: () => toggleMaximize(focus.active) },
     { id: "layout", label: `Layout: ${layout.orientation === "vertical" ? "horizontal" : layout.orientation === "horizontal" ? "auto" : "vertical"} (now ${layout.orientation ?? "auto"})`, run: () => saveLayout({ orientation: layout.orientation === "vertical" ? "horizontal" : layout.orientation === "horizontal" ? "auto" : "vertical" }) },
     { id: "theme", label: `Theme: ${layout.theme === "light" ? "dark" : "light"}`, run: () => saveLayout({ theme: layout.theme === "light" ? "dark" : "light" }) },
     ...(["compact", "comfortable", "spacious"] as const)
@@ -241,13 +264,13 @@ export function App() {
             </p>
           </div>
         ) : (
-          <Grid names={visible} columns={layout.maximized ? 1 : columns} widths={layout.maximized || vertical ? undefined : layout.widths} minRow={vertical ? 360 : 220}>
+          <Grid names={visible} columns={maximized ? 1 : columns} widths={maximized || vertical ? undefined : layout.widths} minRow={vertical ? 360 : 220}>
             {visible.map((n) => (
               <Pane
                 key={n}
                 name={n}
                 index={names.indexOf(n)}
-                onMaximize={() => saveLayout({ maximized: layout.maximized === n ? null : n })}
+                onMaximize={() => toggleMaximize(n)}
                 onJob={() => setJobFor(n)}
                 selected={selected.has(n)}
                 onSelect={(v) => {
@@ -507,6 +530,7 @@ function Sidebar({ names, onAdd, onSearch }: { names: string[]; onAdd: () => voi
   const starting = useStore((s) => s.starting);
   const jobs = useStore((s) => s.jobs);
   const layout = useStore((s) => s.layout);
+  const current = useSyncExternalStore(focus.subscribe, () => focus.active);
   const active = jobs.filter((j) => j.state === "active" || j.state === "queued");
   const [runsFor, setRunsFor] = useState<JobView | null>(null);
   const ended = jobs.filter((j) => !(j.state === "active" || j.state === "queued")).slice(-5).reverse();
@@ -530,14 +554,19 @@ function Sidebar({ names, onAdd, onSearch }: { names: string[]; onAdd: () => voi
           const st = starting.get(n);
           const state = agentState(n);
           const model = a?.config.find((c) => c.category === "model" || c.id === "model");
+          const go = () => {
+            if (layout.maximized && layout.maximized !== n) saveLayout({ maximized: null });
+            setTimeout(() => focus.to(n), 0);
+          };
           return (
             <li
               key={n}
-              className={`agent-item state-${state}${layout.maximized === n ? " max" : ""}${focus.active === n ? " current" : ""}`}
-              onClick={() => {
-                if (layout.maximized && layout.maximized !== n) saveLayout({ maximized: null });
-                setTimeout(() => focus.to(n), 0);
-              }}
+              className={`agent-item state-${state}${layout.maximized === n ? " max" : ""}${current === n ? " current" : ""}`}
+              role="button"
+              tabIndex={0}
+              aria-current={current === n ? "true" : undefined}
+              onClick={go}
+              onKeyDown={onActivate(go)}
             >
               <div className="row1">
                 <span className="idx">{i < 9 ? i + 1 : ""}</span>
@@ -572,7 +601,7 @@ function Sidebar({ names, onAdd, onSearch }: { names: string[]; onAdd: () => voi
       </div>
       <ul className="job-list">
         {active.map((j) => (
-          <li key={j.id} title={j.prompt} className="clickable" onClick={() => setRunsFor(j)}>
+          <li key={j.id} title={j.prompt} className="clickable" role="button" tabIndex={0} onClick={() => setRunsFor(j)} onKeyDown={onActivate(() => setRunsFor(j))}>
             <div className="row1">
               <span className={`dot ${j.state === "active" ? "working" : "idle"}`} />
               <strong>#{j.id}</strong> <span className="kind">{j.kind}</span> <span>{j.agent}</span>
@@ -593,7 +622,7 @@ function Sidebar({ names, onAdd, onSearch }: { names: string[]; onAdd: () => voi
           </li>
         ))}
         {ended.map((j) => (
-          <li key={j.id} className="ended clickable" title={j.prompt} onClick={() => setRunsFor(j)}>
+          <li key={j.id} className="ended clickable" title={j.prompt} role="button" tabIndex={0} onClick={() => setRunsFor(j)} onKeyDown={onActivate(() => setRunsFor(j))}>
             <div className="row1 dim">
               #{j.id} {j.kind} {j.agent} — {j.state} · {j.runs} run{j.runs === 1 ? "" : "s"}
             </div>
@@ -745,18 +774,14 @@ function labelOf(o: { currentValue: string | boolean; options?: { value: string;
 
 export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const k = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", k);
-    return () => window.removeEventListener("keydown", k);
-  }, [onClose]);
+  const isTop = useOverlay("modal", onClose);
   // Keep keyboard focus inside the dialog, and give it back to where it was on close.
   useEffect(() => {
     const before = document.activeElement as HTMLElement | null;
     const el = ref.current;
     if (el && !el.contains(document.activeElement)) (el.querySelector<HTMLElement>("[autofocus], input, select, textarea, button") ?? el).focus();
     const trap = (e: KeyboardEvent) => {
-      if (e.key !== "Tab" || !el) return;
+      if (e.key !== "Tab" || !el || !isTop()) return;
       const items = [...el.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter((x) => !(x as HTMLButtonElement).disabled && x.offsetParent !== null);
       if (!items.length) return;
       const first = items[0];

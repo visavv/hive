@@ -760,3 +760,25 @@ kbd + kbd { margin-left: 3px; }
 .stats-days .day:hover .col { filter: brightness(1.15); }
 .stats-days .lbl { position: absolute; bottom: -18px; font-size: 10px; color: var(--text-3); font-family: var(--font-mono); white-space: nowrap; }
 .stats-days .day:not(:nth-child(5n + 1)) .lbl { visibility: hidden; }
+
+/* ---- theme tokens for the hardcoded dark colors still left above (every data-theme inherits these) ---- */
+button:hover:not(:disabled) { border-color: var(--border-strong); background: var(--bg-3); }
+button.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 85%, var(--text)); border-color: color-mix(in srgb, var(--accent) 85%, var(--text)); }
+button.ghost:hover:not(:disabled) { background: var(--bg-3); border-color: var(--border); }
+button.danger { border-color: color-mix(in srgb, var(--st-error) 45%, var(--border)); }
+.dot.asleep { background: var(--st-idle); }
+.ctx .bar { background: color-mix(in srgb, var(--st-done) 35%, var(--bg-2)); }
+.ctx.warm .bar { background: color-mix(in srgb, var(--st-blocked) 40%, var(--bg-2)); }
+.ctx.hot .bar { background: color-mix(in srgb, var(--st-error) 45%, var(--bg-2)); }
+.ctx .lbl { color: var(--text); }
+.tool.failed { border-color: color-mix(in srgb, var(--st-error) 40%, var(--border)); }
+.diff .add { background: color-mix(in srgb, var(--st-done) 14%, transparent); color: color-mix(in srgb, var(--st-done) 55%, var(--text)); }
+.diff .del { background: color-mix(in srgb, var(--st-error) 14%, transparent); color: color-mix(in srgb, var(--st-error) 55%, var(--text)); }
+.toast.error { border-color: var(--st-error); color: var(--text); }
+.acct.ok .acct-mark { background: var(--st-done); color: var(--bg-0); }
+.acct.no .acct-mark { background: var(--st-error); color: var(--bg-0); }
+:root[data-theme="light"] .toast { box-shadow: 0 6px 20px rgb(0 0 0 / 0.1); }
+:root[data-theme="light"] .palette { box-shadow: 0 24px 64px rgb(0 0 0 / 0.14); }
+/* keyboard focus on rows that act like buttons */
+.agent-item:focus-visible, .job-list li[role="button"]:focus-visible, .tool-head:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: -2px; }
+.drawer:focus { outline: none; }

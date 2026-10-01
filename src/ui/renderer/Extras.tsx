@@ -107,11 +107,17 @@ export function SkillsDialog({ onClose, initial }: { onClose: () => void; initia
   }, []);
   const sk = list.find((x) => x.name === name);
   useEffect(() => {
+    // A choice select shows its default (or, when required, its first option): put that in vals so Run sends it.
+    const shown: Record<string, string> = {};
+    for (const p of sk?.params ?? []) {
+      const v = p.type === "choice" && p.choices?.length ? (p.default ?? (p.required ? p.choices[0] : undefined)) : undefined;
+      if (v !== undefined) shown[p.name] = v;
+    }
     // Opened with values (e.g. from the prompt editor): keep them for that skill once.
     if (prefill.current && prefill.current.name === name) {
-      setVals(prefill.current.vals);
+      setVals({ ...shown, ...prefill.current.vals });
       prefill.current = null;
-    } else setVals({});
+    } else setVals(shown);
     setErr("");
     setKind(sk?.agent ?? "claude");
   }, [name, list.length]);
@@ -309,7 +315,7 @@ export function PromptEditor({ agent, initial, onClose, onSend }: { agent: strin
         >
           <IconScale /> Verdict…
         </button>
-        <button type="button" className="ghost" disabled={!text.trim()} onClick={() => setSaving(true)} title="reuse this prompt later from Skills (Ctrl+K)">
+        <button type="button" className="ghost" disabled={!text.trim()} onClick={() => setSaving(true)} title="reuse this prompt later from Skills (Ctrl+Shift+K)">
           Save as skill…
         </button>
         <span className="spacer" />
