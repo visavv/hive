@@ -79,6 +79,27 @@ await a.prompt("send cid: linked now");
 assert(db.unreadCount("cid") === 1, "guard: once you link them, mail flows");
 db.markRead(db.inbox("cid").map((m) => m.id), "cid");
 db.deleteGroup("ana-cid");
+// SEC-003b: no way around the guard through broadcasts, groups agents build, or groups the sender isn't in
+const heldFor = (to: string, body: string) => db.heldMessages().filter((m) => m.to_agent === to && m.body === body);
+const got = (who: string, body: string) => db.inbox(who, false, 200).some((m) => m.body === body);
+await a.prompt("grp create sneaky2 cid");
+assert(!db.groupMembers("sneaky2").length && /Ask the owner to link you/.test(said("ana")), "SEC-003b: agents can't link themselves to an allow-all agent");
+await a.prompt("send *: broadcast to all");
+assert(!got("cid", "broadcast to all") && heldFor("cid", "broadcast to all").length === 1 && got("ben", "broadcast to all"), "SEC-003b: a broadcast skips unlinked allow-all agents (held per recipient); linked ones get it");
+db.addToGroup("ben-cid", ["ben", "cid", "owner"]);
+await a.prompt("send @ben-cid: via a group I'm not in");
+assert(!got("cid", "via a group I'm not in") && heldFor("cid", "via a group I'm not in").length === 1, "SEC-003b: mail to a group the sender isn't in is held for its allow-all members");
+db.addToGroup("self-made", ["ana", "cid"], "ana"); // as hive_group would (e.g. before cid became allow-all)
+await a.prompt("send cid: through my own group");
+assert(!got("cid", "through my own group") && heldFor("cid", "through my own group").length === 1, "SEC-003b: a group agents built doesn't count as your link");
+await a.prompt('calltool hive_group {"action":"remove","name":"ben-cid","members":["ben"]}');
+assert(db.groupMembers("ben-cid").includes("ben") && /only the human removes other members/.test(said("ana")), "SEC-003b: agents can't remove other members");
+db.send("owner", "*", "all", "owner broadcast");
+assert(got("cid", "owner broadcast"), "SEC-003b: owner mail is never held");
+for (const m of db.heldMessages()) db.dropMessage(m.id);
+db.markRead(db.inbox("cid").map((m) => m.id), "cid");
+db.deleteGroup("ben-cid");
+db.deleteGroup("self-made");
 hub.db.setAgentConfig("cid", "allow-reads", null);
 await a.prompt("send cid: plain agent");
 assert(db.unreadCount("cid") === 1, "guard: agents that can't run anything get peer mail directly");
