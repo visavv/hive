@@ -413,7 +413,9 @@ try {
   await pane(page, "alpha").locator("textarea").press("Enter");
   await pane(page, "beta").locator("textarea").click();
   await page.locator('[data-pane="alpha"].ready').waitFor({ timeout: 20_000 });
-  assert(await pane(page, "alpha").locator(".st.st-done").count() === 1, "a finished agent you weren't looking at shows 'done' (not looked at yet)");
+  // the pane goes green when the turn ends; the agent's status event (working → idle) can land a moment later
+  const doneShown = await pane(page, "alpha").locator(".st.st-done").waitFor({ timeout: 5000 }).then(() => true, () => false);
+  assert(doneShown && (await pane(page, "alpha").locator(".st.st-done").count()) === 1, "a finished agent you weren't looking at shows 'done' (not looked at yet)");
   assert(/ready/.test(await page.title()), "window title counts ready agents");
   await page.locator(".ready-btn").click();
   await page.locator('[data-pane="alpha"].ready').waitFor({ state: "detached", timeout: 5000 });
@@ -676,7 +678,11 @@ try {
     await page
       .waitForFunction(() => (document.querySelector(".browser-pane .dv-view img") as HTMLImageElement | null)?.src.startsWith("data:image/jpeg"), null, { timeout: 45_000 })
       .catch(async () => console.error(`[browser pane after 45 s] ${(await page.locator(".browser-pane").innerText().catch(() => "?")).replace(/\s+/g, " ").slice(0, 400)}`));
-    assert(await page.locator(".dv-title", { hasText: "Pane test" }).count(), "the page loads in the sandboxed browser and frames reach the pane");
+    // the title arrives with the page's load event, which can come after the first frame
+    const titled = await page.locator(".dv-title", { hasText: "Pane test" }).waitFor({ timeout: 20_000 }).then(() => true, () => false);
+    const framed = await page.locator(".browser-pane .dv-view img").evaluate((i) => (i as HTMLImageElement).src.startsWith("data:image/jpeg")).catch(() => false);
+    if (!titled) console.error(`[browser pane, no title] ${(await page.locator(".browser-pane").innerText().catch(() => "?")).replace(/\s+/g, " ").slice(0, 400)}`);
+    assert(titled && framed, "the page loads in the sandboxed browser and frames reach the pane");
     await page.screenshot({ path: join(shots, "hive-ui-browser.png") });
     await page.locator(".dv-tab button[aria-label='close Browser pane']").click();
     await page.locator(".device-dock").waitFor({ state: "detached", timeout: 5000 });
