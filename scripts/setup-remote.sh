@@ -18,7 +18,9 @@ DISCORD=0
 DRY=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --project) PROJECT="$2"; shift 2 ;;
+    --project)
+      if [ $# -lt 2 ] || [ -z "$2" ]; then echo "usage: --project DIR (the project hive-tui opens)" >&2; exit 2; fi
+      PROJECT="$2"; shift 2 ;;
     --ssh-only-tailscale) LOCK=1; shift ;;
     --discord) DISCORD=1; shift ;;
     --dry-run) DRY=1; shift ;;
@@ -26,6 +28,9 @@ while [ $# -gt 0 ]; do
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
+
+# absolute, so the systemd unit's WorkingDirectory= and the helper work from anywhere
+if [ -d "$PROJECT" ]; then PROJECT="$(cd "$PROJECT" && pwd)"; else case "$PROJECT" in /*) ;; *) PROJECT="$PWD/$PROJECT" ;; esac; fi
 
 run() { if [ "$DRY" = 1 ]; then echo "+ $*"; else echo "+ $*"; "$@"; fi; }
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
@@ -39,11 +44,14 @@ case "${ID:-} ${ID_LIKE:-}" in
 esac
 
 say "1/5 packages: OpenSSH server, tmux, curl"
+PKGS=("$SSH_PKG" tmux)
+# Fedora minimal ships curl-minimal, which conflicts with installing curl: only add it when missing.
+have curl || PKGS+=(curl)
 if [ "$PM" = apt ]; then
   run sudo apt-get update -q
-  run sudo apt-get install -y "$SSH_PKG" tmux curl
+  run sudo apt-get install -y "${PKGS[@]}"
 else
-  run sudo dnf install -y "$SSH_PKG" tmux curl
+  run sudo dnf install -y "${PKGS[@]}"
 fi
 run sudo systemctl enable --now "$SSH_UNIT"
 
@@ -77,12 +85,19 @@ if [ "$LOCK" = 1 ]; then
   if [ ! -s "$HOME/.ssh/authorized_keys" ]; then
     echo "Skipped: add a key to ~/.ssh/authorized_keys first, so you can't lock yourself out." >&2
   elif have ufw; then
-    run sudo ufw allow in on tailscale0 to any port 22 proto tcp
+    # Existing "allow OpenSSH" / "allow 22" rules would match before the deny and keep SSH open everywhere.
+    for r in OpenSSH ssh 22/tcp 22; do run sudo ufw delete allow "$r" || true; done
+    # The Tailscale allow goes first (insert fails on an empty rule list, then a plain allow is first anyway).
+    run sudo ufw insert 1 allow in on tailscale0 to any port 22 proto tcp || run sudo ufw allow in on tailscale0 to any port 22 proto tcp
     run sudo ufw deny 22/tcp
     run sudo ufw --force enable
   elif have firewall-cmd; then
     run sudo firewall-cmd --permanent --zone=trusted --add-interface=tailscale0
-    run sudo firewall-cmd --permanent --remove-service=ssh
+    # ssh can be open as a service or as a plain port, in the default zone or in public
+    for z in $(firewall-cmd --get-default-zone 2>/dev/null || true) public; do
+      run sudo firewall-cmd --permanent --zone="$z" --remove-service=ssh || true
+      run sudo firewall-cmd --permanent --zone="$z" --remove-port=22/tcp || true
+    done
     run sudo firewall-cmd --reload
   else
     echo "No ufw/firewalld found; restrict port 22 to the tailscale0 interface in your firewall." >&2
