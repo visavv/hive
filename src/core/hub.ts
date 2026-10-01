@@ -92,7 +92,7 @@ export class Hub {
       // The folder is the one this hub knows for the agent, never one from the request.
       const cwd = this.sessions.get(job.agent)?.cwd ?? this.db.getAgent(job.agent)?.cwd;
       if (!cwd) throw new Error(`unknown agent ${job.agent}`);
-      const out = await runMedia(this.db, job.agent, cwd, job.kind, JSON.parse(job.params));
+      const out = await runMedia(this.db, job.agent, cwd, job.kind, JSON.parse(job.params), job.id);
       if (this.db.db.open) this.db.finishMedia(job.id, out, null);
     } catch (e: any) {
       if (this.db.db.open) this.db.finishMedia(job.id, null, String(e?.message ?? e).slice(0, 1000));

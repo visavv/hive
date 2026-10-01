@@ -74,6 +74,31 @@ hub.db.setSetting("budget.media_daily", "3");
 await a.runOnce('calltool hive_tts {"text":"one more"}', { automatic: false });
 assert(/daily media budget reached/.test(a.lastReply), `media_daily caps calls (${a.lastReply.trim().slice(-120)})`);
 
+// the cap counts images, and media jobs still running hold their slots
+hub.db.setSetting("budget.media_daily", "5");
+await a.runOnce('calltool hive_image {"prompt":"four at once","n":4}', { automatic: false });
+assert(/daily media budget reached.*4 asked/.test(a.lastReply), `hive_image n=4 counts as 4 calls (${a.lastReply.trim().slice(-120)})`);
+const { checkMediaCap } = await import("../src/hive/media.js");
+hub.db.setSetting("budget.media_daily", "4"); // 3 used: one slot left
+const first = hub.db.addMedia("studio", "tts", {});
+const second = hub.db.addMedia("studio", "tts", {});
+hub.db.db.prepare("UPDATE media_jobs SET status='running' WHERE id IN (?,?)").run(first, second);
+let capErr = "";
+try {
+  checkMediaCap(hub.db, 1, second);
+} catch (e: any) {
+  capErr = e.message;
+}
+let firstOk = true;
+try {
+  checkMediaCap(hub.db, 1, first);
+} catch {
+  firstOk = false;
+}
+assert(firstOk && /1 in progress/.test(capErr), "two jobs at cap-1: the earlier one takes the last slot, the later one is refused");
+hub.db.finishMedia(first, "x", null);
+hub.db.finishMedia(second, "x", null);
+
 // bad key → clear message
 hub.db.setSetting("budget.media_daily", "100");
 process.env.ELEVENLABS_API_KEY = "wrong";
