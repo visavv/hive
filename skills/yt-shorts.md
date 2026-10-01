@@ -8,6 +8,7 @@ params:
   - name: transcript
     type: file
     required: true
+    description: transcript with timestamps (.srt/.vtt) or a YouTube link
   - name: count
     type: number
     default: 6

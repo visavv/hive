@@ -7,7 +7,7 @@ params:
   - name: transcript
     type: file
     required: true
-    description: .srt or .vtt with timestamps
+    description: .srt/.vtt with timestamps, or a YouTube link
   - name: max_chapters
     type: number
     default: 12
