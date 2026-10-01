@@ -6,6 +6,7 @@ import { Pane } from "./Pane.js";
 import { Drawer } from "./Drawer.js";
 import { agentNameProblem } from "../../core/names.js";
 import { GroupChat, GroupsSection, LinkDialog, PauseIcon } from "./Links.js";
+import { VerdictWindow } from "./Verdict.js";
 import { RecipesDialog, SkillsDialog } from "./Extras.js";
 import { focus } from "./focus.js";
 import { ctxPct, fmtIdle, parseDuration, statusLabel, suggestName } from "./format.js";
@@ -221,6 +222,7 @@ export function App() {
           }}
         />
       )}
+      <VerdictWindow />
       {groupOpen && <GroupChat key={groupOpen} name={groupOpen} onClose={() => store.openGroup(null)} />}
       {(dialog === "skills" || skillReq) && (
         <SkillsDialog
@@ -348,7 +350,7 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onRecipe
         {layout.ping === false ? "🔕" : "🔔"}
       </button>
       <label className="toggle" title="hovering a pane focuses its input (for Handy / voice typing)">
-        <input type="checkbox" checked={layout.hoverFocus} onChange={(e) => saveLayout({ hoverFocus: e.target.checked })} /> hover focus
+        <input type="checkbox" checked={layout.hoverFocus} onChange={(e) => saveLayout({ hoverFocus: e.target.checked })} aria-label="hover focus" /> <span className="tl">hover focus</span>
       </label>
       <span className="cols" title="panes per row">
         <button className="ghost" disabled={cols <= 1} onClick={() => setCols(cols - 1)} aria-label="fewer columns">−</button>
@@ -356,6 +358,9 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onRecipe
         <button className="ghost" disabled={cols >= 8} onClick={() => setCols(cols + 1)} aria-label="more columns">+</button>
       </span>
       <UsageChip onClick={onUsage} />
+      <button className="ghost" onClick={() => store.openVerdict({})} title="send one prompt to several agents; a judge picks the best parts">
+        ⚖ Verdict
+      </button>
       <button className="ghost" onClick={onSkills} title="reusable prompts with parameters (Ctrl+K)">
         ✦ Skills
       </button>

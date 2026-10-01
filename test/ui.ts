@@ -10,9 +10,12 @@ import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { assert, finish, freshDir, sleep } from "./util.js";
 import { projectDir } from "../src/core/home.js";
+import { AGENTS } from "../src/core/agents.js";
 
 const dir = freshDir(".hive-test-ui");
 process.env.HIVE_HOME = freshDir(".hive-test-ui-home"); // fresh default db + ui.json per run
+// A second agent type (the mock again) so verdict mode has two contenders.
+writeFileSync(join(process.env.HIVE_HOME, "agents.json"), JSON.stringify({ mock2: { type: "acp", label: "Mock agent 2", command: AGENTS.mock.command, args: AGENTS.mock.args } }));
 const shots = resolve(process.env.SHOT_DIR ?? dir);
 const require = createRequire(import.meta.url);
 let electronBin = require("electron") as unknown as string;
@@ -322,6 +325,26 @@ try {
   await pane(page, "beta").locator(".msg.agent", { hasText: "Got mail from alpha" }).waitFor({ timeout: 15_000 });
   assert(true, "released from the group chat: the other agent gets it and acts");
   await page.screenshot({ path: join(shots, "hive-ui-linked.png") });
+
+  // verdict mode: one prompt to two agents, a judge picks the best parts, then build the merge
+  await page.locator(".topbar button", { hasText: "Verdict" }).click();
+  const vd = page.locator(".modal.wide", { hasText: "several agents, one judge" });
+  await vd.locator("textarea.verdict-prompt").fill("verdict-task: three title ideas for my video");
+  await vd.locator(".seg button", { hasText: "Text" }).click();
+  for (const l of await vd.locator("fieldset label.radio").all()) if (await l.locator("input").isChecked()) await l.locator("input").uncheck();
+  await vd.locator("fieldset label.radio", { hasText: /^\s*Mock agent \(tests\)/ }).locator("input").check();
+  await vd.locator("fieldset label.radio", { hasText: "Mock agent 2" }).locator("input").check();
+  await vd.locator("label:has-text('Judge') select").selectOption("mock");
+  assert((await vd.textContent())!.includes("3 agent turns"), "verdict setup shows the cost (agents + judge)");
+  await vd.locator("button", { hasText: "Start" }).click();
+  const vv = page.locator(".modal.wide", { hasText: "Verdict #" });
+  await vv.locator(".verdict-text", { hasText: "VERDICT: base = Solution A" }).waitFor({ timeout: 60_000 });
+  assert((await vv.locator(".vc.done").count()) >= 2 && (await vv.locator(".vc.base").count()) === 1, "contenders finished; the judge's base is highlighted");
+  await page.screenshot({ path: join(shots, "hive-ui-verdict.png") });
+  await vv.locator("button", { hasText: "Build merged version" }).click();
+  await vv.locator(".ok", { hasText: "built by" }).waitFor({ timeout: 30_000 });
+  assert(true, "build merged version: the base solution's author rewrites it from the verdict");
+  await page.keyboard.press("Escape");
 
   await page.screenshot({ path: join(shots, "hive-ui.png") });
   const layout = JSON.parse(readFileSync(join(projectDir(dir), "ui.json"), "utf8"));

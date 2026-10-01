@@ -17,6 +17,7 @@
   hive watch <agent> --bb ideas/raw/ "prompt"   fire when agents post blackboard entries under a prefix
       watch options: --min-lines N (or min new entries)  --max-wait 30m (any change after T)  --cooldown 10m (at most every T)
   hive groups · hive group create|add|rm|delete <name> [members…]   mail "@name" reaches all members
+  hive verdict "prompt" --agents claude,codex [--judge claude] [--text]   several agents solve it, a judge picks the best parts · apply <id>
   hive link <a> <b> [--name g] [--review]   let agents talk (a group with you in it); --review: you approve each message
   hive group mode <name> direct|review [--times N]   review = messages wait for you; N = max agent messages per hour
   hive scope open|linked                  linked: agents only reach agents they're linked with · hive held · hive release|drop <id>
@@ -65,6 +66,7 @@ import { runSkill, writeSkill } from "../core/skill-run.js";
 import { createBridges } from "../bridges/index.js";
 import { BUDGET_KEYS, setBudget, usageSummary } from "../core/budget.js";
 import { runMedia } from "../hive/media.js";
+import { applyVerdict, runVerdict, type VerdictState } from "../core/verdict.js";
 import type { Bridge } from "../bridges/router.js";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { listWorktrees, mergeWorktree, removeWorktree, syncWorktree } from "../core/worktree.js";
@@ -114,6 +116,9 @@ const { values, positionals } = parseArgs({
     voice: { type: "string" },
     voices: { type: "boolean", default: false },
     review: { type: "boolean", default: false },
+    agents: { type: "string" },
+    judge: { type: "string" },
+    text: { type: "boolean", default: false },
     body: { type: "string" },
     size: { type: "string" },
     edit: { type: "string" },
@@ -153,6 +158,7 @@ const USAGE = `hive — local multi-agent harness
   hive watch <agent> --bb ideas/raw/ "prompt"   fire when agents post blackboard entries under a prefix
       watch options: --min-lines N (or min new entries)  --max-wait 30m (any change after T)  --cooldown 10m (at most every T)
   hive groups · hive group create|add|rm|delete <name> [members…]   mail "@name" reaches all members
+  hive verdict "prompt" --agents claude,codex [--judge claude] [--text]   several agents solve it, a judge picks the best parts · apply <id>
   hive link <a> <b> [--name g] [--review]   let agents talk (a group with you in it); --review: you approve each message
   hive group mode <name> direct|review [--times N]   review = messages wait for you; N = max agent messages per hour
   hive scope open|linked                  linked: agents only reach agents they're linked with · hive held · hive release|drop <id>
@@ -1135,6 +1141,60 @@ async function main() {
         if (r.status !== 0) die(`could not create the shortcut: ${r.stderr || r.error?.message}`);
         console.log(`added "${label}" to the Start menu (${lnk})`);
       } else die("hive desktop supports Linux and Windows");
+      return;
+    }
+
+    case "verdict": {
+      const db0 = () => new HiveDb(values.db!);
+      const cwd = resolve(values.cwd ?? process.cwd());
+      if (rest[0] === "list") {
+        const db = db0();
+        for (const v of db.listVerdicts<VerdictState>(20))
+          console.log(`#${v.id} ${dim(new Date(v.ts).toLocaleString())} ${v.status.padEnd(8)} ${v.mode} ${v.contenders.map((c) => c.kind).join(" vs ")} → judge ${v.judgeKind}${v.base ? `, base ${v.base}` : ""}  ${dim(v.prompt.slice(0, 60))}`);
+        db.close();
+        return;
+      }
+      if (rest[0] === "show") {
+        const db = db0();
+        const v = db.getVerdict<VerdictState>(Number(rest[1]));
+        db.close();
+        if (!v) die(`no verdict #${rest[1]}`);
+        console.log(v.report && existsSync(v.report) ? readFileSync(v.report, "utf8") : JSON.stringify(v, null, 2));
+        return;
+      }
+      const hub = new Hub({ hiveDb: values.db!, pollMs: 1000 });
+      const show = (v: VerdictState) =>
+        process.stderr.write(`\r${dim(`#${v.id} ${v.status}: ${v.contenders.map((c) => `${c.label}=${c.kind} ${c.status}`).join(" · ")}`)}   `);
+      try {
+        if (rest[0] === "apply") {
+          const v = await applyVerdict(hub, Number(rest[1]), { label: values.label, onProgress: show });
+          console.log(`\n${v.status === "applied" ? green(`built by ${v.applied?.agent}`) : red(v.applied?.error ?? "not applied")}\n${v.applied?.reply ?? ""}\nreport: ${v.report}`);
+          if (v.mode === "code" && v.status === "applied") console.log(dim(`review it: hive worktrees · merge it: hive merge ${v.applied?.agent}`));
+          return;
+        }
+        const prompt = rest.join(" ").trim();
+        if (!prompt || !values.agents)
+          die('usage: hive verdict "prompt" --agents claude,codex[,gemini-api] [--judge claude] [--model <judge model>] [--text] [--policy ask]\n       hive verdict list · show <id> · apply <id> [--label B]');
+        const kinds = values.agents.split(",").map((k) => k.trim()).filter(Boolean);
+        console.log(dim(`${kinds.length} agents solve it${values.text ? "" : " in their own worktrees"}, then ${values.judge ?? "claude"} judges: ${kinds.length + 1} agent turns.`));
+        const v = await runVerdict(hub, {
+          prompt,
+          kinds,
+          judge: values.judge ?? "claude",
+          judgeModel: values.model,
+          mode: values.text ? "text" : "code",
+          cwd,
+          policy: values.policy as PermissionPolicy | undefined,
+          onProgress: show,
+        });
+        console.log(`\n\n${v.verdict ?? red(v.error ?? "failed")}\n`);
+        console.log(dim(`solutions: ${v.contenders.map((c) => `${c.label}=${c.kind}${c.branch ? ` (${c.branch})` : ""}${c.error ? ` failed: ${c.error}` : ""}`).join(" · ")}`));
+        console.log(dim(`report: ${v.report}${v.status === "done" ? `\nbuild the merged version: hive verdict apply ${v.id}${v.base ? "" : " --label A"}` : ""}`));
+      } catch (e: any) {
+        die(e.message);
+      } finally {
+        await hub.close();
+      }
       return;
     }
 

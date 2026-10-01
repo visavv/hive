@@ -279,6 +279,7 @@ export class HiveDb {
     const msgCols = new Set((this.db.prepare(`PRAGMA table_info(messages)`).all() as { name: string }[]).map((c) => c.name));
     if (!msgCols.has("held")) this.db.exec(`ALTER TABLE messages ADD COLUMN held TEXT`);
     if (!msgCols.has("via")) this.db.exec(`ALTER TABLE messages ADD COLUMN via TEXT`);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS verdicts (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, state TEXT NOT NULL)`);
     this.db.exec(`CREATE TABLE IF NOT EXISTS group_settings (grp TEXT PRIMARY KEY, mode TEXT NOT NULL DEFAULT 'direct', max_per_hour INTEGER)`);
   }
 
@@ -419,6 +420,20 @@ export class HiveDb {
     // The most permissive shared group wins: a direct group under its cap delivers now.
     const routes = shared.map((g) => this.throughGroup(g.name));
     return routes.find((r) => r.ok && !r.held) ?? routes[0];
+  }
+  // ---- verdict rounds (state is JSON, see core/verdict.ts) ----
+  addVerdict(state: object): number {
+    return Number(this.db.prepare(`INSERT INTO verdicts (ts, state) VALUES (?, ?)`).run(Date.now(), JSON.stringify(state)).lastInsertRowid);
+  }
+  saveVerdict(id: number, state: object) {
+    this.db.prepare(`UPDATE verdicts SET state=? WHERE id=?`).run(JSON.stringify(state), id);
+  }
+  getVerdict<T>(id: number): T | undefined {
+    const r = this.db.prepare(`SELECT state FROM verdicts WHERE id=?`).get(id) as { state: string } | undefined;
+    return r ? (JSON.parse(r.state) as T) : undefined;
+  }
+  listVerdicts<T>(limit = 20): T[] {
+    return (this.db.prepare(`SELECT state FROM verdicts ORDER BY id DESC LIMIT ?`).all(limit) as { state: string }[]).map((r) => JSON.parse(r.state) as T);
   }
   heldMessages(): Message[] {
     return this.db.prepare(`SELECT * FROM messages WHERE held IS NOT NULL ORDER BY id`).all() as Message[];

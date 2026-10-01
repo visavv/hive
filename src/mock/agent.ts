@@ -18,6 +18,8 @@
  */
 import * as acp from "@agentclientprotocol/sdk";
 import { Readable, Writable } from "node:stream";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
@@ -207,6 +209,19 @@ acp
     const diffM = text.match(/hivediff (\w+)(?: branch=(\S+))?/);
     if (diffM)
       await say(cx, sessionId, (await callTool(sess, "hive_diff", { agent: diffM[1], stat_only: true, ...(diffM[2] ? { branch: diffM[2] } : {}) })) + "\n");
+    // verdict mode: a contender writes a file in its worktree; the judge names a base
+    if (/verdict-task/.test(text) && !/You are the judge/.test(text) && !/Build the final version/.test(text)) {
+      writeFileSync(join(sess.cwd, "solution.txt"), `solution by ${sessionId}\n`);
+      await say(cx, sessionId, "approach: wrote solution.txt\n");
+    }
+    if (/You are the judge in a verdict round/.test(text)) {
+      const n = (text.match(/## Solution [A-H]/g) ?? []).length;
+      await say(cx, sessionId, `VERDICT: base = Solution A\n| solution | correctness |\n|---|---|\n${n} solutions compared; untrusted-wrapped: ${/<<untrusted solution A/.test(text)}; saw diff: ${/solution\.txt/.test(text)}\n`);
+    }
+    if (/Build the final version/.test(text)) {
+      writeFileSync(join(sess.cwd, "solution.txt"), "merged solution\n");
+      await say(cx, sessionId, "built the merged version\n");
+    }
     // "calltool <name> {json}" calls any MCP tool it was given and prints the result
     const ctM = text.match(/calltool (\w+) (\{.*\})/);
     if (ctM) await say(cx, sessionId, `tool ${ctM[1]}: ${await callTool(sess, ctM[1], JSON.parse(ctM[2]))}\n`);

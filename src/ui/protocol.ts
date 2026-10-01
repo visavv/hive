@@ -197,6 +197,7 @@ export type BackendEvent =
   | { event: "job"; text: string; jobId: number; agent: string }
   | { event: "error"; text: string }
   | { event: "fatal"; text: string }
+  | { event: "verdict"; state: import("../core/verdict.js").VerdictState }
   | { event: "owner_mail"; unread: number; latest?: { from: string; subject: string } }
   /** Sent by Electron main, not the backend. */
   | { event: "backend_down"; text: string };
@@ -265,6 +266,9 @@ export interface Methods {
   runSkill: (p: { name: string; params: Record<string, string>; kind?: string }) => { agent: string; kind: string; policy: Policy };
   groups: (p: Record<string, never>) => { name: string; members: string[] }[];
   accounts: (p: { refresh?: boolean }) => AccountView[];
+  startVerdict: (p: { prompt: string; kinds: string[]; judge: string; judgeModel?: string; mode: "code" | "text"; policy?: Policy }) => { id: number };
+  applyVerdict: (p: { id: number; label?: string }) => void;
+  verdicts: (p: Record<string, never>) => import("../core/verdict.js").VerdictState[];
   link: (p: { members: string[]; name?: string; mode?: "direct" | "review"; maxPerHour?: number | null; includeOwner?: boolean }) => GroupView;
   groupChat: (p: { name: string }) => { group: GroupView; messages: MailView[] };
   setGroup: (p: { name: string; mode?: "direct" | "review"; maxPerHour?: number | null; remove?: string; add?: string; delete?: boolean }) => GroupView | null;

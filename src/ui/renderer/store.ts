@@ -127,6 +127,14 @@ class Store {
   /** Open the Skills dialog on a skill with some values filled in. */
   skillRequest: { name: string; vals: Record<string, string> } | null = null;
   groups: import("../protocol.js").GroupView[] = [];
+  /** Latest state of verdict rounds, by id (live progress). */
+  verdicts = new Map<number, import("../../core/verdict.js").VerdictState>();
+  /** Verdict window: "new" = setup dialog (optional prompt), or a round id to watch. */
+  verdictOpen: { prompt?: string } | number | null = null;
+  openVerdict(v: { prompt?: string } | number | null) {
+    this.verdictOpen = v;
+    this.changed();
+  }
   mailScope: "open" | "linked" = "open";
   /** Link dialog open with these agents preselected. */
   linkRequest: string[] | null = null;
@@ -232,6 +240,16 @@ class Store {
               this.touch(name, i);
             }
         break;
+      case "verdict": {
+        const prev = this.verdicts.get(ev.state.id);
+        this.verdicts.set(ev.state.id, ev.state);
+        if (prev && prev.status !== ev.state.status && (ev.state.status === "done" || ev.state.status === "applied" || ev.state.status === "failed")) {
+          this.toast(`⚖ verdict #${ev.state.id} ${ev.state.status === "failed" ? `failed: ${ev.state.error ?? ""}` : ev.state.status === "applied" ? "built" : "ready"}`, ev.state.status === "failed" ? "error" : "info");
+          if (this.layout.ping !== false) ping();
+          notifyAttention(`verdict #${ev.state.id}`, ev.state.status, "is ready");
+        }
+        break;
+      }
       case "owner_mail":
         this.ownerUnread = ev.unread;
         if (ev.latest) {

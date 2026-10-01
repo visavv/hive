@@ -362,3 +362,30 @@ label.radio { display: flex; gap: 6px; align-items: center; }
 @container (max-width: 360px) {
   .pane-head .cfg { display: none; }
 }
+/* ---- verdict ---- */
+.verdict-prompt { min-height: 22vh; }
+.verdict-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+@media (max-width: 800px) { .verdict-grid { grid-template-columns: 1fr; } }
+.verdict-contenders { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+.vc { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; background: var(--bg); min-width: 0; }
+.vc.working { border-color: var(--amber); }
+.vc.done { border-color: color-mix(in srgb, var(--green) 50%, var(--line)); }
+.vc.failed { border-color: var(--red); }
+.vc.base { box-shadow: 0 0 0 2px var(--green); }
+.vc.judge { border-style: dashed; }
+.vstat { font-size: 11px; color: var(--dim); }
+.vstat.working { color: var(--amber); }
+.vstat.done { color: var(--green); }
+.vstat.failed { color: var(--red); }
+.verdict-text { max-height: 45vh; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; background: var(--bg); }
+.verdict-task { white-space: pre-wrap; max-height: 4.5em; overflow: hidden; }
+/* top bar: never wrap button labels; give way on narrower windows */
+.topbar button, .topbar .toggle, .topbar .cols { white-space: nowrap; flex-shrink: 0; }
+.topbar .broadcast { min-width: 140px; flex: 1 1 520px; }
+@media (max-width: 1500px) {
+  .topbar .toggle .tl { display: none; }
+  .topbar .broadcast { flex-basis: 360px; }
+}
+@media (max-width: 1250px) {
+  .topbar .cols { display: none; }
+}
