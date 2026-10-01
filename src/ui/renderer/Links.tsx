@@ -10,6 +10,7 @@ import { rpc } from "./bridge.js";
 import { store, useStore } from "./store.js";
 import { Modal } from "./App.js";
 import { fmtIdle } from "./format.js";
+import { IconLink } from "./Icons.js";
 
 /** Pause icon drawn in SVG (the ⏸ glyph is missing from common Linux fonts). */
 export function PauseIcon({ title }: { title?: string }) {
@@ -311,23 +312,28 @@ export function GroupsSection() {
       <div className="side-head">
         <span>Groups</span>
         <button className="ghost" onClick={() => store.requestLink([])} title="link agents (or drag one pane onto another)" aria-label="link agents">
-          🔗
+          <IconLink size={14} />
         </button>
       </div>
-      <div className="scope-row">
-        <span className="dim small">agents can message</span>
-        <div className="seg small" role="group" aria-label="who agents can message">
-          <button className={scope === "open" ? "on" : ""} onClick={() => void rpc("setScope", { scope: "open" })} title="any agent can message any agent">
-            anyone
-          </button>
-          <button className={scope === "linked" ? "on" : ""} onClick={() => void rpc("setScope", { scope: "linked" })} title="agents work alone until you link them">
-            only linked
-          </button>
+      <details className="group-rules">
+        <summary>
+          Rules: {scope === "linked" ? "only linked agents talk" : "agents can message anyone"}
+          {guard ? " · full-access agents protected" : ""}
+        </summary>
+        <div className="scope-row">
+          <div className="seg small" role="group" aria-label="who agents can message">
+            <button className={scope === "open" ? "on" : ""} onClick={() => void rpc("setScope", { scope: "open" })} title="any agent can message any agent">
+              anyone
+            </button>
+            <button className={scope === "linked" ? "on" : ""} onClick={() => void rpc("setScope", { scope: "linked" })} title="agents work alone until you link them">
+              only linked
+            </button>
+          </div>
         </div>
-      </div>
-      <label className="radio small guard-row" title="An agent that may run anything only takes orders from agents you linked it with; other agents' mail to it waits for your review.">
-        <input type="checkbox" checked={guard} onChange={(e) => void rpc("setGuard", { on: e.target.checked })} /> hold unlinked mail to allow-all agents
-      </label>
+        <label className="radio small guard-row" title="An agent that may run anything only takes orders from agents you linked it with; other agents' mail to it waits for your review.">
+          <input type="checkbox" checked={guard} onChange={(e) => void rpc("setGuard", { on: e.target.checked })} /> hold unlinked mail to full-access agents
+        </label>
+      </details>
       <ul className="agent-list">
         {groups.map((g) => (
           <li key={g.name} className="agent-item group-item" style={{ ["--grp" as any]: groupColor(g.name) }} onClick={() => store.openGroup(g.name)}>

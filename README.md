@@ -6,8 +6,23 @@ Design goals, in order:
 
 1. **Your subscriptions keep working.** Every agent is the vendor's own binary behind its official ACP adapter. Auth, sandboxing and permission prompts are the vendor's; hive never re-implements the agent loop.
 2. **Agents talk to each other** through a `hive` MCP server injected into every session. Same tools for every vendor, no per-CLI hacks.
-3. **Runs 24/7 on one machine.** Nothing listens on the network. No Discord, no WhatsApp.
-4. **Many agents on one screen.** A pane grid for a 4K monitor, voice-friendly input routing.
+3. **Runs 24/7 on one machine.** Nothing listens on the network. Optional Discord/WhatsApp bridges connect *out*, allowlisted.
+4. **Many agents on one screen.** A pane grid for a 4K monitor (or a vertical 9:16 one), voice-friendly input routing.
+
+## What's in it
+
+| | |
+|---|---|
+| Agents | Claude Code, Codex, Gemini CLI, Qwen, OpenCode through ACP (your subscriptions), plus API models: Gemini, OpenRouter (Meta Llama…), OpenAI, Meta Llama API, Ollama, any OpenAI-compatible endpoint ([docs/MODELS.md](docs/MODELS.md)) |
+| Working together | mail, groups, shared blackboard, follow-ups; drag panes together to link agents, with a review-each-message layer and safe defaults for full-access agents |
+| Verdict mode | one prompt to several agents in their own worktrees, a blind judge picks the best parts, one click builds the merge ([docs/VERDICT.md](docs/VERDICT.md)) |
+| Automation | loops, intervals, watch-for-new-code/commits/blackboard, cooldowns, recipes (coder + reviewer, tester + improver, idea pipeline, creator studio) |
+| Skills | prompts with parameters (YouTube titles/descriptions/chapters from a transcript **or a YouTube link**, code review, prompt-engineer) |
+| Media | ElevenLabs voice-over, image generate/edit (keys stay in the hive process) |
+| Safety & cost | per-agent permission policies, worktrees, untrusted-content labelling, usage + limit windows with reset times, daily budgets, pause switch |
+| Platforms | Windows ([docs/WINDOWS.md](docs/WINDOWS.md), one-script install), Linux/Fedora ([docs/LINUX.md](docs/LINUX.md)), Ubuntu server + chat bridges ([docs/BRIDGES.md](docs/BRIDGES.md)) |
+
+How it compares with Maestro, Agent Deck, Zed, Claude Code teams and others: [docs/COMPARISON.md](docs/COMPARISON.md). Audit records: [audit/](audit/).
 
 ## Quick start
 

@@ -50,3 +50,11 @@ export function parseDuration(s: string): number | undefined {
   }
   return str && pos === str.length && total > 0 ? total : undefined;
 }
+
+/** Status notes as people read them: hive's own prompts become short phrases. */
+export function noteLabel(note: string): string {
+  if (/^You have \d+ unread hive message/.test(note)) return "reading mail";
+  if (/^\[hive job #(\d+)/.test(note)) return note.replace(/^\[hive job #(\d+), (\w+).*$/s, "job #$1 ($2)");
+  if (/^\[follow-up from/.test(note)) return "follow-up";
+  return note;
+}

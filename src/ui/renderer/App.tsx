@@ -7,9 +7,10 @@ import { Drawer } from "./Drawer.js";
 import { agentNameProblem } from "../../core/names.js";
 import { GroupChat, GroupsSection, LinkDialog, PauseIcon } from "./Links.js";
 import { VerdictWindow } from "./Verdict.js";
+import { IconBell, IconBellOff, IconColumns, IconInbox, IconMenu, IconPlus, IconRows, IconScale, IconSpark, IconTeam } from "./Icons.js";
 import { RecipesDialog, SkillsDialog } from "./Extras.js";
 import { focus } from "./focus.js";
-import { ctxPct, fmtIdle, parseDuration, statusLabel, suggestName } from "./format.js";
+import { ctxPct, fmtIdle, parseDuration, statusLabel, suggestName, noteLabel } from "./format.js";
 
 const POLICIES: Policy[] = ["ask", "allow-reads", "allow-all", "reject-all"];
 
@@ -181,8 +182,12 @@ export function App() {
             <p>Run Claude Code, Codex, Qwen and friends side by side. They can message each other through the hive.</p>
             <div className="welcome-actions">
               <button className="primary" onClick={() => setAdding(true)}>+ Add an agent</button>
-              <button onClick={() => setDialog("recipes")}>⚡ Set up a team (recipe)</button>
-              <button onClick={() => setDialog("skills")}>✦ Run a skill</button>
+              <button onClick={() => setDialog("recipes")}>
+                <IconTeam /> Set up a team (recipe)
+              </button>
+              <button onClick={() => setDialog("skills")}>
+                <IconSpark /> Run a skill
+              </button>
             </div>
             <p className="dim">
               Ctrl+N add · Ctrl+1..9 jump · Ctrl+Tab cycle · Ctrl+B broadcast · Ctrl+I hive report &amp; mail · Ctrl+M maximize · Ctrl+= / Ctrl+- zoom · Ctrl+\ sidebar · hover a pane to type into it
@@ -299,7 +304,7 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onRecipe
   const nextOrient = orient === "auto" ? "vertical" : orient === "vertical" ? "horizontal" : "auto";
   return (
     <div className="topbar">
-      <button className="ghost" onClick={toggleSidebar} title="toggle sidebar (Ctrl+\)" aria-label="toggle sidebar">☰</button>
+      <button className="ghost" onClick={toggleSidebar} title="toggle sidebar (Ctrl+\)" aria-label="toggle sidebar"><IconMenu /></button>
       <span className="brand">hive</span>
       <div className="broadcast">
         <input
@@ -337,7 +342,7 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onRecipe
         title={`layout: ${orient}${orient === "auto" ? ` (now ${vertical ? "vertical" : "horizontal"})` : ""} — click for ${nextOrient}. Auto goes vertical on tall/narrow windows (9:16 monitors).`}
         aria-label={`layout ${orient}`}
       >
-        {orient === "auto" ? (vertical ? "▯ auto" : "▭ auto") : orient === "vertical" ? "▯ vertical" : "▭ horizontal"}
+        {vertical ? <IconRows /> : <IconColumns />} <span className="bl">{orient === "auto" ? "Auto" : orient === "vertical" ? "Vertical" : "Horizontal"}</span>
       </button>
       <button
         className="ghost"
@@ -348,7 +353,7 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onRecipe
         title={layout.ping === false ? "sound off — click to chime when an agent finishes" : "chime when an agent finishes (click to mute)"}
         aria-label={layout.ping === false ? "finish sound off" : "finish sound on"}
       >
-        {layout.ping === false ? "🔕" : "🔔"}
+        {layout.ping === false ? <IconBellOff /> : <IconBell />}
       </button>
       <label className="toggle" title="hovering a pane focuses its input (for Handy / voice typing)">
         <input type="checkbox" checked={layout.hoverFocus} onChange={(e) => saveLayout({ hoverFocus: e.target.checked })} aria-label="hover focus" /> <span className="tl">hover focus</span>
@@ -360,18 +365,21 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onRecipe
       </span>
       <UsageChip onClick={onUsage} />
       <button className="ghost" onClick={() => store.openVerdict({})} title="send one prompt to several agents; a judge picks the best parts">
-        ⚖ Verdict
+        <IconScale /> <span className="bl">Verdict</span>
       </button>
       <button className="ghost" onClick={onSkills} title="reusable prompts with parameters (Ctrl+K)">
-        ✦ Skills
+        <IconSpark /> <span className="bl">Skills</span>
       </button>
       <button className="ghost" onClick={onRecipes} title="set up a ready-made team of agents">
-        ⚡ Recipes
+        <IconTeam /> <span className="bl">Recipes</span>
       </button>
       <button className={`hive-btn${unread || held ? " has-mail" : ""}`} onClick={onHive} title={`report, inbox, blackboard, mail (Ctrl+I)${held ? ` · ${held} message${held === 1 ? "" : "s"} waiting for your review` : ""}`}>
-        ✉ Hive{unread + held ? <span className="badge alert">{unread + held}</span> : null}
+        <IconInbox /> <span className="bl">Hive</span>
+        {unread + held ? <span className="count">{unread + held}</span> : null}
       </button>
-      <button className="primary" onClick={onAdd} title="add agent (Ctrl+N)">+ Agent</button>
+      <button className="primary" onClick={onAdd} title="add agent (Ctrl+N)">
+        <IconPlus /> Agent
+      </button>
     </div>
   );
 }
@@ -500,7 +508,7 @@ function Sidebar({ names, onAdd }: { names: string[]; onAdd: () => void }) {
                 <span className="spacer" />
                 {waiting > 0 && <span className="badge alert" title="waiting for your answer">!</span>}
                 {!waiting && store.readyAt.has(n) && <span className="badge ready" title="finished; not looked at yet">✓</span>}
-                {a && a.unread > 0 && <span className="badge" title="unread hive mail">✉{a.unread}</span>}
+                {a && a.unread > 0 && <span className="badge" title="unread hive mail"><IconInbox size={11} /> {a.unread}</span>}
                 {i < 9 && <span className="key">^{i + 1}</span>}
               </div>
               <div className="row2">
@@ -509,7 +517,7 @@ function Sidebar({ names, onAdd }: { names: string[]; onAdd: () => void }) {
                 {a && <span className="dim">· {a.status === "idle" ? `idle ${fmtIdle(a.idleMs)}` : statusLabel(a.status)}</span>}
                 {a?.ctx && <span className="dim">· {ctxPct(a.ctx.used, a.ctx.size)}% ctx</span>}
               </div>
-              {a?.note && <div className="row3" title={a.note}>{a.note}</div>}
+              {a?.note && <div className="row3" title={a.note}>{noteLabel(a.note)}</div>}
               {st?.error && <div className="row3 err">{st.error}</div>}
             </li>
           );
@@ -573,7 +581,7 @@ function OtherAgents({ names }: { names: string[] }) {
               <span className={`dot ${o.status}`} />
               <strong>{o.name}</strong>
               <span className="kind">{o.kind}</span>
-              {o.unread > 0 && <span className="badge" title="unread hive mail">✉{o.unread}</span>}
+              {o.unread > 0 && <span className="badge" title="unread hive mail"><IconInbox size={11} /> {o.unread}</span>}
               <span className="spacer" />
               {o.where ? (
                 <span className="dim small">elsewhere</span>

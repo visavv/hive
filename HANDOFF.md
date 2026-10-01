@@ -1,35 +1,34 @@
-# HANDOFF — hive, phases 1–4 done + two review/improvement loops
+# HANDOFF: hive (state as of 2026-10-01)
 
-Read this first, then README.md, then `npm test`.
+Read this first, then README.md, then run `npm test`.
 
 ## 0. What this is
 
-A local multi-agent coding harness. Claude Code, Codex, local Qwen and API-key models (via OpenCode) run side by side, message each other through an injected `hive` MCP server, and run scheduled / looping / file- or branch-triggered jobs 24/7. Every agent is the vendor's own binary behind its official ACP adapter, so subscriptions keep working; hive never reimplements the agent loop. No network listeners, no chat gateways.
+A local multi-agent harness. Agents run side by side and message each other through an injected `hive` MCP server:
+- Claude Code, Codex, Gemini CLI, Qwen and OpenCode through their vendors' ACP adapters, so subscriptions keep working;
+- API models through a built-in ACP agent.
 
-Owner: solo developer on Windows, 4K monitor, Handy speech-to-text, Proxmox/Dell T550 for local models. Prior-art survey was done in phase 1 (Munder Difflin, Parallel Code, Gas Town, Oh My OpenAgent) — don't redo it.
+They run scheduled, looping or triggered jobs. hive never reimplements a vendor's agent loop. There's no network listener; chat bridges connect outbound only.
+
+Owner: solo developer. Windows desktop (4K plus vertical 9:16 monitors), a Fedora laptop, a Proxmox/Ubuntu server, Handy speech-to-text. Also YouTube creator tools.
 
 ## 1. State
 
-All of the original plan is implemented and tested with the mock agent:
-
 | area | where | notes |
 |---|---|---|
-| ACP session | `src/core/session.ts` | own `session/update` routing by sessionId; new / resume / load (replay suppressed) / fresh sessions on one process; cancel via kept `ClientContext`; cancel also answers pending asks as cancelled; elicitation; permission policy never falls back to allow; wake backoff + budget; `runOnce({fresh})` claims the agent atomically |
-| hub | `src/core/hub.ts` | agent leases in SQLite (one process per agent name), resume by stored session id (same vendor + cwd), worktree option, event pruning |
-| scheduler | `src/core/scheduler.ts` | loop / interval / watch (folder or `@branches`) / once; job leases; usage-limit pause until reset; failure backoff; notes file per job; `job_runs` with summary |
-| watch | `src/core/watch.ts` | chokidar + shadow git index (untracked files count, user index untouched); branch watch over `refs/heads/hive/*` |
-| worktrees | `src/core/worktree.ts` | per agent, outside the repo in the per-user project dir; status / merge (`--no-ff`, refuses dirty checkout, aborts on conflict) / remove |
-| state dir | `src/core/home.ts` | `$HIVE_HOME` or `%LOCALAPPDATA%\hive` etc.; `projects/<repo>-<hash>/{hive.db,ui.json,watch/,worktrees/}` — the db is not in the workspace |
-| roles | `src/core/roles.ts` | coder, reviewer, security, scout, bughunter |
-| report | `src/core/report.ts` | "since you left": runs, summaries, tokens, commits on agent branches, blackboard, owner mail |
-| doctor | `src/core/doctor.ts` | `initialize` probe + waits for `_auth/status_update` |
-| MCP tools | `src/hive/server.ts` | hive_agents / send (incl. `owner`, thread budget) / inbox / thread / bb_get,set,list,delete / status / diff / log |
-| CLI | `src/cli/index.ts` | run chat agents doctor ui · loop every watch once start jobs job serve · report inbox send bb log · worktrees merge sync worktree |
-| UI | `src/ui/` | Electron main (relay, respawn, CSP, file: blocking) · Node backend (`backend.ts`, NDJSON on stdio) · React renderer (grid, sidebar, drawer) |
+| ACP session / hub / scheduler / worktrees | `src/core/{session,hub,scheduler,watch,worktree}.ts` | as before: leases, resume, fresh sessions, wake budget/backoff, usage-limit pause, branch/blackboard triggers, cooldowns |
+| API agent | `src/api/agent.ts`, `src/core/agents.ts` | OpenAI-compatible streaming + tool calls (hive MCP + read/list/write files, folder-confined via realpath, no shell); built-ins gemini-api, openrouter, openai-api, meta-llama, ollama; `agents.json` + `hive providers add` |
+| usage & budgets | `src/core/budget.ts` | usage_log, Claude rate-limit windows, daily caps (default 2M/day for API providers' automatic work), reserve %, max concurrent, media cap, pause |
+| media | `src/hive/media.ts` | ElevenLabs TTS, image gen/edit; agents queue via the db and the hub makes the call (keys stay in the hive process) |
+| links / layer | `src/hive/db.ts` (route), `src/ui/renderer/Links.tsx` | groups, review mode (held mail: release/edit/drop), hourly caps, "only linked" scope; mail from unlinked agents to allow-all agents is held by default |
+| trust | `src/core/trust.ts` | peer mail, board entries, diffs and file contents are wrapped as untrusted data; trust policy in every briefing and wake-up |
+| verdict | `src/core/verdict.ts`, `src/ui/renderer/Verdict.tsx` | N contenders (own worktrees) → blind judge → apply |
+| skills / YouTube | `src/core/skills.ts`, `src/core/youtube.ts`, `skills/*.md` | params, project/user/built-in; only built-in skills may run allow-all; YouTube links become transcripts (yt-dlp or player API) |
+| bridges | `src/bridges/*` | Discord (discord.js), WhatsApp (Baileys, on demand); allowlist, outbound only |
+| UI | `src/ui/` | Electron relay + Node backend + React renderer. Pane grid with vertical layout; ready mark + chime; Usage, Accounts, Inbox (held mail); long-prompt editor; verdict window; SVG icons (`Icons.tsx`) |
+| platform | `scripts/install-windows.ps1`, `hive desktop`, CI | Windows / Ubuntu / Fedora 42 in CI, including the Electron UI test and the Windows installer |
 
-Tests (`npm test`, ~2 min): e2e, session, scheduler, unit, backend, worktree. `npm run test:ui` drives the real Electron app with Playwright (needs a display; on Linux `xvfb-run -a`).
-
-Adapters are pinned in package.json (`claude-agent-acp` 0.84.0, `codex-acp` 2.0.1) and run with `node` from node_modules (no npx, no shell).
+Tests: `npm test` runs 17 suites (mock agent, fake HTTP APIs, fake YouTube, fake chat clients). `npm run test:ui` drives the real Electron app; it needs a display (`xvfb-run -a` on Linux).
 
 ## 2. Facts learned the hard way
 
@@ -50,19 +49,22 @@ Adapters are pinned in package.json (`claude-agent-acp` 0.84.0, `codex-acp` 2.0.
 6. Vendor added = one entry in `agents.ts`.
 7. Node/TypeScript ESM, Node ≥22.
 
-## 4. Not verified here (no vendor logins in the build container)
+## 4. Not verified here (needs the owner's machines and accounts)
 
-- **An actual authenticated turn through claude/codex.** First thing on a machine with logins: `npm run dev -- doctor` (should show your account), then `npm run dev -- chat claude --cwd <repo>`, then `npm run ui`. Watch for: config option shapes (model/effort selectors), tool_call content shapes (diffs), `usage_update` for ctx %, the usage-limit error text (`isRateLimit`/`resetTime` in scheduler.ts are regex guesses — adjust to the real message).
-- Windows specifics: spawn/quoting (`spawnSpec`, `winQuote`), `taskkill`, `%LOCALAPPDATA%` paths, notifications (`setAppUserModelId`), global hotkey.
+- **Authenticated turns** with real Claude Code / Codex logins, the real `_claude/rateLimit` payloads, and real usage-limit error text (`isRateLimit` / `resetTime` regexes).
+- **Real API keys**: Gemini, OpenRouter, Meta Llama API (`https://api.llama.com/compat/v1`, an assumption; override with `LLAMA_API_BASE`), ElevenLabs, images.
+- **Real YouTube** caption fetching (the player API path can break when YouTube changes; yt-dlp is the robust path).
+- **Real Discord/WhatsApp accounts.** The rule is no real messages from tests.
+- **A real Windows desktop** (scaling, vertical monitor, notifications, chime, hotkey) and a **real Fedora Wayland session** (hotkey portal).
 
-## 5. Open items / next ideas
+## 5. Open items / next ideas (see audit/ROADMAP.md)
 
-- Verify with real vendors (§4) — especially the permission tool titles Claude/Codex use for MCP tools (`isHiveTool` in session.ts is a regex over title/rawInput) and whether they edit the notes file with an `edit` tool call carrying `locations`/`rawInput.file_path` (`touchesOnly`).
-- Close-to-tray + start at login; let the backend outlive the window (attach over a named pipe `\\.\pipe\hive-<user>` — local only).
-- Render `hive_*` tool results (JSON) as tables in panes.
-- Subagent sessions from claude-agent-acp (`sessionCapabilities.subagents`) as nested panes.
-- Terminal capability (`terminal/*`) and a raw-terminal fallback pane (needs node-pty built for Electron).
-- Cost history from `~/.claude/projects/*/*.jsonl` (low priority per owner).
+- `.worktreeinclude`: copy `.env` etc. into agent worktrees.
+- Chain on "agent finished" (coder done → tester → reviewer).
+- Bridge commands for held mail and verdicts (approve or release from Discord).
+- Per-pane mute; "ready" pushed to chat bridges; prompt-engineer "use this prompt" round trip.
+- USD estimates for API providers; GitHub-event triggers by polling (no listener).
+- Close-to-tray / start at login; terminal capability panes.
 
 ## 6. Commands
 
