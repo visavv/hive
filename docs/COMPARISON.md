@@ -27,14 +27,14 @@ Odysseus: https://github.com/odysseus-dev/odysseus. Reviewed on 2026-10-01 from 
 
 ## Safety
 
-- **hive**: agents run inside the vendor's sandbox and permission prompts, plus hive's own policies (ask, allow-reads, allow-all, reject-all). There is no listener, so nothing on the network can reach it. Media and API keys stay in the hive process. Spending guards stop automatic work. Open items from the audit: repo skills can request allow-all, symlinks can escape folder confinement, and peer mail can drive an allow-all agent.
+- **hive**: agents run inside the vendor's sandbox and permission prompts, plus hive's own policies (ask, allow-reads, allow-all, reject-all). There is no listener, so nothing on the network can reach it. Media and API keys stay in the hive process. Spending guards stop automatic work. The audit's first findings are fixed: repo skills can't run allow-all (SEC-001), folder confinement resolves symlinks (SEC-002), and peer mail is wrapped as untrusted data and held for your review when an unlinked agent writes to an allow-all agent (SEC-003). Still open: an allow-all agent runs as you and can change hive itself (SEC-004, by design without an OS sandbox), plus the pass 5 items in progress (audit/FINDINGS.md).
 - **Odysseus**: real authentication (bcrypt, sessions, TOTP), role-based tool blocking, a strict CSP, SSRF tests. It wraps untrusted content (web pages, emails, memories, skill text) in a "this is data, not instructions" message. Its own threat model lists **no shell/filesystem sandbox** as a known gap: the agent's bash and file tools run as the app user.
 
 ## Features Odysseus has that hive doesn't (and whether they fit)
 
 | Odysseus feature | Fit for you | Suggestion |
 |---|---|---|
-| Untrusted-content wrapping (`src/prompt_security.py`) | **High.** It's the fix for audit finding SEC-003 | Wrap mail from other agents (and any fetched text) as untrusted data in wake-up prompts. Small change. |
+| Untrusted-content wrapping (`src/prompt_security.py`) | **Done.** hive does this now (`src/core/trust.ts`, the fix for audit finding SEC-003) | Mail from other agents, board entries, diffs and file contents are wrapped as untrusted data in wake-up prompts. |
 | YouTube transcripts (`services/youtube`, youtube-transcript-api) | **High** for your channel | Let the yt-* skills take a YouTube URL as well as a transcript file. Small. |
 | Compare: blind side-by-side + synthesis | **High** for titles, hooks and prompts | `hive skill run yt-titles --compare claude,gemini-api,openrouter`: run on several models, show results unlabeled, you pick or merge. Medium. |
 | Semantic memory / RAG (ChromaDB) | Medium | The blackboard covers shared facts. Searchable long-term memory could come later; it adds a vector DB. |
