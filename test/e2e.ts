@@ -21,6 +21,8 @@ const hub = new Hub({
   pollMs: 300,
   onEvent: (agent, e) => {
     log.push({ agent, e });
+// This test is about raw mail delivery between unlinked allow-all agents (the guard has its own test in links.ts).
+hub.db.setGuardAllowAll(false);
     if (e.type === "text") process.stdout.write(`[${agent}] ${e.text}`);
     if (e.type === "tool_call" && e.status === "pending") console.log(`[${agent}] ⚙ ${e.title}`);
     if (e.type === "permission") console.log(`[${agent}] 🔐 ${e.title} → ${e.decision}`);

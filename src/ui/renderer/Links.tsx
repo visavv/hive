@@ -305,6 +305,7 @@ export function GroupChat({ name, onClose }: { name: string; onClose: () => void
 export function GroupsSection() {
   const groups = useStore((s) => s.groups);
   const scope = useStore((s) => s.mailScope);
+  const guard = useStore((s) => s.guardAllowAll);
   return (
     <>
       <div className="side-head">
@@ -324,6 +325,9 @@ export function GroupsSection() {
           </button>
         </div>
       </div>
+      <label className="radio small guard-row" title="An agent that may run anything only takes orders from agents you linked it with; other agents' mail to it waits for your review.">
+        <input type="checkbox" checked={guard} onChange={(e) => void rpc("setGuard", { on: e.target.checked })} /> hold unlinked mail to allow-all agents
+      </label>
       <ul className="agent-list">
         {groups.map((g) => (
           <li key={g.name} className="agent-item group-item" style={{ ["--grp" as any]: groupColor(g.name) }} onClick={() => store.openGroup(g.name)}>
@@ -340,5 +344,66 @@ export function GroupsSection() {
         {!groups.length && <li className="dim pad small">Drag a pane's name onto another pane to link them.</li>}
       </ul>
     </>
+  );
+}
+
+/** Every message waiting for your review, with release / edit / drop / link. */
+export function HeldList() {
+  const total = useStore((s) => s.heldTotal);
+  const [rows, setRows] = useState<MailView[]>([]);
+  const [editing, setEditing] = useState<{ id: number; body: string } | null>(null);
+  const load = () => void rpc("heldMail", {}).then(setRows).catch(() => {});
+  useEffect(load, [total]);
+  const act = (p: Promise<unknown>) => void p.then(load).catch((e) => store.toast(e.message, "error"));
+  if (!rows.length) return null;
+  return (
+    <section className="held-list">
+      <h3>
+        <PauseIcon /> Waiting for your review ({rows.length})
+      </h3>
+      {rows.map((m) => (
+        <div key={m.id} className="gmsg held">
+          <div className="row1">
+            <strong>{m.from_agent}</strong>
+            <span className="dim">→ {m.to_agent}</span>
+            <span className="subj">{m.subject}</span>
+            <span className="spacer" />
+            <span className="dim small">{fmtIdle(Date.now() - m.ts)} ago</span>
+          </div>
+          {editing?.id === m.id ? (
+            <textarea className="prompt-editor small-editor" value={editing.body} onChange={(e) => setEditing({ id: m.id, body: e.target.value })} aria-label="edit message" />
+          ) : (
+            <div className="mail-body">{m.body}</div>
+          )}
+          <div className="held-bar">
+            <span className="warn small">{m.held}</span>
+            <span className="spacer" />
+            {editing?.id === m.id ? (
+              <button className="primary" onClick={() => act(rpc("releaseMail", { id: m.id, body: editing.body }).then(() => setEditing(null)))}>
+                Send edited
+              </button>
+            ) : (
+              <>
+                <button className="primary" onClick={() => act(rpc("releaseMail", { id: m.id }))}>
+                  Release
+                </button>
+                <button onClick={() => setEditing({ id: m.id, body: m.body })}>Edit…</button>
+              </>
+            )}
+            {!m.via && !m.to_agent.startsWith("@") && m.to_agent !== "*" && (
+              <button
+                title="link these two agents (direct mail from now on) and deliver this message"
+                onClick={() => act(rpc("link", { members: [m.from_agent, m.to_agent] }).then(() => rpc("releaseMail", { id: m.id })))}
+              >
+                Link & release
+              </button>
+            )}
+            <button className="danger" onClick={() => act(rpc("dropMail", { id: m.id }))}>
+              Drop
+            </button>
+          </div>
+        </div>
+      ))}
+    </section>
   );
 }
