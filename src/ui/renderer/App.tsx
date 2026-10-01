@@ -9,6 +9,7 @@ import { GroupChat, GroupsSection, LinkDialog, PauseIcon } from "./Links.js";
 import { VerdictWindow } from "./Verdict.js";
 import { StatsDialog } from "./Stats.js";
 import { KanbanView } from "./Kanban.js";
+import { CodeHost, codeActions, openCode } from "./Code.js";
 
 export const THEMES: { id: NonNullable<Layout["theme"]>; label: string; hint: string; tone: "dark" | "light" }[] = [
   { id: "dark", label: "Dark", hint: "neutral grays, periwinkle accent", tone: "dark" },
@@ -196,6 +197,9 @@ export function App() {
       } else if (mod && e.key.toLowerCase() === "i") {
         e.preventDefault();
         setDrawer((d) => (d ? false : "default"));
+      } else if (mod && !e.shiftKey && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        openCode({ find: true });
       } else if (mod && e.key.toLowerCase() === "m") {
         e.preventDefault();
         toggleMaximize(focus.active);
@@ -228,6 +232,7 @@ export function App() {
     { id: "max", label: "Maximize / restore the focused agent", keys: "Ctrl+M", run: () => toggleMaximize(focus.active) },
     { id: "layout", label: `Layout: ${layout.orientation === "vertical" ? "horizontal" : layout.orientation === "horizontal" ? "auto" : "vertical"} (now ${layout.orientation ?? "auto"})`, run: () => saveLayout({ orientation: layout.orientation === "vertical" ? "horizontal" : layout.orientation === "horizontal" ? "auto" : "vertical" }) },
     { id: "board", label: "Board (Kanban): Draft, In progress, Done", keys: "Ctrl+J", run: () => setDialog("board") },
+    ...codeActions(),
     ...THEMES.filter((t) => t.id !== (layout.theme ?? "dark")).map((t) => ({ id: "theme-" + t.id, label: `Theme: ${t.label}`, hint: t.hint, run: () => saveLayout({ theme: t.id }) })),
     ...(["compact", "comfortable", "spacious"] as const)
       .filter((d) => d !== (layout.density ?? "comfortable"))
@@ -302,6 +307,7 @@ export function App() {
           </Grid>
         )}
         {dialog === "board" && <KanbanView onClose={() => setDialog("")} />}
+        <CodeHost />
       </main>
       {adding && <AddAgentDialog onClose={() => setAdding(false)} />}
       {jobFor && <JobDialog agent={jobFor} onClose={() => setJobFor(null)} />}

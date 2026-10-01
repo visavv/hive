@@ -29,6 +29,10 @@ import { runSkill, skillAgentName } from "../core/skill-run.js";
 import { BB_PREFIX, BRANCHES } from "../core/watch.js";
 import { setBudget, usageSummary } from "../core/budget.js";
 import { applyVerdict, runVerdict } from "../core/verdict.js";
+import { codeDiff, listFiles, readCodeFile } from "../core/code.js";
+import { ExplainWatcher } from "../core/learn.js";
+import { confine } from "../core/confine.js";
+import { checkAutomatic, concurrencyGuard, notifyOnce } from "../core/budget.js";
 import type { AccountView, AgentView, BackendEvent, ElicitationAsk, GroupView, JobView, Layout, Methods, PermissionAsk, Request } from "./protocol.js";
 
 // stdout is the protocol channel: keep stray logging off it.
@@ -196,6 +200,7 @@ const hub = new Hub({
     if (e.type === "status" || e.type === "context" || e.type === "config" || e.type === "exit" || e.type === "auth" || e.type === "session")
       schedulePush();
     if (e.type === "exit") dropPending(agent);
+    learnEvent(agent, e);
   },
 });
 const scheduler = new Scheduler({
@@ -408,8 +413,85 @@ async function checkAccounts(): Promise<AccountView[]> {
   accountsCache = { at: Date.now(), rows };
   return rows;
 }
+// ---- code view + teacher (read-only file access, "explain every change") ----
+
+/** The folder a code view request reads: an agent's folder, a known folder, or the project. */
+function codeRoot(p: { agent?: string; dir?: string }): string {
+  if (p.agent) {
+    const cwd = hub.sessions.get(p.agent)?.cwd ?? hub.db.getAgent(p.agent)?.cwd;
+    if (!cwd) throw new Error(`no agent "${p.agent}"`);
+    return cwd;
+  }
+  if (!p.dir) return defaultCwd;
+  // Only the project and agents' folders (and what's inside them) can be browsed.
+  const roots = new Set([defaultCwd, ...[...hub.sessions.values()].map((s) => s.cwd), ...hub.db.listAgents().map((a) => a.cwd).filter(Boolean)]);
+  for (const r of roots)
+    try {
+      if (existsSync(r)) return confine(r, resolve(p.dir), p.dir);
+    } catch {}
+  throw new Error(`${p.dir} is outside the project and the agents' folders`);
+}
+
+const EXPLAIN_KEY = "learn.explain.";
+const explainOn = (agent: string) => hub.db.db.open && hub.db.getSetting(EXPLAIN_KEY + agent) === "1";
+
+/** The running teacher: an agent started from the teacher preset (or with the role "teacher"). */
+function teacherSession(): AgentSession | undefined {
+  const all = [...hub.sessions.values()];
+  return all.find((s) => hub.db.getAgent(s.name)?.preset === "teacher") ?? all.find((s) => s.role === "teacher");
+}
+
+const explain = new ExplainWatcher({
+  isOn: explainOn,
+  cwdOf: (a) => hub.sessions.get(a)?.cwd,
+  onError: (a, e) => logError(`explain changes (${a})`, e),
+  // Automatic work: the budget guard and max_concurrent apply, like job runs and mail wake-ups.
+  async deliver(prompt, from) {
+    const t = teacherSession();
+    if (!t) return "no-teacher";
+    if (t.name === from) return "sent";
+    const g = checkAutomatic(hub.db, t.def.id);
+    if (!g.ok) {
+      notifyOnce(hub.db, g);
+      send({ event: "agent", agent: t.name, e: { type: "notice", text: `explaining ${from}'s changes held back: ${g.reason}` } });
+      return "held";
+    }
+    if (!concurrencyGuard(hub.db, [], t.name).ok) return "held";
+    void t.runOnce(prompt, { automatic: true }).catch((e) => send({ event: "error", text: `${t.name}: ${e?.message ?? e}` }));
+    return "sent";
+  },
+});
+
+function learnEvent(agent: string, e: SessionEvent) {
+  try {
+    if (e.type === "prompt") explain.turnStart(agent);
+    else if (e.type === "turn_end") void explain.turnEnd(agent).catch((err) => logError("explain changes", err));
+  } catch (err) {
+    logError("explain changes", err);
+  }
+}
+
+type Handlers = { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promise<ReturnType<Methods[K]>> | ReturnType<Methods[K]> };
+const codeHandlers: Pick<Handlers, "listFiles" | "readFile" | "fileDiff" | "explainChanges"> = {
+  listFiles: (p) => listFiles(codeRoot(p)),
+  readFile: (p) => readCodeFile(codeRoot(p), need(p.path, "path")),
+  fileDiff: (p) => codeDiff(codeRoot(p)),
+  explainChanges({ agent, on }) {
+    if (agent !== undefined && on !== undefined) {
+      if (!hub.db.getAgent(agent) && !hub.sessions.has(agent)) throw new Error(`no agent "${agent}"`);
+      hub.db.setSetting(EXPLAIN_KEY + agent, on ? "1" : null);
+      if (!on) explain.drop(agent);
+    }
+    const agents = Object.entries(hub.db.settings(EXPLAIN_KEY))
+      .filter(([, v]) => v === "1")
+      .map(([k]) => k.slice(EXPLAIN_KEY.length));
+    return { agents, teacher: teacherSession()?.name };
+  },
+};
+
 const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promise<ReturnType<Methods[K]>> | ReturnType<Methods[K]> } = {
   getState: () => handlersExtra.getState(),
+  ...codeHandlers,
   async addAgent(p) {
     const name = need(p.name, "name").trim();
     if (!/^[\w.-]{1,40}$/.test(name)) throw new Error(`name must be letters, digits, _ . - (got "${name}")`);
@@ -815,6 +897,7 @@ let closing = false;
 async function shutdown() {
   if (closing) return;
   closing = true;
+  explain.close();
   await scheduler.stop();
   await hub.close();
   process.exit(0);

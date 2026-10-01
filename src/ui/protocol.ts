@@ -294,6 +294,18 @@ export interface Methods {
   cardMove: (p: { id: number; col: import("../hive/kanban.js").Column; before?: number | null }) => import("../hive/kanban.js").Card;
   cardUpdate: (p: { id: number; title?: string; body?: string; project?: string; labels?: string[] }) => import("../hive/kanban.js").Card;
   cardRemove: (p: { id: number }) => boolean;
+  // ---- code view (read-only): a folder is an agent's cwd/worktree, or `dir` (the project or an agent's folder) ----
+  listFiles: (p: CodeTarget) => import("../core/code.js").FileList;
+  readFile: (p: CodeTarget & { path: string }) => import("../core/code.js").FileContent;
+  fileDiff: (p: CodeTarget) => import("../core/code.js").CodeDiff;
+  /** "Explain every change": turn it on/off for an agent (when given); returns who has it on and the teacher. */
+  explainChanges: (p: { agent?: string; on?: boolean }) => { agents: string[]; teacher?: string };
+}
+
+/** Which folder the code view reads: an agent's folder, a directory, or (neither) the project. */
+export interface CodeTarget {
+  agent?: string;
+  dir?: string;
 }
 
 export type MethodName = keyof Methods;
