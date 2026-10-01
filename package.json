@@ -1,6 +1,6 @@
 {
   "name": "hive",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "private": true,
   "description": "Local multi-agent harness: one UI, any ACP agent, agents that talk to each other",
   "type": "module",
