@@ -82,13 +82,22 @@ hive merge <name>           # merge an agent's branch into your checkout
 hive bb ideas/              # the scout's ideas
 ```
 
-## 5. Where things are
+## 5. Agents alone or together
+
+- By default agents can message any other agent. Click **only linked** in the sidebar's Groups section (or `hive scope linked`) to keep each agent working on its own until you link it.
+- **Link**: drag one pane's name onto another pane (or 🔗). This creates a group with you in it. Click the group chip (`@alpha-beta`) to open its chat.
+- **Direct**: they message each other freely. **Review each message**: every agent-to-agent message waits in the group chat until you **Release**, **Edit…** or **Drop** it. **max/h** holds anything over the hourly limit for you to release.
+- CLI: `hive link coder reviewer --review`, `hive held`, `hive release 12`.
+- `hive accounts` (or the Accounts tab in ✉ Hive) shows which agents are signed in or have their keys.
+- `hive desktop --cwd C:\code\myproject` adds a Start-menu entry that opens hive on that project.
+
+## 6. Where things are
 
 - hive state (database, layout, agent worktrees): `%LOCALAPPDATA%\hive\projects\<repo>-<hash>\`
 - per-job notes the agents read/write: `<your repo>\.hive\notes\` (git-ignored automatically)
 - Global hotkey to bring hive to the front on the last pane: **Ctrl+Alt+H** (change with `setx HIVE_HOTKEY "Ctrl+Alt+J"`)
 
-## 6. Local Qwen on the T550
+## 7. Local Qwen on the T550
 
 ```powershell
 npm install -g @qwen-code/qwen-code
@@ -99,7 +108,7 @@ setx QWEN_API_KEY "ollama"
 hive doctor qwen
 ```
 
-## 7. If something goes wrong
+## 8. If something goes wrong
 
 - `hive doctor <agent>` shows the adapter's last stderr lines.
 - UI won't start: `hive ui` needs `node` on PATH (or `setx HIVE_NODE "C:\Program Files\nodejs\node.exe"`).

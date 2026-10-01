@@ -41,3 +41,36 @@ jobs:
           name: screenshots-${{ matrix.os }}
           path: shots/
           if-no-files-found: ignore
+
+  fedora:
+    # The Fedora laptop: full suite + the Electron UI test in a Fedora container.
+    runs-on: ubuntu-latest
+    container: fedora:42
+    timeout-minutes: 30
+    steps:
+      - name: system packages
+        run: dnf install -y nodejs npm git gcc-c++ make python3 procps-ng which xorg-x11-server-Xvfb gtk3 nss alsa-lib libXScrnSaver mesa-libgbm libdrm libxkbcommon at-spi2-atk cups-libs dbus-x11
+      - uses: actions/checkout@v4
+      - run: git config --global --add safe.directory '*' && git config --global user.email ci@example.com && git config --global user.name ci && node -v
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: doctor
+        run: node dist/cli/index.js doctor claude codex mock
+      - name: desktop entry
+        run: node dist/cli/index.js desktop --cwd "$PWD" && cat ~/.local/share/applications/hive-*.desktop
+      - name: UI e2e (Xvfb)
+        run: |
+          Xvfb :99 -screen 0 1920x1080x24 &
+          sleep 2
+          node scripts/build-ui.mjs
+          DISPLAY=:99 npx tsx test/ui.ts
+        env:
+          SHOT_DIR: ${{ github.workspace }}/shots
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots-fedora
+          path: shots/
+          if-no-files-found: ignore

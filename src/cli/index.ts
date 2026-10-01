@@ -42,7 +42,9 @@
  */
 import { parseArgs } from "node:util";
 import readline from "node:readline";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { homedir } from "node:os";
+import { nodeEntry } from "../core/paths.js";
 import { existsSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
@@ -141,6 +143,7 @@ const USAGE = `hive — local multi-agent harness
   hive providers add <id> --base URL --key-env VAR --model M [--label L]   any OpenAI-compatible API
   hive providers rm <id>
   hive ui [--cwd DIR]                     open the pane UI for this project
+  hive desktop [--cwd DIR] [--name N]     app-menu launcher for this project (Linux .desktop / Windows Start menu)
 
   hive loop <agent> --times 5 "prompt"    run N times, fresh session each, shared notes file
   hive loop <agent> --for 8h "prompt"     … until time is up
@@ -1088,6 +1091,49 @@ async function main() {
       for (const j of jobs) console.log(`  job #${j.id} ${j.kind} on ${j.agent}: ${schedule(j)}`);
       console.log(dim(`\nnext: ${r.next}`));
       db.close();
+      return;
+    }
+
+    case "desktop": {
+      // A launcher for this project: Linux .desktop entry, Windows Start-menu shortcut.
+      const dir = resolve(values.cwd ?? process.cwd());
+      const label = values.name ?? `hive — ${basename(dir)}`;
+      const slug = basename(dir).replace(/[^\w.-]+/g, "_").toLowerCase() || "project";
+      const cli = nodeEntry("cli/index");
+      const argv = [cli.command, ...cli.args, "ui", "--cwd", dir];
+      if (process.platform === "linux") {
+        const appsDir = join(process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"), "applications");
+        mkdirSync(appsDir, { recursive: true });
+        const q = (a: string) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `"${a.replace(/(["`$\\])/g, "\\$1")}"`);
+        const file = join(appsDir, `hive-${slug}.desktop`);
+        writeFileSync(
+          file,
+          [
+            "[Desktop Entry]",
+            "Type=Application",
+            `Name=${label}`,
+            "Comment=Local AI agents side by side",
+            `Exec=${argv.map(q).join(" ")}`,
+            `Path=${dir}`,
+            "Icon=utilities-terminal",
+            "Terminal=false",
+            "Categories=Development;",
+            "StartupWMClass=hive",
+            "",
+          ].join("\n"),
+        );
+        console.log(`added ${file}\nIt shows up in your app menu as "${label}" (log out/in if it doesn't appear right away).`);
+      } else if (process.platform === "win32") {
+        const lnk = join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), "Microsoft", "Windows", "Start Menu", "Programs", `${label.replace(/[<>:"/\\|?*]/g, "-")}.lnk`);
+        const ps = `$s=(New-Object -ComObject WScript.Shell).CreateShortcut($env:HIVE_LNK);$s.TargetPath=$env:HIVE_T;$s.Arguments=$env:HIVE_A;$s.WorkingDirectory=$env:HIVE_D;$s.WindowStyle=7;$s.Save()`;
+        const r = spawnSync("powershell", ["-NoProfile", "-Command", ps], {
+          env: { ...process.env, HIVE_LNK: lnk, HIVE_T: argv[0], HIVE_A: argv.slice(1).map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(" "), HIVE_D: dir },
+          encoding: "utf8",
+          windowsHide: true,
+        });
+        if (r.status !== 0) die(`could not create the shortcut: ${r.stderr || r.error?.message}`);
+        console.log(`added "${label}" to the Start menu (${lnk})`);
+      } else die("hive desktop supports Linux and Windows");
       return;
     }
 
