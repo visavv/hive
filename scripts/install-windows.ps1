@@ -126,5 +126,5 @@ if ($Project) {
 
 Write-Host "`nDone." -ForegroundColor Green
 Write-Host "  Open hive on a project:   cd C:\code\myproject; hive ui"
-Write-Host "  Sign in once if needed:   claude  (then /login)   ·   codex login"
+Write-Host "  Sign in once if needed:   claude  (then /login)   -   codex login"
 Write-Host "  Update later:             powershell -ExecutionPolicy Bypass -File $root\scripts\install-windows.ps1"

@@ -20,7 +20,7 @@ function Run([string]$what, [scriptblock]$do) {
 }
 
 $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $admin -and -not $DryRun) { throw "Run this from an elevated PowerShell (right-click → Run as administrator)." }
+if (-not $admin -and -not $DryRun) { throw "Run this from an elevated PowerShell (right-click -> Run as administrator)." }
 
 Step "1/4 Tailscale"
 if (Get-Command tailscale -ErrorAction SilentlyContinue) {
@@ -36,9 +36,11 @@ if ($cap -and $cap.State -eq "Installed") { Write-Host "OpenSSH server already i
 else { Run "Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0" { Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 | Out-Null } }
 Run "Set-Service sshd -StartupType Automatic; Start-Service sshd" { Set-Service -Name sshd -StartupType Automatic; Start-Service sshd }
 
-# PowerShell 7 if present, else Windows PowerShell, as the shell you land in
-$shell = (Get-Command pwsh -ErrorAction SilentlyContinue).Source
-if (-not $shell) { $shell = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" }
+# PowerShell 7 if installed normally, else Windows PowerShell, as the shell you land in.
+# (Not `Get-Command pwsh`: that can be the Store's WindowsApps alias, which sshd running
+# as SYSTEM can't start, so every SSH session would close at once.)
+$shell = "$env:ProgramFiles\PowerShell\7\pwsh.exe"
+if (-not (Test-Path $shell)) { $shell = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" }
 Run "DefaultShell = $shell" { New-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" -Name DefaultShell -Value $shell -PropertyType String -Force | Out-Null }
 
 Step "3/4 firewall"
@@ -54,11 +56,13 @@ if ($TailscaleOnly) {
 }
 
 Step "4/4 keys"
-$isAdminUser = (Get-LocalGroupMember -Group Administrators -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*\$env:USERNAME" })
+# By SID: the Administrators group (S-1-5-32-544) has a localised name on non-English Windows.
+$me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$isAdminUser = (Get-LocalGroupMember -SID S-1-5-32-544 -ErrorAction SilentlyContinue | Where-Object { $_.SID.Value -eq $me })
 $keys = if ($isAdminUser) { "$env:ProgramData\ssh\administrators_authorized_keys" } else { "$env:USERPROFILE\.ssh\authorized_keys" }
-Write-Host "Put your phone's public key (Termius → Keychain → Generate key) in:`n  $keys"
-if ($isAdminUser) { Write-Host "(admin accounts use that file; it must be readable only by Administrators and SYSTEM:`n  icacls `"$keys`" /inheritance:r /grant Administrators:F /grant SYSTEM:F)" }
+Write-Host "Put your phone's public key (Termius -> Keychain -> Generate key) in:`n  $keys"
+if ($isAdminUser) { Write-Host "(admin accounts use that file; it must be readable only by Administrators and SYSTEM:`n  icacls `"$keys`" /inheritance:r /grant *S-1-5-32-544:F /grant *S-1-5-18:F)" }
 
 $ip = try { (tailscale ip -4 2>$null | Select-Object -First 1) } catch { $null }
-Write-Host "`nDone. On the phone: Tailscale app → Termius → host $env:COMPUTERNAME ($(if ($ip) { $ip } else { '100.x.y.z' })), user $env:USERNAME."
+Write-Host "`nDone. On the phone: Tailscale app -> Termius -> host $env:COMPUTERNAME ($(if ($ip) { $ip } else { '100.x.y.z' })), user $env:USERNAME."
 Write-Host "Then: cd <your project>; hive tui"
