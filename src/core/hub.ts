@@ -11,8 +11,9 @@ import { AGENTS, killGroup } from "./agents.js";
 import { ROLES } from "./roles.js";
 import { checkAutomatic, notifyOnce } from "./budget.js";
 import { agentNameProblem } from "./names.js";
+import { hiveHome } from "./home.js";
+import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { mediaKinds, runMedia } from "../hive/media.js";
-import { existsSync } from "node:fs";
 
 export interface HubOptions {
   hiveDb: string;
@@ -239,6 +240,8 @@ export class Hub {
     if (this.timer) return;
     try {
       this.db.prune();
+      this.db.failStaleMedia();
+      pruneFiles([join(hiveHome(), "api-sessions"), join(hiveHome(), "cache", "youtube")], 30);
     } catch {}
     const ms = this.opts.pollMs ?? 1500;
     this.timer = setInterval(() => {
@@ -270,5 +273,19 @@ export class Hub {
     if (this.db.db.open) for (const n of this.sessions.keys()) this.db.releaseAgent(n, this.id);
     this.sessions.clear();
     this.db.close();
+  }
+}
+
+/** Delete files older than `days` in these folders (API conversations, caption cache). */
+function pruneFiles(dirs: string[], days: number) {
+  const cutoff = Date.now() - days * 86_400_000;
+  for (const d of dirs) {
+    if (!existsSync(d)) continue;
+    for (const f of readdirSync(d)) {
+      const p = join(d, f);
+      try {
+        if (statSync(p).mtimeMs < cutoff) rmSync(p, { force: true });
+      } catch {}
+    }
   }
 }

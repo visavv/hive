@@ -1,4 +1,4 @@
-# Coverage matrix
+# Coverage matrix (passes 1–3)
 
 Role: single local user ("owner"); agents act as semi-trusted automated users. "Code" = inspected in source; "UI/CLI" = exercised hands-on; "Test" = exercised through the automated suites run during the pass (`npm test`, `npm run test:ui` under xvfb, `test/audit-probe.ts`).
 
@@ -24,4 +24,13 @@ Role: single local user ("owner"); agents act as semi-trusted automated users. "
 | Accessibility | focus style, accessible names, contrast of dim text | UI probe | focus outline present; all buttons have a text, aria-label or title; dim text 5.45:1 on pane bg | 1 | screen reader run (NVDA) on Windows; reduced motion honored only for the ready pulse |
 | Security: rendering untrusted markdown | image/file URLs | Test | not loaded | 1 | — |
 | Security: keys | agents.json, media keys, env | Test + code | env var names only; media keys stripped from agent env | 1 | OPENAI_API_KEY intentionally inherited |
-| Windows | full suite + UI test on windows-latest | CI runs 3–9 green | 1 | run 10 (UI commit) queued at time of writing |
+| Windows | full suite + UI test on windows-latest | CI runs 3–14 green (Windows, Ubuntu, Fedora 42) | 2 | real desktop session |
+| Fedora | full suite, UI test, desktop entry in a fedora:42 container | CI green | 2 | real GNOME/KDE Wayland session (hotkey portal, notifications) |
+| Link agents / group chat | drag, 🔗 button, review, release, edit, drop, cap, delete with held mail, member removal | UI + test + code | BUG-003 fixed; others OK | 2 | restart with held mail (covered by DB persistence, not exercised in UI) |
+| Pane header at 3–4 columns, 1280–1920 wide, 720×1280 | long names, group chips | UI (measured) | UX-004 fixed | 2 | 5+ columns |
+| Dialog keyboard focus | Tab ×25 in Add Agent | UI | A11Y-001 fixed (0 escapes) | 3 | screen reader run |
+| Trust labels | peer vs owner mail, blackboard, diffs, file contents, follow-ups | Test + code | SEC-003 mitigated | 3 | real-model injection exercise |
+| YouTube links in skills | watch/youtu.be/shorts/live links, no captions, cache | Test (fake YouTube) | OK | 2 | real YouTube (no network here) |
+| Accounts tab | CLI sign-in, API keys | UI + test | OK | 2 | logged-in claude/codex on a real machine |
+| Retention | mail >90 days, api-sessions/captions >30 days | Test | PRIV-001 fixed | 2 | — |
+| Performance | 20k messages / 30 agents / 20 groups | bench | PERF-001 (low) | 3 | 100k+ messages |

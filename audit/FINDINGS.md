@@ -1,13 +1,47 @@
 # hive: cumulative findings register
 
-Audit pass 1, 2026-09-30, commit `e5d0908` (branch `claude/execute-planned-features-loop-9amlre`). No product code was changed during the audit. Status "open" means recorded, not fixed.
+Cumulative register for passes 1–3 (branch `claude/execute-planned-features-loop-9amlre`). Pass 1 changed no product code. In passes 2 and 3, fixes were authorized and are listed per finding. The detailed write-ups below are from pass 1 unless marked otherwise; their "Remedy" sections are what was implemented.
 
 Severity: Critical / High / Medium / Low / Opportunity. Confidence: High = reproduced; Medium = supported by code reading; Low = hypothesis.
 
 ## Summary
 
-| ID | Title | Sev. | Conf. | Type | Status |
-|---|---|---|---|---|---|
+Passes: 1 (2026-09-30, commit e5d0908); 2 and 3 (2026-10-01, commits a4f18dc → this commit). Fixes were authorized in pass 2 ("now fix audit gaps"), so each finding records what changed and which test verifies it. A finding is "fixed" only after a test or a hands-on re-check passed on the fixed code.
+
+| ID | Title | Sev. | Conf. | Found | Status (pass 3) | Verified by |
+|---|---|---|---|---|---|---|
+| SEC-001 | A repo's skill file can request `allow-all` | Medium | High | 1 | **fixed**: only built-in skills may run allow-all; others run as `ask`, and the CLI says so | test/fixes.ts |
+| SEC-002 | Symlinks escape folder confinement (API agent file tools, media inputs, skill output) | Medium | High | 1 | **fixed**: realpath-based `confine()` | test/fixes.ts (symlink, new file under symlink, `..` false positive) |
+| COST-001 | No default token cap for pay-per-token agents | Medium | Medium | 1 | **fixed**: `daily_tokens_api` default 2M per API provider for automatic work; `daily_tokens.<p>=0` turns it off | test/fixes.ts |
+| SEC-003 | Peer mail / follow-ups can drive an `allow-all` agent | Medium | Medium | 1 | **mitigated**: outside content wrapped as untrusted data; trust policy in every briefing and wake-up; only-linked scope and review mode exist. Residual: models can still be persuaded; IDEA-001 open | test/links.ts, test/api.ts, test/fixes.ts |
+| SEC-004 | `allow-all` agents run as you and can edit hive's own database/settings (insert "owner" mail, unpause budgets) | Medium | Medium | 3 | **open (documented)**: inherent to running agents unsandboxed. Mitigations: worktrees, Codex sandbox, keep allow-all for trusted agents | code reading |
+| BUG-001 | Skill output check fooled by a prefix-sharing sibling folder | Low | High | 1 | **fixed** | test/fixes.ts |
+| BUG-002 | Failed media calls counted against the cap | Low | High | 1 | **fixed**: counted only on success; media shown as its own row | test/media.ts |
+| BUG-003 | Deleting a group strands its held messages (invisible in the UI, never delivered) | Medium | High | 2 | **fixed**: delete refused until held mail is released or dropped (UI toast, CLI hint) | test/fixes.ts; UI probe (evidence/probe2-after-fixes.txt) |
+| BUG-004 | Media jobs left "running" after a crash keep callers waiting up to 6 min, until pruned a day later | Low | Medium | 2 | **fixed**: failed on hub start | test/fixes.ts |
+| UX-001 | Add Agent accepted "owner" (dead pane) | Low | High | 1 | **fixed**: reserved names checked in the dialog and hub | UI probe P1 (pass 2) |
+| UX-002 | One error message for every invalid name | Low | High | 1 | **fixed**: one message per rule | test/fixes.ts; UI probe |
+| UX-003 | Provider base not validated; doctor ✓ when unreachable | Low | High | 1 | **fixed** (URL validation; doctor shows `!` with a sign-in hint) | test/fixes.ts; `hive accounts` output |
+| UX-004 | Pane header overflows at narrow widths (3–4 columns): chips wrap, model select clipped, close button cut off | Medium | High | 2 | **fixed**: container queries; name ellipsis; lower-priority items hide by width | UI probe screenshot p2-layout-1920-3cols.png (after fix) |
+| UX-005 | 🔗 Link dialog kept the first agent's name as the group name ("@coder") | Low | High | 2 | **fixed**: default name follows members until you type one | UI probe ("@coder-reviewer") |
+| UX-006 | ⏸ glyph renders as a box on Linux fonts (group chip, usage pause, held bar) | Low | High | 2 | **fixed**: inline SVG icon | screenshots |
+| A11Y-001 | Dialogs don't keep keyboard focus (Tab reaches the page behind) | Medium | High | 3 | **fixed**: focus trap + focus restore in Modal | UI probe: 0 escapes in 25 Tabs (was 20) |
+| A11Y-002 | Toasts not announced to screen readers | Low | High | 3 | **fixed**: `role=status aria-live=polite`; errors `role=alert` | UI probe |
+| PRIV-001 | Mail, API-agent conversations and caption cache kept forever | Low | High | 2 | **fixed**: read mail >90 days pruned (unread/held kept); api-sessions and caption cache files >30 days deleted | test/fixes.ts |
+| PERF-001 | Unread counts scan messages (~2.4 ms per agent at 20k messages; pushed every second) | Low | High | 3 | **mitigated** by PRIV-001 pruning; index work deferred | evidence/perf-bench.txt |
+| UX-007 | Desktop entry: a `%` in the project path breaks the launcher | Low | Medium | 3 | **fixed**: `%` escaped as `%%` | code reading |
+| UX-008 | Toasts sit over the bottom-left composer for 4 s | Low | High | 3 | open | screenshots |
+| IDEA-001 | Trusted senders / per-agent accept list | Opportunity | — | 1 | proposed | — |
+| IDEA-002 | USD estimates for API providers | Opportunity | — | 1 | proposed | — |
+| IDEA-003 | Per-pane mute; "ready" pushed to chat bridges | Opportunity | — | 1 | proposed | — |
+| IDEA-004 | Prompt-engineer "use this prompt" round trip | Opportunity | — | 1 | proposed | — |
+| IDEA-005 | Chain on "agent finished" (fan-out/fan-in), as Maestro Cue does | Opportunity | — | 3 | proposed | docs/COMPARISON.md |
+| IDEA-006 | Copy `.env` / untracked files into new worktrees (`.worktreeinclude`) | Opportunity | — | 3 | proposed | docs/COMPARISON.md |
+| IDEA-007 | Best-of-n: one skill on several models, compared blind | Opportunity | — | 3 | proposed | docs/COMPARISON.md |
+
+Disproved: pass 1 suspected "Ctrl+9 doesn't scroll in vertical layout". The cause was UX-001; Ctrl+9 works.
+
+---|---|---|---|---|---|
 | SEC-001 | A repo's `.hive-skills/*.md` can request `policy: allow-all` | Medium | High | confirmed defect | open |
 | SEC-002 | Symlinks let API-agent file tools and media inputs leave the folder | Medium | High | confirmed defect | open |
 | COST-001 | No default token cap for pay-per-token API agents; agent chatter can burn tokens for hours | Medium | Medium | supported concern | open |
@@ -87,3 +121,26 @@ When 3+ agents run jobs, only some matter. Add a mute toggle on the pane header.
 
 ### IDEA-004: Prompt-engineer round trip
 Today ✦ Improve runs the skill in its own pane and saves to `out/prompts/`. Add a "Use this prompt" action on that pane's last reply that fills the editor of the pane you came from. S–M.
+
+---
+
+## New in passes 2–3 (details)
+
+### BUG-003: Held mail stranded when its group is deleted (pass 2)
+- **Reproduction (before)**: link two agents in review mode; one messages the other (held); open the group chat → Delete group → confirm. The chip and group disappear. The message is still held in the database (`hive held` lists it) but no UI shows it, and nothing delivers it (evidence/probe2-output.txt).
+- **Fix**: `deleteGroup` refuses while mail routed through the group is waiting. The UI shows "@g has N messages waiting for your review; release or drop them first". **Verified**: test/fixes.ts; UI probe after fix shows the toast and the chips remain.
+
+### UX-004: Pane header at 3–4 columns (pass 2)
+- **Before**: at ~400 px wide panes, the group chip wrapped into two lines over the model select ("Mock Sm"), and the long-named pane's header overflowed by 63 px, cutting off the close button (evidence/probe2-output.txt, p2-layout-1920-3cols.png at pass 2).
+- **Fix**: each pane is a CSS container. The name ellipsizes; chips don't wrap and truncate their name, not their held-count badge. The kind badge and index hide below 560 px, the context meter below 430 px, the model select below 360 px (the model also shows in the sidebar). **Verified**: same probe after the fix; all actions visible and aligned.
+
+### A11Y-001 / A11Y-002 (pass 3)
+- Tab ×25 in the Add Agent dialog left the dialog 20 times (focus reached the top bar and panes behind). After the fix: 0. Focus returns to where it was when the dialog closes.
+- The toast region had no live region; it now does, so "agent ready" and errors are announced.
+
+### SEC-004: allow-all agents can change hive itself (pass 3, open)
+- An agent allowed to run any command runs as your user, so it can write `hive.db` (e.g. insert mail "from owner", set `budget.paused=0`) and `agents.json`. hive can't prevent this without a sandbox.
+- Recommendation: keep `allow-all` for agents in their own worktree on trusted tasks; prefer Codex (sandboxed writes) for allow-all automation; use review-mode groups for agents that read untrusted input.
+
+### PERF-001 (pass 3)
+- Bench (evidence/perf-bench.txt): 20k messages, 30 agents, 20 groups. `route` 0.08 ms, group chat query 0.7 ms, the per-second groups push 1.05 ms, `unreadCount` 2.4 ms per agent. That's about 70 ms/s of backend work at 30 agents with 20k messages. Pruning (PRIV-001) keeps the table small; a partial index for unread mail is the next step if needed.

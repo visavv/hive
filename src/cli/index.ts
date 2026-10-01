@@ -1104,7 +1104,8 @@ async function main() {
       if (process.platform === "linux") {
         const appsDir = join(process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"), "applications");
         mkdirSync(appsDir, { recursive: true });
-        const q = (a: string) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `"${a.replace(/(["`$\\])/g, "\\$1")}"`);
+        // Desktop Entry spec: quote args with special characters; a literal % is written %%.
+        const q = (a: string) => (/^[\w@+=:,./-]+$/.test(a) ? a : `"${a.replace(/(["`$\\])/g, "\\$1")}"`).replace(/%/g, "%%");
         const file = join(appsDir, `hive-${slug}.desktop`);
         writeFileSync(
           file,
@@ -1211,7 +1212,13 @@ async function main() {
         if (!members.length) die("give at least one member");
         db.addToGroup(name, members);
       } else if (sub === "rm") for (const m of members) db.removeFromGroup(name, m);
-      else if (sub === "delete") db.deleteGroup(name);
+      else if (sub === "delete") {
+        try {
+          db.deleteGroup(name);
+        } catch (e: any) {
+          die(`${e.message} (hive held · hive release <id> · hive drop <id>)`);
+        }
+      }
       else if (sub === "mode") {
         const mode = members[0];
         if (mode !== "direct" && mode !== "review") die("usage: hive group mode <name> direct|review [--times N  (max agent messages per hour)]");

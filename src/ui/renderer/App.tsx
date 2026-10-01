@@ -5,7 +5,7 @@ import { ping, store, useStore } from "./store.js";
 import { Pane } from "./Pane.js";
 import { Drawer } from "./Drawer.js";
 import { agentNameProblem } from "../../core/names.js";
-import { GroupChat, GroupsSection, LinkDialog } from "./Links.js";
+import { GroupChat, GroupsSection, LinkDialog, PauseIcon } from "./Links.js";
 import { RecipesDialog, SkillsDialog } from "./Extras.js";
 import { focus } from "./focus.js";
 import { ctxPct, fmtIdle, parseDuration, statusLabel, suggestName } from "./format.js";
@@ -233,9 +233,11 @@ export function App() {
           }}
         />
       )}
-      <div className="toasts">
+      <div className="toasts" role="status" aria-live="polite">
         {toasts.map((t) => (
-          <div key={t.id} className={`toast ${t.level}`}>{t.text}</div>
+          <div key={t.id} className={`toast ${t.level}`} role={t.level === "error" ? "alert" : undefined}>
+            {t.text}
+          </div>
         ))}
       </div>
     </div>
@@ -388,7 +390,7 @@ function UsageChip({ onClick }: { onClick: () => void }) {
   const lvl = held || (worst?.pct ?? 0) >= 90 ? "err" : (worst?.pct ?? 0) >= 70 ? "warn" : "";
   return (
     <button className={`ghost usage-chip ${lvl}`} onClick={onClick} title="usage, limits and spending guards">
-      {held ? "⏸ " : ""}
+      {held && <PauseIcon title="automatic work held" />} 
       {worst ? `${worst.p} ${Math.max(0, 100 - Math.round(worst.pct))}% left` : "Usage"}
     </button>
   );
@@ -688,14 +690,40 @@ function labelOf(o: { currentValue: string | boolean; options?: { value: string;
 // ---- dialogs ----
 
 export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const k = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", k);
     return () => window.removeEventListener("keydown", k);
   }, [onClose]);
+  // Keep keyboard focus inside the dialog, and give it back to where it was on close.
+  useEffect(() => {
+    const before = document.activeElement as HTMLElement | null;
+    const el = ref.current;
+    if (el && !el.contains(document.activeElement)) (el.querySelector<HTMLElement>("[autofocus], input, select, textarea, button") ?? el).focus();
+    const trap = (e: KeyboardEvent) => {
+      if (e.key !== "Tab" || !el) return;
+      const items = [...el.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter((x) => !(x as HTMLButtonElement).disabled && x.offsetParent !== null);
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (e.shiftKey && (document.activeElement === first || !el.contains(document.activeElement))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (document.activeElement === last || !el.contains(document.activeElement))) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", trap, true);
+    return () => {
+      window.removeEventListener("keydown", trap, true);
+      if (before?.isConnected) before.focus({ preventScroll: true });
+    };
+  }, []);
   return (
     <div className="modal-back" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={`modal${wide ? " wide" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
+      <div ref={ref} tabIndex={-1} className={`modal${wide ? " wide" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
         <h2>{title}</h2>
         {children}
       </div>

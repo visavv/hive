@@ -191,7 +191,7 @@ class Store {
           const held = ev.groups.reduce((n, g) => n + g.held, 0);
           if (this.heldTotal >= 0 && held > this.heldTotal) {
             const g = ev.groups.find((x) => x.held > 0);
-            this.toast(`⏸ a message in @${g?.name} is waiting for your review`);
+            this.toast(`Waiting for you: a message in @${g?.name} needs your review`);
             notifyAttention(`@${g?.name}`, "an agent message is waiting for your review", "needs you");
           }
           this.heldTotal = held;
