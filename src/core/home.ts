@@ -16,6 +16,7 @@
  */
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
@@ -49,4 +50,44 @@ export function projectDir(cwd: string): string {
 
 export function defaultDb(cwd: string): string {
   return join(projectDir(cwd), "hive.db");
+}
+
+// ---- the project bare `hive` (and the desktop launcher) opens ----
+
+const lastFile = () => join(hiveHome(), "last-project");
+
+/** The folder hive was last opened on, if it still exists. */
+export function lastProject(): string | undefined {
+  try {
+    const p = readFileSync(lastFile(), "utf8").trim();
+    return p && existsSync(p) ? p : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function rememberProject(dir: string) {
+  try {
+    mkdirSync(hiveHome(), { recursive: true });
+    writeFileSync(lastFile(), resolve(dir) + "\n");
+  } catch {}
+}
+
+/**
+ * Which folder to open when you just type `hive` (or click the launcher): the folder you're
+ * in when it looks like a project, else the last one you opened, else ask (undefined).
+ * Your home folder, a drive root, system folders and hive's own checkout don't count.
+ */
+export function pickProject(cwd: string, o: { home?: string; hiveRoot?: string; last?: string } = {}): string | undefined {
+  const norm = (p: string) => resolve(p).replace(/[\\/]+$/, "").toLowerCase();
+  const here = norm(cwd);
+  const home = norm(o.home ?? homedir());
+  const notProject =
+    here === home ||
+    resolve(cwd) === resolve(cwd, "..") || // drive / filesystem root
+    /^[a-z]:\\windows(\\|$)/.test(here) ||
+    /[\\/](system32|syswow64)$/.test(here) ||
+    (o.hiveRoot !== undefined && here === norm(o.hiveRoot));
+  if (!notProject) return resolve(cwd);
+  return o.last;
 }

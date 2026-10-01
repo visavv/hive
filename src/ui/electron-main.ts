@@ -8,6 +8,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import { existsSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
+import { rememberProject } from "../core/home.js";
 import { fileURLToPath } from "node:url";
 
 // Bundled to dist-ui/main.cjs; the repo root is one level up.
@@ -17,9 +18,11 @@ const argVal = (flag: string) => {
   const i = args.indexOf(flag);
   return i >= 0 ? args[i + 1] : undefined;
 };
-const workDir = resolve(argVal("--cwd") ?? process.env.HIVE_CWD ?? process.cwd());
+// --pick (bare `hive` / the launcher with no project yet): ask for a folder before starting.
+const pick = args.includes("--pick") && !argVal("--cwd");
+let workDir = resolve(argVal("--cwd") ?? process.env.HIVE_CWD ?? process.cwd());
 const dbArg = argVal("--db") ?? process.env.HIVE_DB_PATH;
-const dbPath = dbArg ? resolve(workDir, dbArg) : undefined; // backend picks the per-repo default
+let dbPath = dbArg ? resolve(workDir, dbArg) : undefined; // backend picks the per-repo default
 // Cloud / other machine: run the backend there and talk to it over SSH (`hive attach`, see docs/CLOUD.md).
 const remote = argVal("--remote") ?? process.env.HIVE_REMOTE;
 const remoteCwd = argVal("--remote-cwd") ?? process.env.HIVE_REMOTE_CWD;
@@ -109,6 +112,8 @@ function createWindow() {
     width: 1600,
     height: 1000,
     backgroundColor: "#111318",
+    // the pixel-art hive (scripts/pixel-icon.mjs); Windows wants the .ico for a sharp taskbar icon
+    icon: join(root, "assets", process.platform === "win32" ? "hive.ico" : "hive.png"),
     title: remote ? `hive — ${remote}:${remoteCwd ?? "~"}` : `hive — ${workDir}`,
     webPreferences: {
       preload: join(__dirname, "preload.cjs"),
@@ -154,8 +159,15 @@ app.on("before-quit", (e) => {
   }, 6000).unref();
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   if (process.platform === "win32") app.setAppUserModelId("hive");
+  if (pick) {
+    const r = await dialog.showOpenDialog({ title: "Which project should hive open?", buttonLabel: "Open in hive", properties: ["openDirectory", "createDirectory"] });
+    if (r.canceled || !r.filePaths[0]) return app.quit();
+    workDir = resolve(r.filePaths[0]);
+    dbPath = dbArg ? resolve(workDir, dbArg) : undefined;
+    rememberProject(workDir);
+  }
   Menu.setApplicationMenu(null);
   // Agent markdown can reference file: URLs (on Windows //host/x is an SMB
   // share and leaks NTLM hashes). Only the app's own files may load.

@@ -1,3 +1,5 @@
+<img src="assets/hive.png" width="96" alt="hive pixel-art icon" align="right">
+
 # hive
 
 Local multi-agent harness. One process, any number of coding agents (Claude Code, Codex, Qwen, OpenCode, Gemini, …), all driven through the [Agent Client Protocol](https://agentclientprotocol.com), all able to message each other, with loops, schedules and file watchers that run 24/7.
