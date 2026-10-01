@@ -285,6 +285,15 @@ export interface Methods {
     facets: ReturnType<typeof import("../core/ledger.js").facets>;
   };
   setBudget: (p: { key: string; value: string }) => import("../core/budget.js").UsageSummary;
+  board: (p: { done?: boolean; project?: string; q?: string }) => {
+    cards: import("../hive/kanban.js").Card[];
+    counts: Record<import("../hive/kanban.js").Column, number>;
+    projects: string[];
+  };
+  cardAdd: (p: { title: string; body?: string; project?: string; labels?: string[]; col?: import("../hive/kanban.js").Column }) => import("../hive/kanban.js").Card;
+  cardMove: (p: { id: number; col: import("../hive/kanban.js").Column; before?: number | null }) => import("../hive/kanban.js").Card;
+  cardUpdate: (p: { id: number; title?: string; body?: string; project?: string; labels?: string[] }) => import("../hive/kanban.js").Card;
+  cardRemove: (p: { id: number }) => boolean;
 }
 
 export type MethodName = keyof Methods;

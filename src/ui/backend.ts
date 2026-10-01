@@ -7,6 +7,7 @@
  *   node backend.js --db .hive/hive.db [--cwd DIR]
  */
 import * as ledger from "../core/ledger.js";
+import { board } from "../hive/kanban.js";
 import { parseArgs } from "node:util";
 import { createInterface } from "node:readline";
 import { execFileSync } from "node:child_process";
@@ -575,6 +576,23 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
   },
   usage() {
     return usageSummary(hub.db);
+  },
+  board({ done, project, q }) {
+    const b = board();
+    const all = b.list({ done: true });
+    return { cards: b.list({ done, project, q }), counts: b.counts(), projects: [...new Set(all.map((c) => c.project).filter(Boolean))].sort() };
+  },
+  cardAdd(p) {
+    return board().add({ ...p, source: "owner" });
+  },
+  cardMove({ id, col, before }) {
+    return board().move(id, col, before);
+  },
+  cardUpdate({ id, ...p }) {
+    return board().update(id, p);
+  },
+  cardRemove({ id }) {
+    return board().remove(id);
   },
   stats({ by, filter }) {
     return { ...ledger.stats(by, filter ?? {}), facets: ledger.facets(filter ?? {}) };
