@@ -648,7 +648,7 @@ function Composer({ name, agent }: { name: string; agent?: AgentView }) {
         ref={ref}
         value={text}
         rows={Math.min(8, Math.max(1, text.split("\n").length))}
-        placeholder={improving ? "writing a better prompt…" : agent ? (agent.status === "working" ? "agent is working — Enter queues, Esc cancels" : `message ${name}… (✦ or Ctrl+Shift+Enter turns a rough idea into a full prompt)`) : "starting…"}
+        placeholder={improving ? "writing a better prompt…" : agent ? (agent.status === "working" ? "agent is working — Enter queues, Esc cancels" : `message ${name}…  ✦ improves a rough idea`) : "starting…"}
         disabled={!agent || improving}
         onFocus={() => focus.setActive(name)}
         onChange={(e) => {

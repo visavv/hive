@@ -25,11 +25,13 @@ hive talks to them through their official ACP adapters (bundled with hive, no ex
 
 **Quick way (one script):** clone, then let the installer do the rest. It checks Node and Git (and offers to install them with winget), updates, builds, puts `hive` on PATH, checks your agents, and with `-Project` adds a Start-menu entry and opens hive:
 
+Any folder or drive works for hive itself (here `H:\HIVE`). `-Project` is the code the agents should work on, a different folder; if it doesn't exist yet the script offers to create it as an empty git project.
+
 ```powershell
-cd $HOME\code
-git clone https://github.com/visavv/hargent hive
-cd hive
-powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1 -Project C:\code\myproject
+git clone https://github.com/visavv/hargent H:\HIVE
+cd H:\HIVE
+git checkout claude/execute-planned-features-loop-9amlre   # until it's merged to main
+powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1 -Project H:\code\myproject
 # later, to update: run the same script again (add -Test to also run the test suite)
 ```
 
