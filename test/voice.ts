@@ -31,6 +31,12 @@ const server = createServer(async (req, res) => {
     if (req.headers.authorization !== "Bearer sk-test") return res.writeHead(401).end("bad key");
     return res.writeHead(200).end(JSON.stringify({ text: "hello from openai" }));
   }
+  // Groq / NVIDIA NIM / any OpenAI-compatible: same protocol, own key
+  const compat: Record<string, [string, string]> = { "/groq/v1/audio/transcriptions": ["gsk-test", "hello from groq"], "/nim/v1/audio/transcriptions": ["nv-test", "hello from parakeet"], "/custom/v1/audio/transcriptions": ["cu-test", "hello from custom"] };
+  if (compat[url]) {
+    if (req.headers.authorization !== `Bearer ${compat[url][0]}`) return res.writeHead(401).end("bad key");
+    return res.writeHead(200).end(JSON.stringify({ text: compat[url][1] }));
+  }
   if (url === "/el/v1/speech-to-text") {
     if (req.headers["xi-api-key"] !== "el-test") return res.writeHead(401).end("bad key");
     return res.writeHead(200).end(JSON.stringify({ language_code: "en", text: "hello from scribe" }));
@@ -198,6 +204,27 @@ const spk = await call("speak", { agent: "alpha", text: "All done. The tests pas
 assert(spk.spoken === "All done. The tests pass." && Buffer.from(spk.audio, "base64").toString() === "ID3spoken", "speak RPC returns the spoken text and audio");
 proc.stdin!.end();
 await new Promise((r) => proc.once("exit", r));
+
+// every provider can be chosen in the app (setSttPrefs), with its own model and language
+{
+  Object.assign(process.env, { GROQ_API_KEY: "gsk-test", HIVE_GROQ_BASE: `${base}/groq/v1`, HIVE_NVIDIA_STT_URL: `${base}/nim`, NVIDIA_API_KEY: "nv-test", HIVE_STT_CUSTOM_URL: `${base}/custom/v1`, HIVE_STT_CUSTOM_KEY: "cu-test" });
+  const db2 = new HiveDb(join(dir, "hive-picker.db"));
+  const ids = voice.sttStatus().providers.map((p) => p.id);
+  assert(["local", "openai", "elevenlabs", "groq", "nvidia", "custom"].every((x) => ids.includes(x as any)), "the picker lists local, OpenAI, ElevenLabs, Groq, NVIDIA and custom");
+  for (const [prov, model, want] of [["groq", "", "hello from groq"], ["nvidia", "parakeet-tdt-0.6b-v2", "hello from parakeet"], ["custom", "my-model", "hello from custom"]] as const) {
+    voice.setSttPrefs({ provider: prov, model, language: "fi" });
+    const st = voice.sttStatus();
+    seen.length = 0;
+    const r = await voice.transcribeFor(db2, { audio, mime: "audio/webm", project });
+    const f = seen.at(-1)!.form!;
+    assert(st.provider === prov && r.text === want && f.get("language") === "fi" && f.get("model") === (model || (prov === "groq" ? "whisper-large-v3-turbo" : null)), `${prov}: chosen in the app, right endpoint, key, model and language (${r.text})`);
+  }
+  voice.setSttPrefs({ provider: "nvidia" });
+  delete process.env.HIVE_NVIDIA_STT_URL;
+  assert(voice.sttStatus().provider === null && /HIVE_NVIDIA_STT_URL/.test(voice.sttStatus().problem ?? ""), "a chosen provider without its settings says exactly what to set");
+  voice.setSttPrefs({});
+  db2.close();
+}
 
 db.close();
 ledger.closeLedger();

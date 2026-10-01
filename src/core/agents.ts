@@ -207,7 +207,7 @@ export function resolveEnv(def: AgentDef, e: NodeJS.ProcessEnv = process.env): R
 
 // ---- secrets an agent process must not see ----
 /** Bridge tokens and media keys: only the hive process uses them. */
-const SECRET_PREFIXES = ["HIVE_DISCORD_", "HIVE_WHATSAPP_", "HIVE_IMAGE_", "ELEVENLABS_", "TWITCH_CLIENT_SECRET", "HIVE_VISION_KEY"];
+const SECRET_PREFIXES = ["HIVE_DISCORD_", "HIVE_WHATSAPP_", "HIVE_IMAGE_", "ELEVENLABS_", "TWITCH_CLIENT_SECRET", "HIVE_VISION_KEY", "HIVE_STT_KEY", "HIVE_STT_CUSTOM_KEY", "NVIDIA_API_KEY"];
 /** Provider keys (plus every API agent's keyEnv, added at call time). */
 const PROVIDER_KEYS = [
   "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY", "AZURE_OPENAI_API_KEY",

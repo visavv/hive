@@ -389,6 +389,8 @@ export interface Methods extends DeviceMethods {
   /** A short spoken summary of `text` (an agent's reply) as base64 mp3; audio null when there is nothing to say. */
   speak: (p: { agent: string; text: string; voice?: string }) => { audio: string | null; mime?: string; spoken: string };
   voiceStatus: (p: Record<string, never>) => VoiceStatusView;
+  /** Pick the dictation provider ("auto" = first configured), model and language; saved per project. */
+  setStt: (p: { provider?: string; model?: string; language?: string }) => VoiceStatusView;
   voiceList: (p: Record<string, never>) => { id: string; name: string; labels?: string }[];
 }
 

@@ -760,20 +760,7 @@ function VoiceSetup({ onClose }: { onClose: () => void }) {
       <div className="modal voice-setup" role="dialog" aria-label="dictation setup">
         <h2>Voice: dictation and spoken replies</h2>
         <VoiceStatusRows />
-        <p className="small">
-          Set one of these before starting hive (then restart it), and see <a href={VOICE_DOCS} target="_blank" rel="noreferrer">docs/VOICE.md</a>:
-        </p>
-        <ul className="small voice-help">
-          <li>
-            <b>Local, free, private:</b> run a Whisper server on this machine and set <code>HIVE_STT_URL=http://127.0.0.1:8080</code>
-          </li>
-          <li>
-            <b>OpenAI:</b> <code>OPENAI_API_KEY</code> (or <code>HIVE_STT_KEY</code>), optionally <code>HIVE_STT_MODEL</code>
-          </li>
-          <li>
-            <b>ElevenLabs Scribe:</b> <code>ELEVENLABS_API_KEY</code> (the same key also speaks replies)
-          </li>
-        </ul>
+        <SttPicker />
         <p className="small dim">
           Dictate with the mic button or hold {pttLabel()} (tap it to keep listening). Audio goes only to the provider you pick. Handy still works: it types into the pane you hover.
         </p>
@@ -781,6 +768,71 @@ function VoiceSetup({ onClose }: { onClose: () => void }) {
           <span className="spacer" />
           <button onClick={onClose}>Close</button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** Choose the dictation provider, model and language (keys stay in hive's environment). */
+function SttPicker() {
+  const st = useVoice(() => status);
+  const [provider, setProvider] = useState<string>("auto");
+  const [model, setModel] = useState("");
+  const [language, setLanguage] = useState("");
+  const [saved, setSaved] = useState("");
+  useEffect(() => {
+    if (!st) return;
+    setProvider(st.stt.wanted || "auto");
+    setModel(st.stt.wanted !== "auto" ? (st.stt.model ?? "") : "");
+    setLanguage(st.stt.language ?? "");
+  }, [!!st]);
+  if (!st) return null;
+  const info = st.stt.providers.find((p) => p.id === provider);
+  const save = () =>
+    rpc("setStt", { provider, model, language })
+      .then((s) => {
+        status = s;
+        emit();
+        setSaved(s.stt.provider ? `saved: dictation uses ${s.stt.providers.find((p) => p.id === s.stt.provider)?.label}` : `saved, but ${s.stt.problem}`);
+      })
+      .catch((e) => setSaved(e.message));
+  return (
+    <div className="stt-picker">
+      <h3>Dictation provider</h3>
+      <label className="stt-row">
+        <input type="radio" name="stt" checked={provider === "auto"} onChange={() => setProvider("auto")} />
+        <span className="stt-name">Automatic</span>
+        <span className="dim small">the first one that is set up</span>
+      </label>
+      {st.stt.providers.map((p) => (
+        <label key={p.id} className={`stt-row${st.stt.configured[p.id] ? " ok" : ""}`}>
+          <input type="radio" name="stt" checked={provider === p.id} onChange={() => (setProvider(p.id), setModel(""))} />
+          <span className="stt-name">{p.label}</span>
+          <span className={`small ${st.stt.configured[p.id] ? "stt-ready" : "dim"}`}>{st.stt.configured[p.id] ? "✓ ready" : `needs ${p.needs}`}</span>
+          <span className="dim small stt-note">{p.note}</span>
+        </label>
+      ))}
+      <div className="stt-fields">
+        <label>
+          Model <span className="dim small">(empty = provider default)</span>
+          <input list="stt-models" value={model} onChange={(e) => setModel(e.target.value)} placeholder={info?.models[0] ?? "server default"} />
+          <datalist id="stt-models">
+            {(info?.models ?? []).map((m) => (
+              <option key={m} value={m} />
+            ))}
+          </datalist>
+        </label>
+        <label>
+          Language <span className="dim small">(e.g. en, fi; empty = detect)</span>
+          <input value={language} onChange={(e) => setLanguage(e.target.value)} placeholder="auto" />
+        </label>
+      </div>
+      <div className="row1">
+        <span className="dim small">{saved || "Keys are read from hive's environment (set them, then restart hive). The choice is saved per project."}</span>
+        <span className="spacer" />
+        <button className="primary" onClick={() => void save()}>
+          Save
+        </button>
       </div>
     </div>
   );
@@ -805,7 +857,7 @@ export function VoiceStatusRows() {
             </span>
           </div>
           <div className="small dim">
-            configured: {(["local", "openai", "elevenlabs"] as const).map((p) => `${p} ${st.stt.configured[p] ? "✓" : "—"}`).join(" · ")}
+            configured: {st.stt.providers.map((p) => `${p.id} ${st.stt.configured[p.id] ? "✓" : "—"}`).join(" · ")}
           </div>
         </div>
       </div>
