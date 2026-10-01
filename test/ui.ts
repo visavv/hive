@@ -69,6 +69,15 @@ async function addAgent(page: Page, name: string, policy = "ask", extra?: { cwd?
   await page.locator(`[data-pane="${name}"] textarea:not([disabled])`).waitFor({ timeout: 20_000 });
 }
 
+/** Poll an async condition (page.waitForFunction with a string is blocked by the app's CSP). */
+async function until(cond: () => Promise<boolean>, ms: number) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (await cond()) return;
+    await sleep(150);
+  }
+  throw new Error("timed out waiting");
+}
 const pane = (page: Page, name: string) => page.locator(`[data-pane="${name}"]`);
 /** Run a command through the Ctrl+K palette. */
 async function command(page: Page, text: string) {
@@ -365,6 +374,22 @@ try {
   await page.keyboard.press("Enter");
   await page.waitForFunction(() => document.activeElement?.closest("[data-pane]")?.getAttribute("data-pane") === "beta", null, { timeout: 5000 });
   assert(await activeIn(page, "beta"), "palette jumps to the agent");
+
+  // ✦ improve: rough idea → full prompt in the same composer, undo, then send to the same agent
+  {
+    const box = pane(page, "beta").locator("textarea");
+    await box.fill("make the login remember the email");
+    await pane(page, "beta").locator("button.improve").click();
+    await until(async () => (await box.inputValue()).startsWith("IMPROVED:"), 30_000);
+    assert((await box.inputValue()).includes("make the login remember the email"), "✦ turns the draft into a fuller prompt in the same box");
+    await pane(page, "beta").locator("button.improve-undo").click();
+    assert((await box.inputValue()) === "make the login remember the email", "undo brings the draft back");
+    await box.press("Control+Shift+Enter");
+    await until(async () => (await box.inputValue()).startsWith("IMPROVED:"), 30_000);
+    await box.press("Enter");
+    await pane(page, "beta").locator(".msg.user", { hasText: "IMPROVED: make the login remember the email" }).waitFor({ timeout: 10_000 });
+    assert(true, "Ctrl+Shift+Enter improves, Enter sends it to the same agent");
+  }
 
   // board: Ctrl+J, quick add, Esc closes; stats and themes from the palette
   await page.keyboard.press("Control+j");

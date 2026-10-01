@@ -154,6 +154,13 @@ acp
     }
     sess.turns++;
     sess.cancelled = false;
+    // the ✦ improve helper (core/improve.ts): echo the draft back as a "better" prompt
+    if (/You are a prompt engineer\. The owner is about to send/.test(text)) {
+      const draft = text.match(/The owner's draft:\n<<<\n([\s\S]*?)\n>>>/)?.[1] ?? "";
+      const lastOwner = [...text.matchAll(/OWNER: (.+)/g)].at(-1)?.[1] ?? "none";
+      await say(cx, sessionId, "```text\nIMPROVED: " + draft + "\nContext seen: " + lastOwner + "\nCheck your work with the tests and report what changed.\n```");
+      return { stopReason: "end_turn", usage: { totalTokens: 50, inputTokens: 40, outputTokens: 10 } };
+    }
     if (process.env.MOCK_DEMO === "1") {
       const ask = async (title: string, kind: string, content?: unknown[]) => {
         const perm: any = await cx.request(acp.methods.client.session.requestPermission, {

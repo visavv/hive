@@ -8,7 +8,7 @@ import { ctxPct, fmtIdle, statusLabel, noteLabel } from "./format.js";
 import { PromptEditor } from "./Extras.js";
 import { GroupChips, groupColor } from "./Links.js";
 import { agentState, StatePill } from "./state.js";
-import { IconClock, IconClose, IconExpand, IconLink, IconLock, IconMaximize, IconRefresh, IconSend, IconStop } from "./Icons.js";
+import { IconClock, IconClose, IconExpand, IconLink, IconLock, IconSpark, IconMaximize, IconRefresh, IconSend, IconStop } from "./Icons.js";
 
 export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
   name: string;
@@ -592,9 +592,31 @@ function Composer({ name, agent }: { name: string; agent?: AgentView }) {
   useEffect(() => {
     if (usable) focus.ready(name);
   }, [usable, name]);
+  // ✦ improve: rough draft → full prompt for this agent, written by a hidden helper (core/improve.ts)
+  const [improving, setImproving] = useState(false);
+  const [undo, setUndo] = useState<string | null>(null);
+  const improve = (draft = text) => {
+    if (!agent || improving || !draft.trim()) return;
+    setImproving(true);
+    rpc("improvePrompt", { name, draft })
+      .then(({ prompt }) => {
+        setUndo(draft);
+        setText(prompt);
+        setTimeout(() => {
+          const el = ref.current;
+          if (el) (el.focus(), el.setSelectionRange(el.value.length, el.value.length));
+        }, 0);
+      })
+      .catch((e) => store.toast(`couldn't improve the prompt: ${e.message}`, "error"))
+      .finally(() => setImproving(false));
+  };
   const send = (raw = text) => {
     const t = raw.trim();
     if (!t || !agent) return;
+    // "/improve rough idea" does the same as the ✦ button
+    const m = t.match(/^\/improve\s+([\s\S]+)/);
+    if (m) return improve(m[1]);
+    setUndo(null);
     const p = store.pane(name);
     p.history.push(t);
     histIdx.current = null;
@@ -622,14 +644,25 @@ function Composer({ name, agent }: { name: string; agent?: AgentView }) {
         ref={ref}
         value={text}
         rows={Math.min(8, Math.max(1, text.split("\n").length))}
-        placeholder={agent ? (agent.status === "working" ? "agent is working — Enter queues, Esc cancels" : `message ${name}…`) : "starting…"}
-        disabled={!agent}
+        placeholder={improving ? "writing a better prompt…" : agent ? (agent.status === "working" ? "agent is working — Enter queues, Esc cancels" : `message ${name}… (✦ or Ctrl+Shift+Enter turns a rough idea into a full prompt)`) : "starting…"}
+        disabled={!agent || improving}
         onFocus={() => focus.setActive(name)}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => {
+          setText(e.target.value);
+          if (undo != null && e.target.value === "") setUndo(null);
+        }}
         onKeyDown={(e) => {
           if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "e") {
             e.preventDefault();
             setEditing(true);
+          } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && e.shiftKey) {
+            e.preventDefault();
+            improve();
+          } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && undo != null && !e.shiftKey) {
+            // first Ctrl+Z after an improve brings the draft back
+            e.preventDefault();
+            setText(undo);
+            setUndo(null);
           } else if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
             e.preventDefault();
             send();
@@ -652,6 +685,20 @@ function Composer({ name, agent }: { name: string; agent?: AgentView }) {
           }
         }}
       />
+      {undo != null && (
+        <button className="ghost improve-undo" onClick={() => (setText(undo), setUndo(null))} title="back to your draft (Ctrl+Z)">
+          undo
+        </button>
+      )}
+      <button
+        className={`ghost improve${improving ? " busy" : ""}`}
+        onClick={() => improve()}
+        disabled={!agent || improving || !text.trim()}
+        title="improve: turn this rough idea into a full prompt for this agent, then edit and send it here (Ctrl+Shift+Enter, or start with /improve)"
+        aria-label="improve prompt"
+      >
+        <IconSpark />
+      </button>
       <button className="ghost expand" onClick={() => setEditing(true)} disabled={!agent} title="open the big editor for long prompts (Ctrl+E)" aria-label="open prompt editor">
         <IconExpand />
       </button>

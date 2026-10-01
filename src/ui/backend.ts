@@ -8,6 +8,7 @@
  */
 import * as ledger from "../core/ledger.js";
 import { board } from "../hive/kanban.js";
+import { improvePrompt } from "../core/improve.js";
 import { parseArgs } from "node:util";
 import { createInterface } from "node:readline";
 import { execFile } from "node:child_process";
@@ -290,7 +291,7 @@ function pushAgentsNow() {
   const others = hub.db
     .listAgents()
     // Verdict contenders/judges live in the verdict window, not the sidebar.
-    .filter((a) => !hub.sessions.has(a.name) && a.kind && !a.role?.startsWith("verdict #"))
+    .filter((a) => !hub.sessions.has(a.name) && a.kind && !a.role?.startsWith("verdict #") && !a.role?.endsWith("(helper)"))
     .map((a) => {
       const status = hub.db.effectiveStatus(a);
       return {
@@ -607,6 +608,9 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
   },
   usage() {
     return usageSummary(hub.db);
+  },
+  async improvePrompt({ name, draft }) {
+    return { prompt: await improvePrompt(hub, name, draft) };
   },
   board({ done, project, q }) {
     const b = board();
