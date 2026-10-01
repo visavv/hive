@@ -115,7 +115,7 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
       {agent && (
         <div
           className="pane-sub"
-          title={[agent.cwd, agent.branch && `branch ${agent.branch}`, agent.role, `permissions: ${agent.policy}`, agent.auth].filter(Boolean).join("\n")}
+          title={[agent.cwd, agent.branch && `branch ${agent.branch}`, agent.role, `permissions: ${agent.policy}`, agent.auth, agent.mcp?.length && `MCP: ${agent.mcp.join(", ")}`].filter(Boolean).join("\n")}
         >
           {agent.branch?.startsWith("hive/") ? (
             <span className="where branch">{agent.branch}</span>

@@ -24,6 +24,8 @@ export interface PaneSpec {
   worktree?: boolean;
   /** Voice settings of this pane (UI only; the backend ignores them in addAgent). */
   voice?: PaneVoice;
+  /** Extra MCP servers by name from <HIVE_HOME>/mcp.json (creator: docs/MCP.md). */
+  mcp?: string[];
 }
 
 // ---- voice (docs/VOICE.md) ----
@@ -136,6 +138,8 @@ export interface AgentView {
   jobs: number;
   /** Current git branch of the agent's folder, if any. */
   branch?: string;
+  /** Extra MCP servers attached (type's + its own), shown in the pane header tooltip. */
+  mcp?: string[];
 }
 
 /** An agent in this hive that isn't running in this window. */
@@ -376,6 +380,9 @@ export interface Methods extends DeviceMethods {
   fileDiff: (p: CodeTarget) => import("../core/code.js").CodeDiff;
   /** "Explain every change": turn it on/off for an agent (when given); returns who has it on and the teacher. */
   explainChanges: (p: { agent?: string; on?: boolean }) => { agents: string[]; teacher?: string };
+  // ---- creator ----
+  /** Extra MCP servers configured in <HIVE_HOME>/mcp.json (Add-agent dialog checkboxes). */
+  mcpServers: (p: Record<string, never>) => { name: string; command: string }[];
   // ---- voice ----
   /** Speech-to-text of a dictation clip (base64 audio) by the configured provider. */
   transcribe: (p: { audio: string; mime: string; seconds?: number; agent?: string }) => { text: string; provider: string };

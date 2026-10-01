@@ -272,10 +272,12 @@ type Row = { n: number | null; html: string; raw: string; cls?: string };
 type Sel = { from: number; to: number };
 
 const QUESTIONS = {
-  explain: { label: "Explain", q: "Explain what these lines do, step by step, for a beginner." },
+  explain: { label: "Explain", q: "Help me understand what these lines do. Use the hint ladder: start by asking me what I think they do." },
   why: { label: "Why like this?", q: "Why is the code written like this? What does each part make possible, and what would be harder or break if it were written another way?" },
   simpler: { label: "Simpler?", q: "Could this be simpler or clearer? If so, show a simpler version in your answer and explain the trade-off. Don't change any files." },
   quiz: { label: "Quiz me", q: "Quiz me: ask me one check-your-understanding question about these lines. Don't give the answer until I reply." },
+  hint: { label: "Next hint", q: "Next hint, please: go up one level on the hint ladder for what we're working on (these lines)." },
+  answer: { label: "Show answer", q: "Show answer: I'd like the full answer now (hint level 6), then a short recap of what I could have noticed at each level." },
 } as const;
 type QKind = keyof typeof QUESTIONS | "ask";
 

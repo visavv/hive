@@ -61,3 +61,19 @@ Turn this on for an agent (the **Explain every change** box at the top of the co
 - it counts as **automatic work**, so your spending guards apply: if a daily budget is reached, a subscription window is nearly full, or you paused automatic work (Usage panel), explanations wait instead of running.
 
 Turn it off the same way when you don't need it.
+
+## The hint ladder (default)
+
+The teacher doesn't hand you answers. Every question starts at **level 0** and goes up one level only when you press **Next hint** (or type "hint"):
+
+| Level | What the teacher does |
+|---|---|
+| 0 | asks you questions and gets you to form a hypothesis |
+| 1 | points you to a concept, file or function to investigate |
+| 2 | explains the relevant concept (in general) |
+| 3 | tells you an approach, but not the strategy |
+| 4 | gives abstract pseudocode |
+| 5 | shows a small, targeted piece of code only |
+| 6 | gives the full answer — only when you press **Show answer** / say you give up — plus a recap |
+
+Each reply starts with "Hint level N/6", so you always know how much help you've had. Say "just explain" when you only want an explanation of existing code.
