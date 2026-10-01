@@ -67,6 +67,7 @@ import { createBridges } from "../bridges/index.js";
 import { BUDGET_KEYS, setBudget, usageSummary } from "../core/budget.js";
 import { runMedia } from "../hive/media.js";
 import { applyVerdict, runVerdict, type VerdictState } from "../core/verdict.js";
+import { runTui } from "../tui/index.js";
 import type { Bridge } from "../bridges/router.js";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { listWorktrees, mergeWorktree, removeWorktree, syncWorktree } from "../core/worktree.js";
@@ -153,6 +154,7 @@ const USAGE = `hive — local multi-agent harness
   hive providers add <id> --base URL --key-env VAR --model M [--label L]   any OpenAI-compatible API
   hive providers rm <id>
   hive ui [--cwd DIR]                     open the pane UI for this project
+  hive tui [team] [--agent claude] [--alt codex] [--fresh]   the same in your terminal: planner, coder, reviewer, tester
   hive desktop [--cwd DIR] [--name N]     app-menu launcher for this project (Linux .desktop / Windows Start menu)
 
   hive loop <agent> --times 5 "prompt"    run N times, fresh session each, shared notes file
@@ -1146,6 +1148,16 @@ async function main() {
         if (r.status !== 0) die(`could not create the shortcut: ${r.stderr || r.error?.message}`);
         console.log(`added "${label}" to the Start menu (${lnk})`);
       } else die("hive desktop supports Linux and Windows");
+      return;
+    }
+
+    case "tui": {
+      // The pane grid in your terminal: last layout, or a four-agent team with roles.
+      try {
+        await runTui({ cwd: resolve(values.cwd ?? process.cwd()), db: values.db!, team: rest[0], kind: values.agent, alt: values.alt, fresh: !!values.fresh });
+      } catch (e: any) {
+        die(e.message);
+      }
       return;
     }
 
