@@ -7,6 +7,7 @@ import { Drawer } from "./Drawer.js";
 import { agentNameProblem } from "../../core/names.js";
 import { GroupChat, GroupsSection, LinkDialog, PauseIcon } from "./Links.js";
 import { VerdictWindow } from "./Verdict.js";
+import { StatsDialog } from "./Stats.js";
 import { Palette, type PaletteAction } from "./Palette.js";
 import { agentState, rollup, STATE_LABEL, StatePill } from "./state.js";
 import { IconBell, IconBellOff, IconColumns, IconInbox, IconMenu, IconPlus, IconRows, IconScale, IconSearch, IconSpark, IconTeam } from "./Icons.js";
@@ -88,7 +89,7 @@ export function App() {
   const [adding, setAdding] = useState(false);
   const [jobFor, setJobFor] = useState<string | null>(null);
   const [drawer, setDrawer] = useState<false | "default" | "usage">(false);
-  const [dialog, setDialog] = useState<"" | "recipes" | "skills">("");
+  const [dialog, setDialog] = useState<"" | "recipes" | "skills" | "stats" | "board">("");
   const [palette, setPalette] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const skillReq = useStore((s) => s.skillRequest);
@@ -182,6 +183,7 @@ export function App() {
     { id: "link", label: "Link agents so they can talk", run: () => store.requestLink([]) },
     { id: "inbox", label: "Inbox and messages waiting for review", keys: "Ctrl+I", run: () => setDrawer("default") },
     { id: "usage", label: "Usage, limits and spending guards", run: () => setDrawer("usage") },
+    { id: "stats", label: "Token stats: by provider, model, task, project", hint: "all projects, kept for good", run: () => setDialog("stats") },
     { id: "broadcast", label: "Message all agents", keys: "Ctrl+Shift+B", run: () => setTimeout(() => document.querySelector<HTMLInputElement>(".broadcast input")?.focus(), 0) },
     { id: "sidebar", label: "Toggle sidebar", keys: "Ctrl+B", run: () => toggleSidebar() },
     { id: "max", label: "Maximize / restore the focused agent", keys: "Ctrl+M", run: () => focus.active && saveLayout({ maximized: store.layout.maximized === focus.active ? null : focus.active }) },
@@ -263,6 +265,7 @@ export function App() {
       {jobFor && <JobDialog agent={jobFor} onClose={() => setJobFor(null)} />}
       {drawer && <Drawer key={drawer} initialTab={drawer === "usage" ? "usage" : undefined} onClose={() => setDrawer(false)} />}
       {dialog === "recipes" && <RecipesDialog onClose={() => setDialog("")} />}
+      {dialog === "stats" && <StatsDialog onClose={() => setDialog("")} />}
       {linkReq && (
         <LinkDialog
           members={linkReq}

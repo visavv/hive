@@ -739,3 +739,24 @@ kbd + kbd { margin-left: 3px; }
   .topbar .bl, .topbar .cmd-btn kbd { display: none; }
 }
 .app { grid-template-rows: auto 1fr; }
+
+/* ---- token stats ---- */
+.stats { display: flex; flex-direction: column; gap: 12px; min-height: 420px; }
+.stats-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.stats-filters select { height: 28px; max-width: 200px; }
+.stats-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 4px 0 8px; border-bottom: 1px solid var(--border); }
+.stats-total .big { font-size: 26px; font-weight: 650; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.stats-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.stats-rows li { display: grid; grid-template-columns: minmax(120px, 220px) 1fr 64px 56px; align-items: center; gap: 12px; height: 32px; padding: 0 8px; border-radius: var(--r-2); cursor: pointer; }
+.stats-rows li:hover { background: var(--bg-3); }
+.stats-rows .k { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stats-rows .bar { height: 10px; background: var(--bg-3); border-radius: 4px; overflow: hidden; }
+.stats-rows .bar > span { display: block; height: 100%; background: var(--accent); border-radius: 0 4px 4px 0; min-width: 2px; }
+.stats-rows .v, .stats-rows .p { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--font-mono); font-size: 12px; }
+.stats-rows .p { color: var(--text-2); }
+.stats-days { display: flex; align-items: flex-end; gap: 2px; height: 220px; padding: 8px 0 22px; position: relative; border-bottom: 1px solid var(--border); }
+.stats-days .day { flex: 1; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; position: relative; min-width: 6px; }
+.stats-days .col { width: 100%; max-width: 28px; background: var(--accent); border-radius: 4px 4px 0 0; }
+.stats-days .day:hover .col { filter: brightness(1.15); }
+.stats-days .lbl { position: absolute; bottom: -18px; font-size: 10px; color: var(--text-3); font-family: var(--font-mono); white-space: nowrap; }
+.stats-days .day:not(:nth-child(5n + 1)) .lbl { visibility: hidden; }

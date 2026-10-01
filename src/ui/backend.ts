@@ -6,6 +6,7 @@
  *
  *   node backend.js --db .hive/hive.db [--cwd DIR]
  */
+import * as ledger from "../core/ledger.js";
 import { parseArgs } from "node:util";
 import { createInterface } from "node:readline";
 import { execFileSync } from "node:child_process";
@@ -574,6 +575,9 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
   },
   usage() {
     return usageSummary(hub.db);
+  },
+  stats({ by, filter }) {
+    return { ...ledger.stats(by, filter ?? {}), facets: ledger.facets(filter ?? {}) };
   },
   startVerdict({ prompt, kinds, judge, judgeModel, mode, policy }) {
     // Runs in the background; progress arrives as "verdict" events. Resolves once it has an id.
