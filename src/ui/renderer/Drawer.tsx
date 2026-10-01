@@ -2,11 +2,12 @@
  * The Hive drawer: what happened while you were away, mail agents sent you,
  * the shared blackboard, all mail, and a box to message agents as the owner.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Report } from "../../core/report.js";
 import { rpc } from "./bridge.js";
 import { store, useStore } from "./store.js";
 import { fmtIdle } from "./format.js";
+import { useOverlay } from "./focus.js";
 import { HeldList, PauseIcon } from "./Links.js";
 
 type Tab = "report" | "inbox" | "board" | "mail" | "usage" | "accounts";
@@ -35,15 +36,21 @@ export function Drawer({ onClose, initialTab }: { onClose: () => void; initialTa
   useEffect(() => {
     if (tab === "inbox" && unread) void rpc("markOwnerRead", {});
   }, [tab, unread]);
+  // Esc closes the drawer only (never the turn of the pane you came from): take
+  // focus while open, give it back on close.
+  useOverlay("drawer", onClose);
+  const ref = useRef<HTMLElement>(null);
   useEffect(() => {
-    const k = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", k);
-    return () => window.removeEventListener("keydown", k);
-  }, [onClose]);
+    const before = document.activeElement as HTMLElement | null;
+    ref.current?.focus({ preventScroll: true });
+    return () => {
+      if (before?.isConnected) before.focus({ preventScroll: true });
+    };
+  }, []);
 
   const inbox = data?.messages.filter((m) => m.to_agent === "owner") ?? [];
   return (
-    <aside className="drawer modal" aria-label="Hive">
+    <aside ref={ref} tabIndex={-1} className="drawer modal" aria-label="Hive">
       <div className="drawer-head">
         <strong>Hive</strong>
         <div className="seg">
