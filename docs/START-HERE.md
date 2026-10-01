@@ -5,7 +5,6 @@ One page from nothing to using hive every day on your desktop, your server and y
 ## 1. Windows desktop (the main app)
 
 1. Install hive: in PowerShell, from the folder you cloned hive into (e.g. `H:\HIVE`), run
-   `git checkout claude/execute-planned-features-loop-9amlre` (until it's merged to main), then
    `powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1 -Project H:\code\myapp`
    (`-Project` = the code for the agents; created as an empty git project if missing)
    (installs Node + Git if missing, builds hive, adds `hive` to your PATH and a Start-menu entry). Details: [WINDOWS.md](WINDOWS.md).

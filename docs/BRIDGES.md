@@ -26,7 +26,6 @@ curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt in
 sudo useradd -m -s /bin/bash hive && sudo -iu hive
 
 git clone https://github.com/visavv/hargent ~/hive && cd ~/hive
-git checkout claude/execute-planned-features-loop-9amlre
 npm install && npm run build && npm test
 ```
 

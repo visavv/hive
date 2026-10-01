@@ -4,7 +4,6 @@
   First time (PowerShell; any folder or drive works, e.g. H:\HIVE or $HOME\code\hive):
     git clone https://github.com/visavv/hargent H:\HIVE
     cd H:\HIVE
-    git checkout claude/execute-planned-features-loop-9amlre
     powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1 -Project H:\code\myproject
 
   -Project is the code you want the agents to work on (not the hive folder). If it doesn't
@@ -25,7 +24,7 @@
             -NoLaunch  -SkipPrereqs  -NoPull
 #>
 param(
-  [string]$Branch = "claude/execute-planned-features-loop-9amlre",
+  [string]$Branch = "main",
   [string]$Project = "",
   [switch]$Test,
   [switch]$NoLaunch,

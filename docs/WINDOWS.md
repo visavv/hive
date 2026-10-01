@@ -30,7 +30,6 @@ Any folder or drive works for hive itself (here `H:\HIVE`). `-Project` is the co
 ```powershell
 git clone https://github.com/visavv/hargent H:\HIVE
 cd H:\HIVE
-git checkout claude/execute-planned-features-loop-9amlre   # until it's merged to main
 powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1 -Project H:\code\myproject
 # later, to update: run the same script again (add -Test to also run the test suite)
 ```
@@ -41,7 +40,6 @@ powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1 -Project H:
 cd $HOME\code                       # anywhere you keep tools
 git clone https://github.com/visavv/hargent hive
 cd hive
-git checkout claude/execute-planned-features-loop-9amlre   # until it's merged to main
 npm install
 npm test                            # ~2 min, uses a built-in mock agent (no logins needed)
 npm run build
