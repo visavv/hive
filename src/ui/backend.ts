@@ -526,6 +526,8 @@ function memoryEvent(agent: string, e: SessionEvent) {
   if (!shouldReflect({ promptsSince: learnPrompts.get(agent) ?? 0, lastAt: learnAt.get(agent), now: Date.now(), on: learnOn(), helper: false })) return;
   const g = checkAutomatic(hub.db, s.def.id);
   if (!g.ok) return; // budget says no: try again after a later turn
+  // Learning is the lowest priority: never alongside job runs or mail wake-ups (tries again after a later turn).
+  if (hub.db.autoTurns().length > 0) return;
   learnAt.set(agent, Date.now());
   learnPrompts.set(agent, 0);
   void reflect(hub, agent)

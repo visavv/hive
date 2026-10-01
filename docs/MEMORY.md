@@ -38,7 +38,7 @@ Keys, passwords and tokens are refused. So is anything that looks like "ignore p
 
 ## Cost and control
 
-- The helper's turns are **automatic work**: daily caps, reserves and **pause** apply. They show as **learning** in Token stats.
+- The helper's turns are **automatic work**: daily caps, reserves and **pause** apply. They show as **learning** in Token stats. Learning is the lowest priority: it waits while scheduled jobs or mail wake-ups are running.
 - Turn it off with the **Learn from my sessions** switch. Memory you already have keeps working.
 - Everything stays on your machines: memory files, suggestions (in the project's hive.db) and skills.
 

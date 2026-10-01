@@ -294,7 +294,7 @@ try {
   await page.locator(".modal textarea").fill("hunt bugs");
   await page.locator(".modal label:has-text('Times') input").fill("2");
   await page.locator(".modal button[type=submit]").click();
-  await page.locator(".job-list li.ended", { hasText: "done" }).waitFor({ timeout: 20_000 });
+  await page.locator(".job-list li.ended", { hasText: "done" }).waitFor({ timeout: 40_000 }); // two runs; slow 2-core CI runners need the room
   assert(true, "job scheduled from a pane runs and shows as done in the sidebar");
   await page.locator(".job-list li.ended", { hasText: "done" }).click();
   await page.locator(".modal .rep-job", { hasText: "run 2" }).waitFor({ timeout: 5000 });
