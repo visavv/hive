@@ -3,9 +3,73 @@
 hive's creator features, step by step. Everything here runs on your own
 machine with your own keys; nothing is uploaded or posted for you.
 
+- [Motion graphics](#motion-graphics): title cards and overlays as HTML animations, rendered to MP4 or ProRes with transparency
 - [Twitch clips pipeline](#twitch-clips-pipeline): new VODs and clips become board cards; agents cut them into shorts
 - [Extra MCP servers](MCP.md): DaVinci Resolve and other tools for agents
 - [Ideas for later](#ideas-for-later)
+
+## Motion graphics
+
+**What it does:** an agent (or you) writes an animation as a web page:
+kinetic title text, a lower third, a logo reveal, with three.js or plain
+HTML/canvas. hive opens it in a hidden browser, steps through it frame by frame
+and has ffmpeg turn the frames into a video:
+
+- **MP4** (H.264): plays everywhere, drop it into any editor or upload it.
+- **MOV, ProRes 4444 with transparency** (`--alpha`): overlays for DaVinci
+  Resolve / Premiere. Put it on a track above your footage; the background is
+  see-through.
+
+### Try it
+
+```
+hive motion new ep12-title            # copies the kinetic title card to out/motion/ep12-title/
+# edit TITLE / SUBTITLE at the bottom of out/motion/ep12-title/index.html
+hive render out/motion/ep12-title     # → out/motion/ep12-title/ep12-title.mp4
+hive render out/motion/ep12-title --alpha --out ep12-title.mov   # transparent ProRes for Resolve
+hive render out/motion/ep12-title --size 3840x2160 --fps 60      # 4K 60 fps
+hive render out/motion/ep12-title --size 1080x1920               # vertical (Shorts)
+hive render out/motion/ep12-title --frames --seconds 1           # PNG frames only (no ffmpeg needed)
+```
+
+Or let an agent design it: `hive skill run motion name=ep12-title brief="bold
+yellow title 'BUILD IT FAST', subtitle 'episode 12', energetic, 4 seconds"`
+(or Skills in the app). The skill teaches the agent the rules below.
+
+### The rules a page must follow
+
+The page sets `window.hiveRender = { duration, fps, width, height, seek(t) }`.
+hive calls `seek(t)` for every frame (t in seconds) and takes a screenshot, so:
+
+- every frame is computed from `t` alone: no timers, CSS animations or
+  `requestAnimationFrame` loops, no unseeded randomness. That's why a render
+  always comes out the same, however slow the machine is;
+- everything the page uses sits in its folder. hive serves only that folder to
+  the browser (no network listener is opened) and blocks every other URL, CDNs
+  included. Using three.js: copy its module file into the folder (e.g.
+  `node_modules/three/build/three.module.min.js`) and import it relatively;
+- for `--alpha`, the page leaves out its background when the URL has
+  `?alpha=1` (the template shows how).
+
+### What you need
+
+- **ffmpeg** for videos (Windows `winget install ffmpeg`, Fedora
+  `sudo dnf install ffmpeg` from RPM Fusion, Ubuntu `sudo apt install ffmpeg`),
+  or set `HIVE_FFMPEG` to its path. Without it, `--frames` still works.
+- **A Chromium browser:** Microsoft Edge (already on Windows) or Google Chrome
+  is found automatically; or `npx playwright install chromium`; or set
+  `HIVE_CHROMIUM` to a browser executable.
+
+### Preview and costs
+
+Open `out/motion/<name>/index.html` in your browser to look at it (it shows
+the first frame; add a scrubber of your own if you like), or render a 1-second
+`--frames` preview. The in-app browser pane, when it lands, will preview it too.
+
+Rendering is free and local: no API calls, nothing counted as tokens. Each
+render is noted in the project's event log. Only the agent turns spent
+writing the animation cost tokens (a few turns per graphic). Speed depends on
+the size: a 5-second 1080p graphic at 30 fps takes from under a minute to a few minutes, depending on the machine.
 
 ## Twitch clips pipeline
 

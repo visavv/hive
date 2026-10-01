@@ -21,6 +21,7 @@ Design goals, in order:
 | Automation | loops, intervals, watch-for-new-code/commits/blackboard, cooldowns, recipes (coder + reviewer, tester + improver, idea pipeline, creator studio) |
 | Skills | prompts with parameters (YouTube titles/descriptions/chapters from a transcript **or a YouTube link**, code review, prompt-engineer) |
 | Media | ElevenLabs voice-over, image generate/edit (keys stay in the hive process) |
+| Motion graphics | HTML/three.js animations rendered frame by frame to MP4 or ProRes 4444 with alpha for DaVinci (`hive render`, skill `motion`, starter template) ([docs/CREATOR.md](docs/CREATOR.md)) |
 | Twitch | new VODs and clips become board cards (`hive twitch watch`); recipe `twitch-clips`: a clipper cuts shorts with yt-dlp + ffmpeg, a studio agent writes titles ([docs/CREATOR.md](docs/CREATOR.md)) |
 | Board & stats | Kanban board for notes and projects (agents and automations add cards; `hive board`), token ledger by provider / model / task / project (`hive stats`) |
 | Safety & cost | per-agent permission policies, worktrees, untrusted-content labelling, usage + limit windows with reset times, daily budgets, pause switch |

@@ -11,7 +11,7 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/cli/index.ts",
     "hive-mcp": "tsx src/hive/server.ts",
-    "test": "tsx test/e2e.ts && tsx test/session.ts && tsx test/scheduler.ts && tsx test/unit.ts && tsx test/backend.ts && tsx test/worktree.ts && tsx test/groups.ts && tsx test/skills.ts && tsx test/bridges.ts && tsx test/budget.ts && tsx test/api.ts && tsx test/media.ts && tsx test/links.ts && tsx test/fixes.ts && tsx test/youtube.ts && tsx test/verdict.ts && tsx test/tui.ts && tsx test/ledger.ts && tsx test/kanban.ts && tsx test/mux.ts && tsx test/mcp-extra.ts && tsx test/twitch.ts",
+    "test": "tsx test/e2e.ts && tsx test/session.ts && tsx test/scheduler.ts && tsx test/unit.ts && tsx test/backend.ts && tsx test/worktree.ts && tsx test/groups.ts && tsx test/skills.ts && tsx test/bridges.ts && tsx test/budget.ts && tsx test/api.ts && tsx test/media.ts && tsx test/links.ts && tsx test/fixes.ts && tsx test/youtube.ts && tsx test/verdict.ts && tsx test/tui.ts && tsx test/ledger.ts && tsx test/kanban.ts && tsx test/mux.ts && tsx test/mcp-extra.ts && tsx test/twitch.ts && tsx test/motion.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.ui.json",
     "ui:build": "node scripts/build-ui.mjs",
     "ui": "tsx src/cli/index.ts ui",
@@ -24,6 +24,7 @@
     "@modelcontextprotocol/sdk": "^1.31.0",
     "better-sqlite3": "^12.0.0",
     "chokidar": "^4.0.3",
+    "playwright-core": "1.56",
     "zod": "^3.25.0"
   },
   "devDependencies": {
@@ -37,7 +38,6 @@
     "electron": "^44.5.1",
     "esbuild": "^0.28.2",
     "markdown-it": "^15.0.2",
-    "playwright-core": "1.56",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tsx": "^4.20.0",
