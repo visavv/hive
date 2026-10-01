@@ -100,7 +100,7 @@ hive bb ideas/              # the scout's ideas
 - **Link**: drag one pane's name onto another pane (or 🔗). This creates a group with you in it. Click the group chip (`@alpha-beta`) to open its chat.
 - **Direct**: they message each other freely. **Review each message**: every agent-to-agent message waits in the group chat until you **Release**, **Edit…** or **Drop** it. **max/h** holds anything over the hourly limit for you to release.
 - CLI: `hive link coder reviewer --review`, `hive held`, `hive release 12`.
-- Safety default: an agent set to **allow all** only takes mail from agents you linked it with. Mail from anyone else waits in **✉ Hive → Inbox → Waiting for your review** (Release, Edit, Drop, or **Link & release**). Switch it off under Groups if you really want unlinked agents to drive it.
+- Safety default: an agent set to **allow all** only takes mail from agents you linked it with (groups agents make themselves don't count, and agents can't add it to one). Mail from anyone else waits in **✉ Hive → Inbox → Waiting for your review** (Release, Edit, Drop, or **Link & release**). Switch it off under Groups if you really want unlinked agents to drive it.
 - `hive accounts` (or the Accounts tab in ✉ Hive) shows which agents are signed in or have their keys.
 - `hive desktop --cwd C:\code\myproject` adds a Start-menu entry that opens hive on that project.
 

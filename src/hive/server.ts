@@ -99,12 +99,15 @@ server.registerTool(
     const route = db.route(me!, to);
     if (!route.ok) return text(`Not sent. ${route.reason}`);
     const id = db.send(me, to, subject, body, t, { held: route.held, via: route.via });
-    db.log(me, "send", { id, to, subject, thread: t, held: route.held, via: route.via });
+    // Allow-all members you aren't linked with get it only after the human's review.
+    const guarded = db.guardShared(id);
+    db.log(me, "send", { id, to, subject, thread: t, held: route.held, via: route.via, ...(guarded.length ? { guarded } : {}) });
     if (route.held)
       return text(`#${id} is held (${route.held}). The human will release, edit or drop it. Don't resend it; carry on with other work or stop and report.`);
     const target = to === "*" || to === "owner" || to.startsWith("@") ? undefined : db.getAgent(to);
     const asleep = target && (target.status === "asleep" || target.status === "error");
-    return text(`sent #${id} to ${to} (thread ${t})${asleep ? ` — ${to} is ${target!.status}; it will get this when it next runs` : ""}`);
+    const held = guarded.length ? ` — held for the human's review for ${guarded.join(", ")} (can run anything, not linked with you); don't resend` : "";
+    return text(`sent #${id} to ${to} (thread ${t})${asleep ? ` — ${to} is ${target!.status}; it will get this when it next runs` : ""}${held}`);
   },
 );
 
@@ -225,12 +228,23 @@ server.registerTool(
       return text(`left @${name}`);
     }
     if (action === "remove") {
+      // Only the human takes others out of a group (an agent could otherwise break up links it doesn't like).
+      const others = (members ?? []).filter((m) => m !== me);
+      if (others.length) return text(`Not removed: only the human removes other members (${others.join(", ")}). Use leave to take yourself out.`);
       for (const m of members ?? []) db.removeFromGroup(name, m);
       return text(`@${name}: ${db.groupMembers(name).join(", ") || "(empty)"}`);
     }
     const unknown = (members ?? []).filter((m) => m !== "owner" && !db.getAgent(m));
     if (unknown.length) return text(`unknown agents: ${unknown.join(", ")}`);
-    db.addToGroup(name, action === "create" ? [...new Set([me!, ...(members ?? [])])] : (members ?? []));
+    const adding = action === "create" ? [...new Set([me!, ...(members ?? [])])] : (members ?? []);
+    // Agents can't link anyone to an agent that may run anything: only the human makes those links.
+    const before = db.groupMembers(name);
+    const after = [...new Set([...before, ...adding])].filter((m) => m !== "owner");
+    const added = adding.filter((m) => m !== "owner" && !before.includes(m));
+    const guarded = after.filter((m) => db.isGuarded(m));
+    if (added.length && guarded.length && after.length > 1)
+      return text(`Not changed: ${guarded.join(", ")} can run anything, so only the human links agents with ${guarded.length === 1 ? "it" : "them"}. Ask the owner to link you (hive_send to "owner").`);
+    db.addToGroup(name, adding, me!);
     db.log(me!, "group", { action, name, members });
     return text(`@${name}: ${db.groupMembers(name).join(", ")}`);
   },
