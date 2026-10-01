@@ -136,3 +136,9 @@ export const IconGauge = (p: P) => (
     <path d="M8 11l2.5-3.5" />
   </Svg>
 );
+export const IconSearch = (p: P) => (
+  <Svg {...p}>
+    <circle cx="7" cy="7" r="4.5" />
+    <path d="m10.5 10.5 3 3" />
+  </Svg>
+);

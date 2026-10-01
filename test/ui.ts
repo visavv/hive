@@ -70,6 +70,14 @@ async function addAgent(page: Page, name: string, policy = "ask", extra?: { cwd?
 }
 
 const pane = (page: Page, name: string) => page.locator(`[data-pane="${name}"]`);
+/** Run a command through the Ctrl+K palette. */
+async function command(page: Page, text: string) {
+  await page.keyboard.press("Control+k");
+  await page.locator(".palette .pal-input").fill(text);
+  await page.locator(".palette .pal-item.on").waitFor({ timeout: 5000 });
+  await page.keyboard.press("Enter");
+  await page.locator(".palette").waitFor({ state: "detached", timeout: 5000 });
+}
 const activeIn = (page: Page, name: string) =>
   page.evaluate((n) => !!document.activeElement?.closest(`[data-pane="${n}"]`), name);
 
@@ -182,7 +190,7 @@ try {
 
   // skills: run yt-titles on a transcript from the dialog; it opens its own pane
   writeFileSync(join(dir, "transcript.txt"), "we build a robot that folds laundry and it fails twice before it works");
-  await page.keyboard.press("Control+K");
+  await page.keyboard.press("Control+Shift+K");
   await page.locator(".modal .skill", { hasText: "yt-titles" }).click();
   await page.locator(".modal label:has-text('transcript') input").fill(join(dir, "transcript.txt"));
   await page.locator(".modal label:has-text('notes') textarea").fill("the failures are the story");
@@ -192,7 +200,7 @@ try {
   assert(true, "skills dialog runs a skill with a file parameter in its own pane");
   await pane(page, "skill-yt-titles").locator(".msg.user", { hasText: "folds laundry" }).first().waitFor({ timeout: 5000 });
   assert(true, "the transcript was inlined into the prompt");
-  await page.keyboard.press("Control+K");
+  await page.keyboard.press("Control+Shift+K");
   await page.locator(".modal .skill", { hasText: "yt-titles" }).click();
   await page.locator(".modal button[type=submit]").click();
   await page.locator(".modal .err", { hasText: "missing required parameter" }).waitFor({ timeout: 5000 });
@@ -201,7 +209,7 @@ try {
   await pane(page, "skill-yt-titles").locator("button.close").click();
 
   // recipes: studio opens a chat pane
-  await page.locator(".topbar button", { hasText: "Recipes" }).click();
+  await command(page, "set up a team");
   await page.locator(".modal .recipe", { hasText: "Creator studio" }).click();
   await page.locator(".modal label:has-text('Main agent') select").selectOption("mock");
   await page.locator(".modal button[type=submit]").click();
@@ -261,12 +269,22 @@ try {
   await pane(page, "alpha").locator("textarea").press("Enter");
   await pane(page, "beta").locator("textarea").click();
   await page.locator('[data-pane="alpha"].ready').waitFor({ timeout: 20_000 });
-  assert(await pane(page, "alpha").locator(".badge.ready").count() === 1, "a finished agent you weren't looking at turns green with a ✓ ready badge");
+  assert(await pane(page, "alpha").locator(".st.st-done").count() === 1, "a finished agent you weren't looking at shows 'done' (not looked at yet)");
   assert(/ready/.test(await page.title()), "window title counts ready agents");
   await page.locator(".ready-btn").click();
   await page.locator('[data-pane="alpha"].ready').waitFor({ state: "detached", timeout: 5000 });
   assert(await activeIn(page, "alpha"), "the ready button jumps to the agent and clears the mark");
   await page.screenshot({ path: join(shots, "hive-ui-ready.png") });
+
+  // command palette: jump to an agent by name, see every agent's state
+  await page.keyboard.press("Control+k");
+  await page.locator(".palette").waitFor({ timeout: 5000 });
+  await page.screenshot({ path: join(shots, "hive-ui-palette.png") });
+  await page.locator(".palette .pal-input").fill("beta");
+  assert((await page.locator(".palette .pal-item.on").innerText()).includes("beta"), "palette filters agents by name");
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => document.activeElement?.closest("[data-pane]")?.getAttribute("data-pane") === "beta", null, { timeout: 5000 });
+  assert(await activeIn(page, "beta"), "palette jumps to the agent");
 
   // long prompt editor: write, save as skill with a parameter, send
   await pane(page, "alpha").locator("textarea").fill("draft line");
@@ -290,13 +308,13 @@ try {
   await page.keyboard.press("Escape");
 
   // vertical layout: forced vertical → one column, no sidebar; auto on a tall window does the same
-  await page.locator(".topbar button", { hasText: "auto" }).click();
+  await command(page, "layout"); // auto → vertical
   await page.locator(".app.vertical").waitFor({ timeout: 5000 });
   const cols = await page.locator(".grid").evaluate((g) => getComputedStyle(g).gridTemplateColumns.split(" ").length);
   assert(cols === 1 && (await page.locator(".sidebar").count()) === 0, `vertical layout: one column, no sidebar (${cols})`);
   await page.screenshot({ path: join(shots, "hive-ui-vertical-forced.png") });
-  await page.locator(".topbar button", { hasText: "vertical" }).click(); // → horizontal
-  await page.locator(".topbar button", { hasText: "horizontal" }).click(); // → auto
+  await command(page, "layout"); // → horizontal
+  await command(page, "layout"); // → auto
   await page.setViewportSize({ width: 720, height: 1280 }).catch(() => {});
   await page.locator(".app.vertical").waitFor({ timeout: 5000 });
   assert(true, "auto layout goes vertical on a 9:16 window");
