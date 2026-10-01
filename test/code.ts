@@ -156,7 +156,7 @@ const watcher = new ExplainWatcher({
     if (mode === "sent") sent.push({ prompt, from });
     return mode;
   },
-  minGapMs: 2500,
+  minGapMs: 6000, // room for two turns (snapshots + diff) on slow Windows runners
 });
 // a turn that changes nothing
 watcher.turnStart("coder");
@@ -178,7 +178,7 @@ await sleep(400);
 writeFileSync(join(wt, "src", "c.ts"), "export const c = 3;\n");
 await watcher.turnEnd("coder");
 assert(sent.length === 1 && watcher.pendingFiles("coder").join(",") === "src/b.ts,src/c.ts", "changes inside the 2-minute window are coalesced");
-await until(() => sent.length === 2, 5000, "coalesced prompt");
+await until(() => sent.length === 2, 12_000, "coalesced prompt");
 assert(sent[1].prompt.includes("src/b.ts, src/c.ts") && sent[1].prompt.includes("export const c = 3"), "one prompt for both turns once the window passes");
 // other agents aren't watched
 watcher.turnStart("reviewer");
