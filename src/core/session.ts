@@ -29,6 +29,7 @@ import { TRUST_POLICY } from "./trust.js";
 import * as ledger from "./ledger.js";
 import { projectRoot } from "./home.js";
 import { BUDGET_RECHECK_MS, budgetRev } from "./budget.js";
+import { resolveMcpServers } from "./mcp-extra.js";
 
 export type PermissionPolicy = "ask" | "allow-reads" | "allow-all" | "reject-all";
 export const POLICIES: PermissionPolicy[] = ["ask", "allow-reads", "allow-all", "reject-all"];
@@ -71,6 +72,8 @@ export interface SessionOptions {
   maxWakesPer10Min?: number;
   /** Max ms to wait for the agent to initialize and open a session. */
   startTimeoutMs?: number;
+  /** Extra MCP servers by name from <HIVE_HOME>/mcp.json (added to the type's own; see mcp-extra.ts). */
+  mcp?: string[];
 }
 
 export interface TurnResult {
@@ -206,6 +209,8 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
   }
 
   async start(): Promise<void> {
+    // An unknown --mcp name fails here, before anything is spawned.
+    this.extraServers();
     // Bridge tokens, media keys and other providers' keys stay in the hive process.
     const env = agentEnv(this.def);
     const spec = spawnSpec(this.def);
@@ -433,6 +438,22 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
 
   // ---- internals ----
 
+  /** Names of the extra MCP servers this agent gets (type's + its own), for the UI. */
+  get extraMcp(): string[] {
+    try {
+      return this.extraServers().map((s) => s.name);
+    } catch {
+      return [];
+    }
+  }
+  private extraServers() {
+    return resolveMcpServers(this.def.mcp, this.opts.mcp);
+  }
+  /** hive's own server first, then the extra ones (resolved at every session open, so mcp.json edits apply). */
+  private mcpServers(): schema.McpServer[] {
+    return [this.hiveMcp(), ...this.extraServers()];
+  }
+
   private hiveMcp(): schema.McpServer {
     return {
       name: "hive",
@@ -461,7 +482,7 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
           const r = await ctx.request(acp.methods.agent.session.resume, {
             sessionId: resumeId,
             cwd: this.cwd,
-            mcpServers: [this.hiveMcp()],
+            mcpServers: this.mcpServers(),
           });
           cfg = r?.configOptions;
           sid = resumeId;
@@ -476,7 +497,7 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
           const r = await ctx.request(acp.methods.agent.session.load, {
             sessionId: resumeId,
             cwd: this.cwd,
-            mcpServers: [this.hiveMcp()],
+            mcpServers: this.mcpServers(),
           });
           cfg = r?.configOptions;
           sid = resumeId;
@@ -489,7 +510,7 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
       }
     }
     if (!sid) {
-      const r = await ctx.request(acp.methods.agent.session.new, { cwd: this.cwd, mcpServers: [this.hiveMcp()] });
+      const r = await ctx.request(acp.methods.agent.session.new, { cwd: this.cwd, mcpServers: this.mcpServers() });
       sid = r.sessionId;
       cfg = r.configOptions;
     }

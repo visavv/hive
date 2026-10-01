@@ -14,6 +14,7 @@ import { agentNameProblem } from "./names.js";
 import { hiveHome } from "./home.js";
 import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { mediaKinds, runMedia } from "../hive/media.js";
+import { storeMcp, storedMcp } from "./mcp-extra.js";
 
 export interface HubOptions {
   hiveDb: string;
@@ -148,6 +149,8 @@ export class Hub {
 
   private async startClaimed(o: AddOptions): Promise<AgentSession> {
     const { resume, worktree, preset, ...rest } = o;
+    // Extra MCP servers: given now, else the ones this agent had last time (wake-ups, restarts).
+    rest.mcp = o.mcp ?? storedMcp(this.db, o.name);
     // Worktrees live next to the hive db (the per-user project dir by default).
     if (worktree) rest.cwd = (await ensureWorktree(o.cwd, o.name, join(dirname(this.hiveDb), "worktrees"))).path;
     let resumeSessionId = rest.resumeSessionId;
@@ -180,6 +183,7 @@ export class Hub {
     await s.start();
     this.db.setPid(o.name, s.pid ?? null);
     this.db.setAgentConfig(o.name, rest.policy ?? "ask", preset ?? null, rest.briefing ?? null);
+    storeMcp(this.db, o.name, rest.mcp);
     this.sessions.set(o.name, s);
     return s;
   }
@@ -191,8 +195,10 @@ export class Hub {
       await s.close();
       this.sessions.delete(name);
     }
-    if (forget) this.db.removeAgent(name, this.id);
-    else this.db.releaseAgent(name, this.id);
+    if (forget) {
+      this.db.removeAgent(name, this.id);
+      storeMcp(this.db, name, []);
+    } else this.db.releaseAgent(name, this.id);
   }
 
   /** Agents this hub started only to deliver their mail. */
