@@ -18,10 +18,11 @@
     3. switches to the hive branch and pulls the latest version
     4. npm install, build, and `npm link` so `hive` works in any terminal
     5. hive doctor (are Claude Code / Codex / API keys ready?)
-    6. with -Project: a Start-menu entry for that project, and opens hive on it
+    6. hive.exe (pixel-art icon) and "hive" shortcuts on the Desktop and in the Start menu
+    7. with -Project: a Start-menu entry for that project, and opens hive on it
 
   Switches: -Branch <name>  -Project <folder>  -Test (run the test suite too)
-            -NoLaunch  -SkipPrereqs  -NoPull
+            -NoLaunch  -SkipPrereqs  -NoPull  -NoShortcuts
 #>
 param(
   [string]$Branch = "main",
@@ -29,7 +30,8 @@ param(
   [switch]$Test,
   [switch]$NoLaunch,
   [switch]$SkipPrereqs,
-  [switch]$NoPull
+  [switch]$NoPull,
+  [switch]$NoShortcuts
 )
 $ErrorActionPreference = "Stop"
 
@@ -111,6 +113,30 @@ $hiveCmd = Get-Command hive.cmd -ErrorAction SilentlyContinue
 if ($hiveCmd) { Ok "hive -> $($hiveCmd.Source)" } else { Warn "Open a new terminal for 'hive' to be found (or run: node $root\dist\cli\index.js)" }
 $cli = Join-Path $root "dist\cli\index.js"
 
+Step "hive.exe and shortcuts"
+# A tiny launcher compiled with the C# compiler that ships with Windows (.NET Framework 4), so
+# double-clicking (or pinning) opens hive with its own icon. Source: scripts\windows\hive-launcher.cs
+$exe = Join-Path $root "hive.exe"
+$ico = Join-Path $root "assets\hive.ico"
+$csc = @("$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe", "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\csc.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+if ($csc) {
+  $out = & $csc /nologo /optimize /target:winexe "/win32icon:$ico" "/out:$exe" /reference:System.Windows.Forms.dll (Join-Path $root "scripts\windows\hive-launcher.cs") 2>&1
+  if ($LASTEXITCODE -eq 0) { Ok "built $exe" } else { Warn "couldn't build hive.exe (you can still type 'hive'): $out" }
+} else { Warn "no C# compiler found (.NET Framework 4); skipping hive.exe - type 'hive' instead" }
+if ((Test-Path $exe) -and -not $NoShortcuts) {
+  $shell = New-Object -ComObject WScript.Shell
+  $places = @([Environment]::GetFolderPath("Desktop"), (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"))
+  foreach ($dir in $places) {
+    $lnk = $shell.CreateShortcut((Join-Path $dir "hive.lnk"))
+    $lnk.TargetPath = $exe
+    $lnk.WorkingDirectory = $env:USERPROFILE
+    $lnk.IconLocation = "$ico,0"
+    $lnk.Description = "hive - your AI agents side by side"
+    $lnk.Save()
+  }
+  Ok "shortcuts: Desktop and Start menu (right-click -> Pin to taskbar)"
+}
+
 Step "Checking agents (hive doctor)"
 & node $cli doctor --quick
 Write-Host "    Full check with logins: hive accounts   (in the app: Hive -> Accounts)" -ForegroundColor DarkGray
@@ -135,6 +161,7 @@ if ($Project) {
 
 Write-Host "`nDone." -ForegroundColor Green
 $example = if ($Project) { $proj } else { "C:\code\myproject" }
-Write-Host "  Open hive on a project:   cd $example; hive ui"
+Write-Host "  Open hive:                double-click 'hive' on the Desktop, or type: hive   (in a project folder, or the last one)"
+Write-Host "  A specific project:       cd $example; hive"
 Write-Host "  Sign in once if needed:   claude  (then /login)   -   codex login"
 Write-Host "  Update later:             powershell -ExecutionPolicy Bypass -File $root\scripts\install-windows.ps1"

@@ -7,9 +7,9 @@ One page from nothing to using hive every day on your desktop, your server and y
 1. Install hive: in PowerShell, from the folder you cloned hive into (e.g. `H:\HIVE`), run
    `powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1 -Project H:\code\myapp`
    (`-Project` = the code for the agents; created as an empty git project if missing)
-   (installs Node + Git if missing, builds hive, adds `hive` to your PATH and a Start-menu entry). Details: [WINDOWS.md](WINDOWS.md).
+   (installs Node + Git if missing, builds hive, adds `hive` to your PATH, builds **hive.exe** and puts a **hive** icon on your Desktop and in the Start menu). Details: [WINDOWS.md](WINDOWS.md).
 2. Sign in to the agents you pay for, once: `claude` → `/login`; `codex login`; `gemini`. Check with `hive doctor`.
-3. Open a project: `hive ui --cwd H:\code\myapp` (or the Start-menu entry).
+3. Open hive: **double-click the hive icon** (right-click → Pin to taskbar), or type **`hive`** in any terminal. It opens the folder you're in when that's a project, otherwise the last project you used; the very first time it asks which folder. `hive ui --cwd H:\code\myapp` opens a specific one.
 4. **Ctrl+K** → "Set up a team" → **Squad** (planner, coder, reviewer, tester), or **Ctrl+N** for one agent.
 
 Everyday keys: **Ctrl+K** everything · **Ctrl+1..9** jump to an agent · **Ctrl+J** board · **Ctrl+P** code · **Ctrl+I** inbox · **Ctrl+M** maximize · **Ctrl+Shift+Enter** ✦ improve the prompt you're typing · **Ctrl+Shift+Space** hold to dictate.
