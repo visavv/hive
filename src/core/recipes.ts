@@ -158,6 +158,56 @@ export const RECIPES: Record<string, Recipe> = {
     next: "Keep hive serve or the UI open. Read results with hive inbox, hive bb ideas/ready/, or the ✉ Hive drawer.",
   },
 
+  squad: {
+    id: "squad",
+    label: "Squad: planner, coder, reviewer, tester",
+    description:
+      "Four agents with fixed roles, linked in one group: a planner who breaks your goal into tasks and hands them to the coder, a coder in its own worktree, a reviewer (other vendor) and a tester (other vendor, own worktree) who check every batch of commits automatically.",
+    agents: [
+      {
+        name: "planner",
+        role: "planner / tech lead",
+        policy: "allow-reads",
+        interactive: true,
+        briefing:
+          "You are the tech lead. Turn the owner's goal into small, testable tasks; keep the plan on the blackboard under plan/<slug>; hand one task at a time to the coder with hive_send (what, where, acceptance criteria); read results with hive_diff and decide what's next. Don't edit files yourself. Tell the owner when a milestone is done or a decision is needed.",
+      },
+      { name: "coder", preset: "coder", interactive: true },
+      { name: "reviewer", preset: "reviewer", alt: true, interactive: true },
+      {
+        name: "tester",
+        role: "tester",
+        policy: "allow-all",
+        worktree: true,
+        alt: true,
+        interactive: true,
+        briefing:
+          "You verify other agents' work in your own worktree (a scratch copy). Never commit or push. Check out the branch you're given detached, run the project's own test, type-check and lint commands, and report precisely: the failing command and trimmed output, or 'green'.",
+      },
+    ],
+    groups: [{ name: "squad", members: ["planner", "coder", "reviewer", "tester", "owner"] }],
+    jobs: [
+      {
+        agent: "reviewer",
+        kind: "watch",
+        watch_path: BRANCHES,
+        watch_min_lines: 40,
+        every_ms: 20 * MIN,
+        cooldown_ms: 5 * MIN,
+        prompt: `Review the new commits listed above. ${branchOwner} Send that agent concrete findings (file:line, why, suggested fix), most severe first; say "LGTM" when it's fine.`,
+      },
+      {
+        agent: "tester",
+        kind: "watch",
+        watch_path: BRANCHES,
+        watch_min_lines: 1,
+        cooldown_ms: 3 * MIN,
+        prompt: `For each branch listed above: in your worktree run \`git checkout --detach <branch>\`, then the project's test suite, type-checker and linter. ${branchOwner} If anything fails, send that agent the failing command and trimmed output; if all pass, tell the planner "green @ <short sha>".`,
+      },
+    ],
+    next: "Tell the planner what you want built. It hands tasks to the coder; reviewer and tester check each batch of commits on their own.",
+  },
+
   studio: {
     id: "studio",
     label: "Creator studio (chat + skills)",
