@@ -1,0 +1,20 @@
+{
+  "appId": "dev.hive.app",
+  "appName": "hive",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https",
+    "allowNavigation": ["*.*.ts.net"],
+    "errorPath": "error.html"
+  },
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": false,
+    "webContentsDebuggingEnabled": false
+  },
+  "plugins": {
+    "SystemBars": {
+      "insetsHandling": "css"
+    }
+  }
+}

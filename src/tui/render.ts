@@ -82,9 +82,43 @@ export function strWidth(s: string): number {
   return w;
 }
 
+/**
+ * Make agent output safe to draw: tabs become spaces (to the next multiple of 4),
+ * ANSI escape sequences and other control characters are dropped (they have no
+ * width but move the cursor, which shifts the pane borders). Newlines are kept.
+ */
+export function sanitize(s: string): string {
+  if (!/[\x00-\x09\x0b-\x1f\x7f-\x9f]/.test(s)) return s;
+  const clean = s
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "") // CSI (colors, cursor moves)
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?/g, "") // OSC (titles, links)
+    .replace(/\x1b[@-_]?/g, "") // other escapes
+    .replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "");
+  if (!clean.includes("\t")) return clean;
+  return clean
+    .split("\n")
+    .map((line) => {
+      let out = "";
+      let col = 0;
+      for (const ch of line) {
+        if (ch === "\t") {
+          const n = 4 - (col % 4);
+          out += " ".repeat(n);
+          col += n;
+        } else {
+          out += ch;
+          col += strWidth(ch);
+        }
+      }
+      return out;
+    })
+    .join("\n");
+}
+
 /** Cut to `width` columns (with …) and pad with spaces to exactly `width`. */
 export function fit(s: string, width: number): string {
   if (width <= 0) return "";
+  s = sanitize(s).replace(/\n/g, " ");
   let out = "";
   let w = 0;
   const full = strWidth(s) > width;
@@ -106,7 +140,7 @@ export function fit(s: string, width: number): string {
 export function wrap(text: string, width: number): string[] {
   if (width <= 0) return [];
   const out: string[] = [];
-  for (const para of text.split("\n")) {
+  for (const para of sanitize(text).split("\n")) {
     if (!para) {
       out.push("");
       continue;
@@ -147,6 +181,70 @@ export function wrap(text: string, width: number): string[] {
   return out;
 }
 
+/**
+ * Markdown to plain terminal text: tables as aligned columns, code fences dropped
+ * (code indented), emphasis / inline-code markers and link targets removed.
+ */
+export function mdPlain(md: string, width = Infinity): string {
+  const out: string[] = [];
+  const lines = md.split("\n");
+  const inline = (t: string) =>
+    t
+      .replace(/\*\*(.+?)\*\*|__(.+?)__/g, "$1$2")
+      .replace(/~~(.+?)~~/g, "$1")
+      .replace(/`([^`]+)`/g, "$1")
+      .replace(/!?\[([^\]]*)\]\(([^)]*)\)/g, (_m, txt, url) => (txt && txt !== url ? `${txt} (${url})` : url));
+  let fence = false;
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (/^\s*```/.test(l)) {
+      fence = !fence;
+      continue;
+    }
+    if (fence) {
+      out.push("  " + l);
+      continue;
+    }
+    if (/^\s*\|.*\|\s*$/.test(l)) {
+      // a table: collect its rows, then pad columns
+      const rows: string[][] = [];
+      let j = i;
+      for (; j < lines.length && /^\s*\|.*\|\s*$/.test(lines[j]); j++) {
+        const cells = lines[j].trim().slice(1, -1).split("|").map((c) => inline(c.trim()));
+        rows.push(cells);
+      }
+      i = j - 1;
+      const isRule = (r: string[]) => r.every((c) => /^:?-{2,}:?$/.test(c) || c === "");
+      const body = rows.filter((r) => !isRule(r));
+      const w: number[] = [];
+      for (const r of body) r.forEach((c, k) => (w[k] = Math.max(w[k] ?? 0, strWidth(c))));
+      const total = w.reduce((a, n) => a + n, 0) + 2 * Math.max(0, w.length - 1);
+      if (total > width) {
+        // too wide for the pane: one line per row, header first
+        for (const r of body) out.push(r.filter(Boolean).join(" · "));
+        continue;
+      }
+      body.forEach((r, k) => {
+        out.push(r.map((c, n) => c + " ".repeat(Math.max(0, w[n] - strWidth(c)))).join("  ").trimEnd());
+        if (k === 0 && rows.length > 1 && isRule(rows[1])) out.push(w.map((n) => "─".repeat(n)).join("  "));
+      });
+      continue;
+    }
+    out.push(inline(l.replace(/^#{1,6}\s+/, "")));
+  }
+  return out.join("\n");
+}
+
+// agent text is re-rendered every frame; convert each message once per change
+const plainCache = new WeakMap<Line, { src: string; width: number; out: string }>();
+function plainOf(l: Line, width: number): string {
+  const c = plainCache.get(l);
+  if (c && c.src === l.text && c.width === width) return c.out;
+  const out = mdPlain(l.text, width);
+  plainCache.set(l, { src: l.text, width, out });
+  return out;
+}
+
 const DOT: Record<PaneStatus, [string, string]> = {
   starting: ["◌", c.blue],
   idle: ["●", c.green],
@@ -182,12 +280,15 @@ function paneBox(p: PaneView, idx: number, focused: boolean, w: number, h: numbe
     `${c.dim}${metaFit}${reset}${border}${"─".repeat(fill)}${reset}${dotColor}${dot}${reset}${c.dim}${statusText}${reset}${border}─┐${reset}`;
   const bodyH = Math.max(0, h - 2);
   const wrapped: { text: string; style: LineStyle }[] = [];
-  for (const l of p.lines) for (const t of wrap(l.text, inner - 1)) wrapped.push({ text: t, style: l.style });
+  for (const l of p.lines) for (const t of wrap(l.style === "agent" ? plainOf(l, inner - 1) : l.text, inner - 1)) wrapped.push({ text: t, style: l.style });
   if (p.pending) {
     wrapped.push({ text: "", style: "dim" });
     for (const t of wrap(`needs you: ${p.pending}`, inner - 1)) wrapped.push({ text: t, style: "warn" });
     wrapped.push({ text: "y = allow · n = deny (with an empty prompt)", style: "warn" });
   }
+  // PgUp can't scroll past the first line (written back so PgDn responds at once)
+  const scroll = Math.min(p.scroll, Math.max(0, wrapped.length - bodyH));
+  if (scroll !== p.scroll) p.scroll = scroll;
   const end = Math.max(0, wrapped.length - p.scroll);
   const shown = wrapped.slice(Math.max(0, end - bodyH), end);
   const body: string[] = [];
@@ -216,7 +317,16 @@ export function render(v: TuiView, cols: number, rows: number): string[] {
   const left = ` hive  ${v.title}  ·  ${v.panes.length} agent${v.panes.length === 1 ? "" : "s"}`;
   const bar = fit(left, Math.max(0, cols - strWidth(right) - 1)) + right + " ";
   out.push(`${c.barBg}${c.fg}${fit(bar, cols)}${reset}`);
-  const areaH = Math.max(0, rows - 3);
+  // Narrow terminals (a phone over SSH): one agent at a time, the others as tabs.
+  const narrow = cols < 90 && v.panes.length > 1 && !v.overlay;
+  if (narrow) {
+    const tabs = v.panes.map((p, i) => {
+      const mark = p.pending ? "!" : p.ready ? "✓" : p.status === "working" ? "…" : p.status === "error" ? "✗" : "";
+      return i === v.focus ? `[${i + 1} ${p.name}${mark}]` : ` ${i + 1} ${p.name}${mark} `;
+    });
+    out.push(`${c.dim}${fit(tabs.join(""), cols)}${reset}`);
+  }
+  const areaH = Math.max(0, rows - 3 - (narrow ? 1 : 0));
   if (v.overlay) {
     const w = Math.min(cols, 100);
     const pad = " ".repeat(Math.max(0, Math.floor((cols - w) / 2)));
@@ -229,7 +339,7 @@ export function render(v: TuiView, cols: number, rows: number): string[] {
     for (let i = 0; i < areaH; i++)
       out.push(i === Math.floor(areaH / 2) ? fit(" ".repeat(Math.max(0, Math.floor((cols - 44) / 2))) + "No agents. Try /add claude coder or /team", cols) : " ".repeat(cols));
   } else {
-    const shown = v.zoom ? [v.focus] : v.panes.map((_, i) => i);
+    const shown = v.zoom || narrow ? [v.focus] : v.panes.map((_, i) => i);
     const { gcols, grows } = gridShape(shown.length, cols);
     const baseW = Math.floor(cols / gcols);
     const baseH = Math.floor(areaH / grows);
@@ -246,17 +356,63 @@ export function render(v: TuiView, cols: number, rows: number): string[] {
   }
   // hint line + input line
   out.push(`${c.dim}${fit(" " + v.hint, cols)}${reset}`);
-  const target = v.panes[v.focus]?.name ?? "hive";
-  const promptLabel = v.input.startsWith("/") ? " command › " : ` ${target} › `;
-  const avail = cols - strWidth(promptLabel);
-  const shownInput = strWidth(v.input) > avail - 1 ? "…" + v.input.slice(-(avail - 2)) : v.input;
-  out.push(`${c.accent}${promptLabel}${reset}${fit(shownInput, avail)}`);
+  const il = inputLine(v, cols);
+  out.push(`${c.accent}${il.label}${reset}${fit(il.text, Math.max(0, cols - strWidth(il.label)))}`);
   return out.slice(0, rows);
+}
+
+/** How one prompt character is drawn: newlines (from a paste) as ⏎, tabs as a space, other controls hidden. */
+function shownChar(ch: string): string {
+  if (ch === "\n") return "⏎";
+  if (ch === "\t") return " ";
+  return /[\x00-\x1f\x7f-\x9f]/.test(ch) ? "" : ch;
+}
+
+/**
+ * The input line: prompt label plus a window onto the input that keeps the
+ * cursor visible (… marks text cut off on either side), measured in display
+ * columns, and the cursor's column in exactly what is drawn.
+ */
+export function inputLine(v: TuiView, cols: number): { label: string; text: string; col: number } {
+  const target = v.panes[v.focus]?.name ?? "hive";
+  const label = v.input.startsWith("/") ? " command › " : ` ${target} › `;
+  const lw = strWidth(label);
+  const avail = cols - lw;
+  // code points with their display form and width; k = code points before the cursor
+  const chars = Array.from(v.input).map((ch) => {
+    const d = shownChar(ch);
+    return { d, w: strWidth(d) };
+  });
+  const k = Array.from(v.input.slice(0, v.cursor)).length;
+  const pw = [0];
+  for (const x of chars) pw.push(pw[pw.length - 1] + x.w);
+  const sum = (a: number, b: number) => pw[b] - pw[a];
+  if (avail < 4) return { label, text: "", col: Math.min(cols - 1, lw) };
+  if (sum(0, chars.length) + 1 <= avail) return { label, text: chars.map((x) => x.d).join(""), col: lw + sum(0, k) };
+  // leftmost start that still shows the cursor cell, leaving a column for a trailing …
+  let start = 0;
+  while (start < k && (start > 0 ? 1 : 0) + sum(start, k) + 1 > avail - 1) start++;
+  let text = start > 0 ? "…" : "";
+  let used = strWidth(text);
+  const col = lw + used + sum(start, k);
+  for (let i = start; i < chars.length; i++) {
+    const rest = sum(i, chars.length);
+    if (used + rest <= avail) {
+      text += chars.slice(i).map((x) => x.d).join("");
+      used += rest;
+      break;
+    }
+    if (used + chars[i].w > avail - 1) {
+      text += "…";
+      break;
+    }
+    text += chars[i].d;
+    used += chars[i].w;
+  }
+  return { label, text, col: Math.min(cols - 1, col) };
 }
 
 /** Column of the input cursor (0-based) on the last line. */
 export function cursorColumn(v: TuiView, cols: number): number {
-  const target = v.panes[v.focus]?.name ?? "hive";
-  const promptLabel = v.input.startsWith("/") ? " command › " : ` ${target} › `;
-  return Math.min(cols - 1, strWidth(promptLabel) + strWidth(v.input.slice(0, v.cursor)));
+  return inputLine(v, cols).col;
 }

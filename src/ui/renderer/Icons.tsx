@@ -142,3 +142,9 @@ export const IconSearch = (p: P) => (
     <path d="m10.5 10.5 3 3" />
   </Svg>
 );
+export const IconLock = (p: P) => (
+  <Svg {...p}>
+    <rect x="3.5" y="7" width="9" height="6.5" rx="1.5" />
+    <path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" />
+  </Svg>
+);

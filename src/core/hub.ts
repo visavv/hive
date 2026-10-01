@@ -9,11 +9,14 @@ import { dirname, join, resolve } from "node:path";
 import { ensureWorktree } from "./worktree.js";
 import { AGENTS, killGroup } from "./agents.js";
 import { ROLES } from "./roles.js";
-import { checkAutomatic, notifyOnce } from "./budget.js";
+import { checkAutomatic, concurrencyGuard, notifyOnce } from "./budget.js";
 import { agentNameProblem } from "./names.js";
 import { hiveHome } from "./home.js";
 import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { mediaKinds, runMedia } from "../hive/media.js";
+import { Devices, type DeviceKind } from "../hive/devices.js";
+import { storeMcp, storedMcp } from "./mcp-extra.js";
+import { startTwitchWatcher } from "../hive/twitch.js";
 
 export interface HubOptions {
   hiveDb: string;
@@ -30,6 +33,8 @@ export interface HubOptions {
   id?: string;
   /** Defaults applied to every add() (e.g. the CLI's permission/elicitation prompts). */
   defaults?: Partial<Pick<SessionOptions, "askPermission" | "elicit" | "briefing" | "startTimeoutMs">>;
+  /** Run agents' browser / Android requests in this process (default true). */
+  devices?: boolean;
 }
 
 export type AddOptions = Omit<SessionOptions, "hiveDb"> & {
@@ -79,9 +84,44 @@ export class Hub {
       this.mediaTimer = setInterval(() => void this.mediaTick(), 300);
       this.mediaTimer.unref?.();
     }
+    if (opts.wakeSleeping) this.twitch = startTwitchWatcher(this.db);
+    if (opts.devices !== false) {
+      this.devices = new Devices({ projectDir: dirname(this.hiveDb), db: this.db });
+      this.deviceTimer = setInterval(() => void this.deviceTick(), 250);
+      this.deviceTimer.unref?.();
+    }
+  }
+
+  // ---- device panes: the sandboxed browser and Android, driven by agents through the db ----
+  /** The browser and adb client this hub owns (undefined with devices: false). */
+  readonly devices?: Devices;
+  private deviceTimer?: NodeJS.Timeout;
+  private deviceBusy = false;
+  private deviceKindsCache?: DeviceKind[];
+  private deviceKinds(): DeviceKind[] {
+    return this.devices ? (this.deviceKindsCache ??= Devices.kinds()) : [];
+  }
+  private async deviceTick() {
+    if (!this.devices || !this.db.db.open || this.deviceBusy) return;
+    const job = this.db.claimDeviceJob();
+    if (!job) return;
+    this.deviceBusy = true;
+    try {
+      // The folder is the one this hub knows for the agent, never one from the request.
+      const cwd = this.sessions.get(job.agent)?.cwd ?? this.db.getAgent(job.agent)?.cwd;
+      if (!cwd) throw new Error(`unknown agent ${job.agent}`);
+      const out = await this.devices.run(job.agent, cwd, job.kind, JSON.parse(job.params));
+      if (this.db.db.open) this.db.finishDeviceJob(job.id, JSON.stringify(out), null);
+    } catch (e: any) {
+      if (this.db.db.open) this.db.finishDeviceJob(job.id, null, String(e?.message ?? e).slice(0, 1000));
+    } finally {
+      this.deviceBusy = false;
+    }
   }
 
   private mediaTimer?: NodeJS.Timeout;
+  /** Twitch VOD/clip polling (creator: hive twitch watch --detach / recipe twitch-clips); serve and the app only. */
+  private twitch?: { stop: () => void };
   private mediaBusy = 0;
   private async mediaTick() {
     if (!this.db.db.open || this.mediaBusy >= 2) return;
@@ -92,7 +132,7 @@ export class Hub {
       // The folder is the one this hub knows for the agent, never one from the request.
       const cwd = this.sessions.get(job.agent)?.cwd ?? this.db.getAgent(job.agent)?.cwd;
       if (!cwd) throw new Error(`unknown agent ${job.agent}`);
-      const out = await runMedia(this.db, job.agent, cwd, job.kind, JSON.parse(job.params));
+      const out = await runMedia(this.db, job.agent, cwd, job.kind, JSON.parse(job.params), job.id);
       if (this.db.db.open) this.db.finishMedia(job.id, out, null);
     } catch (e: any) {
       if (this.db.db.open) this.db.finishMedia(job.id, null, String(e?.message ?? e).slice(0, 1000));
@@ -148,6 +188,8 @@ export class Hub {
 
   private async startClaimed(o: AddOptions): Promise<AgentSession> {
     const { resume, worktree, preset, ...rest } = o;
+    // Extra MCP servers: given now, else the ones this agent had last time (wake-ups, restarts).
+    rest.mcp = o.mcp ?? storedMcp(this.db, o.name);
     // Worktrees live next to the hive db (the per-user project dir by default).
     if (worktree) rest.cwd = (await ensureWorktree(o.cwd, o.name, join(dirname(this.hiveDb), "worktrees"))).path;
     let resumeSessionId = rest.resumeSessionId;
@@ -160,10 +202,12 @@ export class Hub {
     const s = new AgentSession({
       ...this.opts.defaults,
       mediaKinds: mediaKinds(),
+      deviceKinds: this.deviceKinds(),
       autoGuard: () => {
         const g = checkAutomatic(this.db, provider);
         if (!g.ok) notifyOnce(this.db, g);
-        return g;
+        // max_concurrent: a mail wake-up waits for a free slot (no owner mail for this one).
+        return g.ok ? concurrencyGuard(this.db, [], o.name) : g;
       },
       ...rest,
       resumeSessionId,
@@ -179,6 +223,7 @@ export class Hub {
     await s.start();
     this.db.setPid(o.name, s.pid ?? null);
     this.db.setAgentConfig(o.name, rest.policy ?? "ask", preset ?? null, rest.briefing ?? null);
+    storeMcp(this.db, o.name, rest.mcp);
     this.sessions.set(o.name, s);
     return s;
   }
@@ -190,13 +235,17 @@ export class Hub {
       await s.close();
       this.sessions.delete(name);
     }
-    if (forget) this.db.removeAgent(name, this.id);
-    else this.db.releaseAgent(name, this.id);
+    if (forget) {
+      this.db.removeAgent(name, this.id);
+      storeMcp(this.db, name, []);
+    } else this.db.releaseAgent(name, this.id);
   }
 
   /** Agents this hub started only to deliver their mail. */
   private woken = new Set<string>();
   private lastWakeScan = 0;
+  /** Agents whose wake-up failed to start (CLI missing or broken): wait before trying again. */
+  private wakeFails = new Map<string, { delay: number; until: number }>();
 
   private async wakeSleeping() {
     const now = Date.now();
@@ -206,6 +255,10 @@ export class Hub {
       if (this.sessions.has(a.name) || this.starting.has(a.name) || !a.kind || !AGENTS[a.kind]) continue;
       if (a.owner && (a.lease_until ?? 0) > now) continue; // running elsewhere
       if (!a.cwd || !existsSync(a.cwd) || this.db.unreadCount(a.name) === 0) continue;
+      const fail = this.wakeFails.get(a.name);
+      if (fail && fail.until > now) continue;
+      // The budget holds automatic work: the woken agent couldn't deliver anyway.
+      if (!checkAutomatic(this.db, a.kind, now).ok) continue;
       const preset = a.preset ? ROLES[a.preset] : undefined;
       this.woken.add(a.name);
       this.opts.onEvent?.(a.name, { type: "notice", text: `waking ${a.name} to deliver its mail` });
@@ -219,7 +272,16 @@ export class Hub {
         briefing: a.briefing ?? preset?.briefing,
         resume: true,
         askTimeoutMs: 15 * 60_000,
-      }).catch(() => this.woken.delete(a.name));
+      }).then(
+        () => this.wakeFails.delete(a.name),
+        (e) => {
+          this.woken.delete(a.name);
+          // 30s, doubling up to 30 min, so a missing CLI isn't respawned every few seconds.
+          const delay = Math.min(30 * 60_000, fail ? fail.delay * 2 : 30_000);
+          this.wakeFails.set(a.name, { delay, until: Date.now() + delay });
+          this.opts.onEvent?.(a.name, { type: "notice", text: `couldn't wake ${a.name} (${String(e?.message ?? e).slice(0, 200)}); trying again in ${Math.round(delay / 1000)}s` });
+        },
+      );
     }
     // Put them back to sleep once their mail is handled.
     for (const name of this.woken) {
@@ -228,7 +290,9 @@ export class Hub {
         this.woken.delete(name);
         continue;
       }
-      if (!s.busyNow && s.queued === 0 && s.idleMs > 60_000 && this.db.unreadCount(name) === 0 && !this.db.listJobs(false).some((j) => j.agent === name)) {
+      // Mail the budget holds back doesn't keep it awake.
+      const done = this.db.unreadCount(name) === 0 || !checkAutomatic(this.db, this.db.getAgent(name)?.kind ?? "").ok;
+      if (!s.busyNow && s.queued === 0 && s.idleMs > 60_000 && done && !this.db.listJobs(false).some((j) => j.agent === name)) {
         this.woken.delete(name);
         await this.remove(name, false);
       }
@@ -241,6 +305,7 @@ export class Hub {
     try {
       this.db.prune();
       this.db.failStaleMedia();
+      this.db.pruneDeviceJobs();
       pruneFiles([join(hiveHome(), "api-sessions"), join(hiveHome(), "cache", "youtube")], 30);
     } catch {}
     const ms = this.opts.pollMs ?? 1500;
@@ -268,6 +333,9 @@ export class Hub {
     if (this.timer) clearInterval(this.timer);
     clearInterval(this.leaseTimer);
     if (this.mediaTimer) clearInterval(this.mediaTimer);
+    if (this.deviceTimer) clearInterval(this.deviceTimer);
+    await this.devices?.dispose().catch(() => {});
+    this.twitch?.stop();
     this.timer = undefined;
     await Promise.all([...this.sessions.values()].map((s) => s.close()));
     if (this.db.db.open) for (const n of this.sessions.keys()) this.db.releaseAgent(n, this.id);

@@ -4,7 +4,8 @@ import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { Hub } from "../src/core/hub.js";
 import { TuiController } from "../src/tui/controller.js";
-import { fit, gridShape, render, strWidth, wrap, type TuiView } from "../src/tui/render.js";
+import { cursorColumn, fit, gridShape, inputLine, mdPlain, render, sanitize, strWidth, wrap, type TuiView } from "../src/tui/render.js";
+import { promptPart } from "../src/tui/controller.js";
 import { assert, finish, freshDir, sleep, until } from "./util.js";
 
 const plain = (s: string) => s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
@@ -13,6 +14,25 @@ const plain = (s: string) => s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
 assert(strWidth("abc") === 3 && strWidth("日本") === 4 && strWidth("✓") === 1 && strWidth("é") === 1, "display width handles wide and combining characters");
 assert(fit("hello world", 8) === "hello w…" && fit("hi", 5) === "hi   ", "fit cuts with … and pads to the exact width");
 assert(JSON.stringify(wrap("the quick brown fox", 9)) === JSON.stringify(["the quick", "brown fox"]) && wrap("x".repeat(25), 10).length === 3, "word wrap + hard break of long words");
+{
+  const t = mdPlain("## Review\n\n| | Finding | Where |\n|---|---|---|\n| **High** | `take()` busy-waits | `limiter.ts:27` |\n| Low | magic numbers | x.ts:3 |\n\n```ts\nconst a = 1;\n```\nSee [docs](https://example.com) and ~~old~~ **new**.");
+  const ls = t.split("\n");
+  assert(ls[0] === "Review" && !t.includes("**") && !t.includes("`") && !t.includes("```") && !t.includes("|"), "terminal markdown: no raw markers, fences or pipes");
+  const hi = ls.find((l) => l.startsWith("High"))!;
+  const lo = ls.find((l) => l.startsWith("Low"))!;
+  assert(hi.indexOf("take()") === lo.indexOf("magic") && ls.some((l) => /^─+  ─+/.test(l)), "terminal markdown: table columns line up under a rule");
+  assert(ls.includes("  const a = 1;") && t.includes("docs (https://example.com)") && t.includes("old new"), "terminal markdown: code indented, links keep their target");
+  assert(mdPlain("| a | b |\n|---|---|\n| " + "x".repeat(50) + " | y |", 30).split("\n")[1] === "x".repeat(50) + " · y", "terminal markdown: a table wider than the pane becomes one line per row");
+  assert(promptPart('You are agent "x"\n\n---\n\nfix the --- parser') === "fix the --- parser" && promptPart("a --- b") === "a --- b", "a prompt containing --- is shown whole; only a briefing in front is dropped");
+}
+{
+  const pv = (name: string, extra: Partial<TuiView["panes"][number]> = {}) => ({ name, kind: "claude", role: "", status: "idle" as const, lines: [{ text: "hello from " + name, style: "agent" as const }], groups: [], ready: false, scroll: 0, unread: 0, ...extra });
+  const v: TuiView = { title: "p", panes: [pv("planner"), pv("coder", { pending: "Write a.ts" }), pv("tester", { status: "working" })], focus: 1, zoom: false, input: "", cursor: 0, hint: "", held: 0 };
+  const ls = render(v, 60, 24);
+  const scr = ls.join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+  assert(ls.length === 24 && ls.every((l) => strWidth(l.replace(/\x1b\[[0-9;]*m/g, "")) === 60), "phone-width render still fills exactly 60×24");
+  assert(scr.includes("[2 coder!]") && scr.includes("3 tester…") && scr.includes("hello from coder") && !scr.includes("hello from planner"), "on a phone-width terminal: one agent at a time, the others as tabs with their state");
+}
 assert(gridShape(4, 200).gcols === 2 && gridShape(6, 200).gcols === 3 && gridShape(10, 250).gcols === 4 && gridShape(6, 120).gcols === 2 && gridShape(4, 80).gcols === 1 && gridShape(1, 200).gcols === 1, "grid is as square as fits (4 → 2×2, 6 → 3×2), capped by terminal width");
 const view: TuiView = {
   title: "proj",
@@ -48,6 +68,70 @@ assert(screen.includes("needs you: Write src/login.ts") && screen.includes("✓ 
 assert(/2 waiting for you/.test(screen), "status bar counts what's waiting for you (permission + held mail)");
 assert(plain(render(view, 120, 32).at(-1)!).startsWith(" coder › fix the login bug"), "input line shows which agent you're talking to");
 assert(render({ ...view, zoom: true }, 120, 32).map(plain).join("\n").split("planner").length === 1, "zoom shows only the focused pane");
+
+// ---- control characters in agent output ----
+assert(sanitize("a\tb") === "a   b" && sanitize("abcd\tx") === "abcd    x" && sanitize("\x1b[31mred\x1b[0m\r\x07!") === "red!" && sanitize("x\x1b]0;title\x07y") === "xy", "sanitize: tabs to the next multiple of 4, ANSI / OSC / control characters dropped");
+{
+  const dirty = { ...view, panes: view.panes.map((p) => ({ ...p, lines: [{ text: "col1\tcol2\t\x1b[1mbold\x1b[0m\r\x1b[2Kback\bspace", style: "tool" as const }, { text: "\t\tindented\x1b[31m red", style: "agent" as const }] })) };
+  const lines = render(dirty, 120, 20).map(plain);
+  assert(lines.every((l) => strWidth(l) === 120) && !lines.join("").includes("\t") && !/[\x00-\x1f]/.test(lines.join("")), "tabs and stray escapes in agent output don't shift the pane borders");
+}
+
+// ---- input line: horizontal scroll around the cursor ----
+{
+  const iv = (input: string, cursor: number): TuiView => ({ ...view, input, cursor });
+  // what's drawn after the label, and the character under the cursor
+  const under = (v: TuiView, cols: number) => {
+    const il = inputLine(v, cols);
+    const line = plain(render(v, cols, 20).at(-1)!);
+    let w = 0;
+    for (const ch of line) {
+      if (w === cursorColumn(v, cols)) return { ch, il, line };
+      w += strWidth(ch);
+    }
+    return { ch: "", il, line };
+  };
+  const long = "abcdefghij".repeat(10); // 100 chars, 40-column terminal
+  for (const cur of [0, 5, 50, 99, 100]) {
+    const v = iv(long, cur);
+    const u = under(v, 40);
+    assert(strWidth(u.line) === 40 && cursorColumn(v, 40) < 40 && u.ch === (long[cur] ?? " "), `long input: the cursor sits on the right character (cursor ${cur}: got "${u.ch}" in "${u.line}")`);
+  }
+  assert(under(iv(long, 0), 40).line.trimEnd().endsWith("…") && under(iv(long, 100), 40).il.text.startsWith("…"), "long input: … marks the text cut off on either side");
+  const cjk = "日本語のテキスト".repeat(6);
+  for (const cur of [0, 10, cjk.length]) {
+    const v = iv(cjk, cur);
+    const u = under(v, 40);
+    assert(strWidth(u.line) === 40 && u.ch === (cjk[cur] ?? " "), `wide characters: the input line stays 40 columns and the cursor is on "${cjk[cur] ?? "end"}" (got "${u.ch}")`);
+  }
+  const pasted = iv("line one\nline two", 17);
+  assert(plain(render(pasted, 80, 20).at(-1)!).includes("line one⏎line two") && cursorColumn(pasted, 80) === strWidth(" coder › ") + 17, "a pasted newline shows as ⏎ in the input line");
+}
+
+// ---- scroll is clamped to what the pane has ----
+{
+  const p = { ...view.panes[0], scroll: 10_000 };
+  render({ ...view, panes: [p], focus: 0 }, 120, 30);
+  assert(p.scroll < 20, `PgUp can't scroll past the top of the pane (scroll now ${p.scroll})`);
+}
+
+// ---- prompt editing works in code points ----
+{
+  const ed = new TuiController({} as any, "/tmp/x");
+  ed.insert("a😀b");
+  ed.left();
+  ed.left();
+  assert(ed.cursor === 1, "← steps over an emoji in one go");
+  ed.right();
+  ed.backspace();
+  assert(ed.input === "ab" && ed.cursor === 1 && !/[\ud800-\udfff]/.test(ed.input), "Backspace after an emoji removes all of it (no lone surrogate)");
+  ed.insert("😀");
+  ed.left();
+  ed.deleteForward();
+  assert(ed.input === "ab" && ed.cursor === 1, "Delete removes a whole emoji");
+  ed.insert("x\ny\tz");
+  assert(ed.input === "ax\ny\tzb" && ed.cursor === 6, "a paste is inserted as one block with its newlines and tabs");
+}
 
 // ---- controller with mock agents ----
 const dir = freshDir(".hive-test-tui");
@@ -98,6 +182,24 @@ await ctl.submit("/group qa tester sec");
 assert(hub.db.groupMembers("qa").join(",") === "sec,tester", "/group");
 await ctl.submit("/rm sec");
 assert(!ctl.panes.some((p) => p.name === "sec") && !hub.sessions.has("sec"), "/rm closes the pane and the agent");
+await ctl.submit("/add mock chat tmp1");
+await ctl.submit("/rm --forget tmp1");
+assert(!ctl.panes.some((p) => p.name === "tmp1") && !hub.db.getAgent("tmp1"), `/rm --forget <name> closes and forgets the agent (${ctl.hint})`);
+await ctl.submit("/add mock chat tmp2");
+await ctl.submit("/rm --forget");
+assert(!ctl.panes.some((p) => p.name === "tmp2") && !hub.db.getAgent("tmp2"), `/rm --forget closes the focused agent (${ctl.hint})`);
+await ctl.submit("/group b@d tester");
+assert(/invalid group name/.test(ctl.hint) && !hub.db.groupMembers("b@d").length, "/group checks the group name");
+await ctl.submit("/link tester coder --name no/slash");
+assert(/invalid group name/.test(ctl.hint), "/link checks the group name");
+await ctl.submit("/release");
+assert(/usage: \/release <id>/.test(ctl.hint), "/release without an id shows usage");
+{
+  const ctl3 = new TuiController(hub, repo, { layoutFile: join(dir, "tui3.json") });
+  const skipped = await ctl3.restore([{ name: "ghost", kind: "no-such-agent" }]);
+  assert(skipped.length === 1 && /unknown agent/.test(skipped[0]) && !ctl3.panes.length && ctl3.saved().length === 0, "a stale layout entry is skipped with a hint and dropped from the saved layout");
+}
+ctl.setFocus(1);
 
 // permission y/n
 ctl.setFocus(1);

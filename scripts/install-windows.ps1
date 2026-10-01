@@ -1,10 +1,13 @@
 <#
   hive: install or update on Windows, in one step.
 
-  First time (PowerShell, from the folder you want hive in, e.g. $HOME\code):
-    git clone https://github.com/visavv/hargent hive
-    cd hive
-    powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1 -Project C:\code\myproject
+  First time (PowerShell; any folder or drive works, e.g. H:\HIVE or $HOME\code\hive):
+    git clone https://github.com/visavv/hargent H:\HIVE
+    cd H:\HIVE
+    powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1 -Project H:\code\myproject
+
+  -Project is the code you want the agents to work on (not the hive folder). If it doesn't
+  exist yet the script offers to create it as an empty git repository.
 
   Update later (from the hive folder):
     powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1
@@ -21,7 +24,7 @@
             -NoLaunch  -SkipPrereqs  -NoPull
 #>
 param(
-  [string]$Branch = "claude/execute-planned-features-loop-9amlre",
+  [string]$Branch = "main",
   [string]$Project = "",
   [switch]$Test,
   [switch]$NoLaunch,
@@ -113,7 +116,13 @@ Step "Checking agents (hive doctor)"
 Write-Host "    Full check with logins: hive accounts   (in the app: Hive -> Accounts)" -ForegroundColor DarkGray
 
 if ($Project) {
-  if (-not (Test-Path $Project)) { Fail "Project folder not found: $Project" }
+  if (-not (Test-Path $Project)) {
+    $a = Read-Host "Project folder $Project doesn't exist. Create it as a new empty git project? [Y/n]"
+    if ($a -match "^[nN]") { Fail "Project folder not found: $Project" }
+    New-Item -ItemType Directory -Force -Path $Project | Out-Null
+    Run "git" @("-C", $Project, "init", "-q")
+    Ok "Created $Project (git init)"
+  }
   $proj = (Resolve-Path $Project).Path
   Step "Start-menu entry for $proj"
   Run "node" @($cli, "desktop", "--cwd", $proj)
@@ -125,6 +134,7 @@ if ($Project) {
 }
 
 Write-Host "`nDone." -ForegroundColor Green
-Write-Host "  Open hive on a project:   cd C:\code\myproject; hive ui"
-Write-Host "  Sign in once if needed:   claude  (then /login)   ·   codex login"
+$example = if ($Project) { $proj } else { "C:\code\myproject" }
+Write-Host "  Open hive on a project:   cd $example; hive ui"
+Write-Host "  Sign in once if needed:   claude  (then /login)   -   codex login"
 Write-Host "  Update later:             powershell -ExecutionPolicy Bypass -File $root\scripts\install-windows.ps1"

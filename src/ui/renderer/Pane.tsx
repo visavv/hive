@@ -3,12 +3,13 @@ import type { AgentView, ElicitationAsk, PermissionAsk } from "../protocol.js";
 import { rpc } from "./bridge.js";
 import { renderMarkdown } from "./markdown.js";
 import { store, usePane, useStore, type Item } from "./store.js";
-import { focus } from "./focus.js";
+import { focus, onActivate } from "./focus.js";
 import { ctxPct, fmtIdle, statusLabel, noteLabel } from "./format.js";
 import { PromptEditor } from "./Extras.js";
 import { GroupChips, groupColor } from "./Links.js";
 import { agentState, StatePill } from "./state.js";
-import { IconClock, IconClose, IconExpand, IconLink, IconMaximize, IconRefresh, IconSend, IconStop } from "./Icons.js";
+import { IconClock, IconClose, IconExpand, IconLink, IconLock, IconSpark, IconMaximize, IconRefresh, IconSend, IconStop } from "./Icons.js";
+import { MicButton, PaneVoiceControls, stopSpeech, useVoiceTarget } from "./Voice.js";
 
 export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
   name: string;
@@ -35,9 +36,10 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
       data-pane={name}
       onMouseEnter={() => hoverFocus && focus.hoverStart(name)}
       onMouseLeave={() => focus.hoverEnd()}
-      onMouseDown={() => {
+      onMouseDown={(e) => {
         focus.setActive(name);
         store.clearReady(name);
+        if (!(e.target as HTMLElement).closest(".voice-ctl")) stopSpeech(name); // a click stops its spoken reply
       }}
       onFocusCapture={() => store.clearReady(name)}
       onDragOver={(e) => {
@@ -88,6 +90,7 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
         {agent && agent.queued > 0 && <span className="badge" title="prompts queued">{agent.queued} queued</span>}
         {agent && agent.jobs > 0 && <span className="badge job" title="scheduled jobs on this agent"><IconClock size={12} /> {agent.jobs}</span>}
         <div className="pane-actions" onDoubleClick={(e) => e.stopPropagation()}>
+          <PaneVoiceControls name={name} />
           {agent && status === "working" && (
             <button onClick={() => void rpc("cancel", { name })} title="cancel turn (Esc)" aria-label="cancel turn"><IconStop /></button>
           )}
@@ -112,7 +115,7 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
       {agent && (
         <div
           className="pane-sub"
-          title={[agent.cwd, agent.branch && `branch ${agent.branch}`, agent.role, `permissions: ${agent.policy}`, agent.auth].filter(Boolean).join("\n")}
+          title={[agent.cwd, agent.branch && `branch ${agent.branch}`, agent.role, `permissions: ${agent.policy}`, agent.auth, agent.mcp?.length && `MCP: ${agent.mcp.join(", ")}`].filter(Boolean).join("\n")}
         >
           {agent.branch?.startsWith("hive/") ? (
             <span className="where branch">{agent.branch}</span>
@@ -182,6 +185,8 @@ function closePane(name: string) {
   store.layout = { ...l, panes: l.panes.filter((p) => p.name !== name), maximized: l.maximized === name ? null : l.maximized };
   store.starting.delete(name);
   store.panes.delete(name);
+  store.readyAt.delete(name);
+  focus.forget(name);
   store.changed();
   void rpc("saveLayout", store.layout);
   void rpc("removeAgent", { name, stopJobs: true }).catch(() => {});
@@ -247,7 +252,7 @@ function ConfigSelectors({ agent }: { agent: AgentView }) {
 
 // ---- transcript ----
 
-const Transcript = memo(function Transcript({ name }: { name: string }) {
+export const Transcript = memo(function Transcript({ name }: { name: string }) {
   const pane = usePane(name);
   const ref = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -412,11 +417,18 @@ function ToolCard({ item }: { item: Item & { k: "tool" } }) {
   const loc = item.locations?.[0]?.path;
   return (
     <div className={`tool ${item.status}`}>
-      <div className="tool-head" onClick={() => hasBody && setOpen(!open)}>
+      <div
+        className="tool-head"
+        onClick={() => hasBody && setOpen(!open)}
+        role={hasBody ? "button" : undefined}
+        tabIndex={hasBody ? 0 : undefined}
+        aria-expanded={hasBody ? open : undefined}
+        onKeyDown={hasBody ? onActivate(() => setOpen(!open)) : undefined}
+      >
         <span className="tstatus">{item.status === "completed" ? "✓" : item.status === "failed" ? "✗" : item.status === "in_progress" ? "…" : "○"}</span>
         <span className="tkind">{item.kind ?? "tool"}</span>
         <span className="ttitle">{item.title}</span>
-        {loc && <span className="tloc">{shortPath(loc)}</span>}
+        {loc && <span className="tloc code-link" data-path={loc} data-line={item.locations[0]?.line ?? undefined} title={`open ${loc} in the code view`}>{shortPath(loc)}</span>}
         {diffs.length > 0 && <span className="tdiff">{diffStat(diffs)}</span>}
         {hasBody && <span className="chev">{open ? "▾" : "▸"}</span>}
       </div>
@@ -436,8 +448,8 @@ function ToolCard({ item }: { item: Item & { k: "tool" } }) {
 }
 
 function diffRows(a: string, b: string): { t: " " | "+" | "-"; l: string }[] {
-  const A = a.split("\n");
-  const B = b.split("\n");
+  const A = a ? a.split("\n") : [];
+  const B = b ? b.split("\n") : [];
   let i = 0;
   while (i < A.length && i < B.length && A[i] === B[i]) i++;
   let j = 0;
@@ -466,7 +478,7 @@ function Diff({ path, oldText, newText }: { path: string; oldText: string; newTe
   const rows = diffRows(oldText, newText).slice(0, 600);
   return (
     <div className="diff">
-      <div className="diff-path">{path}</div>
+      <div className="diff-path code-link" data-path={path} title={`open ${path} in the code view`}>{path}</div>
       <pre>
         {rows.map((r, i) => (
           <div key={i} className={r.t === "+" ? "add" : r.t === "-" ? "del" : "ctx"}>
@@ -488,7 +500,7 @@ function PermissionCard({ ask, decided, onDecide }: { ask: PermissionAsk; decide
   };
   return (
     <div className={`ask perm${done ? " done" : ""}`}>
-      <div className="ask-title">🔐 {ask.title}{ask.kind ? <span className="tkind"> {ask.kind}</span> : null}</div>
+      <div className="ask-title"><IconLock size={14} /> {ask.title}{ask.kind ? <span className="tkind"> {ask.kind}</span> : null}</div>
       {ask.detail && <pre className="ask-detail">{ask.detail}</pre>}
       {done ? (
         <div className="ask-done">→ {done}</div>
@@ -578,15 +590,43 @@ function Composer({ name, agent }: { name: string; agent?: AgentView }) {
     if (ref.current) focus.register(name, ref.current);
     return () => focus.unregister(name);
   }, [name]);
+  // A new agent's pane was asked for focus while its input was still disabled.
+  const usable = !!agent;
+  useEffect(() => {
+    if (usable) focus.ready(name);
+  }, [usable, name]);
+  // ✦ improve: rough draft → full prompt for this agent, written by a hidden helper (core/improve.ts)
+  const [improving, setImproving] = useState(false);
+  const [undo, setUndo] = useState<string | null>(null);
+  const improve = (draft = text) => {
+    if (!agent || improving || !draft.trim()) return;
+    setImproving(true);
+    rpc("improvePrompt", { name, draft })
+      .then(({ prompt }) => {
+        setUndo(draft);
+        setText(prompt);
+        setTimeout(() => {
+          const el = ref.current;
+          if (el) (el.focus(), el.setSelectionRange(el.value.length, el.value.length));
+        }, 0);
+      })
+      .catch((e) => store.toast(`couldn't improve the prompt: ${e.message}`, "error"))
+      .finally(() => setImproving(false));
+  };
   const send = (raw = text) => {
     const t = raw.trim();
     if (!t || !agent) return;
+    // "/improve rough idea" does the same as the ✦ button
+    const m = t.match(/^\/improve\s+([\s\S]+)/);
+    if (m) return improve(m[1]);
+    setUndo(null);
     const p = store.pane(name);
     p.history.push(t);
     histIdx.current = null;
     setText("");
     void rpc("prompt", { name, text: t }).catch((e) => store.toast(e.message, "error"));
   };
+  useVoiceTarget(name, { el: () => ref.current, setText, send });
   return (
     <div className="composer">
       {editing && (
@@ -608,14 +648,25 @@ function Composer({ name, agent }: { name: string; agent?: AgentView }) {
         ref={ref}
         value={text}
         rows={Math.min(8, Math.max(1, text.split("\n").length))}
-        placeholder={agent ? (agent.status === "working" ? "agent is working — Enter queues, Esc cancels" : `message ${name}…`) : "starting…"}
-        disabled={!agent}
+        placeholder={improving ? "writing a better prompt…" : agent ? (agent.status === "working" ? "agent is working — Enter queues, Esc cancels" : `message ${name}…  ✦ improves a rough idea`) : "starting…"}
+        disabled={!agent || improving}
         onFocus={() => focus.setActive(name)}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => {
+          setText(e.target.value);
+          if (undo != null && e.target.value === "") setUndo(null);
+        }}
         onKeyDown={(e) => {
           if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "e") {
             e.preventDefault();
             setEditing(true);
+          } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && e.shiftKey) {
+            e.preventDefault();
+            improve();
+          } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && undo != null && !e.shiftKey) {
+            // first Ctrl+Z after an improve brings the draft back
+            e.preventDefault();
+            setText(undo);
+            setUndo(null);
           } else if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
             e.preventDefault();
             send();
@@ -638,6 +689,21 @@ function Composer({ name, agent }: { name: string; agent?: AgentView }) {
           }
         }}
       />
+      {undo != null && (
+        <button className="ghost improve-undo" onClick={() => (setText(undo), setUndo(null))} title="back to your draft (Ctrl+Z)">
+          undo
+        </button>
+      )}
+      <button
+        className={`ghost improve${improving ? " busy" : ""}`}
+        onClick={() => improve()}
+        disabled={!agent || improving || !text.trim()}
+        title="improve: turn this rough idea into a full prompt for this agent, then edit and send it here (Ctrl+Shift+Enter, or start with /improve)"
+        aria-label="improve prompt"
+      >
+        <IconSpark />
+      </button>
+      <MicButton target={name} disabled={!agent} />
       <button className="ghost expand" onClick={() => setEditing(true)} disabled={!agent} title="open the big editor for long prompts (Ctrl+E)" aria-label="open prompt editor">
         <IconExpand />
       </button>

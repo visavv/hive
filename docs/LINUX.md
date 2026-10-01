@@ -13,7 +13,6 @@ npm config set prefix ~/.local
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
 
 git clone https://github.com/visavv/hargent ~/code/hive && cd ~/code/hive
-git checkout claude/execute-planned-features-loop-9amlre
 npm install && npm run build && npm link                # `hive` on PATH
 npm test                                                # optional, ~3 min, mock agents only
 ```

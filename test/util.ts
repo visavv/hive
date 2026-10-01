@@ -6,10 +6,12 @@ import { AGENTS, type AgentDef } from "../src/core/agents.js";
 process.env.HIVE_HOME ??= resolve(".hive-test-home");
 
 let failed = false;
+const failures: string[] = [];
 
 export function assert(cond: unknown, msg: string) {
   if (!cond) {
     console.error(`❌ ${msg}`);
+    failures.push(msg);
     failed = true;
     process.exitCode = 1;
   } else console.log(`✅ ${msg}`);
@@ -37,6 +39,7 @@ export async function until(cond: () => boolean, timeoutMs: number, what: string
 }
 
 export function finish(label: string) {
-  console.log(failed ? `\n${label}: FAILED` : `\n${label}: ALL PASSED`);
+  // repeat the failures at the very end, where CI logs are read from
+  console.log(failed ? `\n${label}: FAILED\n${failures.map((f) => `  ❌ ${f}`).join("\n")}` : `\n${label}: ALL PASSED`);
   process.exit(failed ? 1 : 0);
 }

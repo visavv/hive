@@ -13,6 +13,7 @@ import { createRequire } from "node:module";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { hiveHome } from "./home.js";
+import { validateMcpRefs, type McpRef } from "./mcp-extra.js";
 
 export interface AgentDef {
   /** Short id used in config and hive addressing, e.g. "claude". */
@@ -34,6 +35,8 @@ export interface AgentDef {
   api?: boolean;
   /** Came from <HIVE_HOME>/agents.json. */
   custom?: boolean;
+  /** Extra MCP servers every agent of this type gets (agents.json "mcp"; see mcp-extra.ts). */
+  mcp?: McpRef[];
 }
 
 const npx = process.platform === "win32" ? "npx.cmd" : "npx";
@@ -191,15 +194,56 @@ export function expandVars(v: string, e: NodeJS.ProcessEnv = process.env): strin
 }
 
 /** Resolved env for an agent's subprocess; unset vars are dropped. */
-export function resolveEnv(def: AgentDef): Record<string, string> {
+export function resolveEnv(def: AgentDef, e: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(def.env ?? {})) {
-    const expanded = expandVars(v);
+    const expanded = expandVars(v, e);
     if (expanded) out[k] = expanded;
   }
   // An API agent must not pick up a stale HIVE_API_* from the parent env.
   if (def.api) for (const k of Object.keys(def.env ?? {})) out[k] ??= "";
   return out;
+}
+
+// ---- secrets an agent process must not see ----
+/** Bridge tokens and media keys: only the hive process uses them. */
+const SECRET_PREFIXES = ["HIVE_DISCORD_", "HIVE_WHATSAPP_", "HIVE_IMAGE_", "ELEVENLABS_", "TWITCH_CLIENT_SECRET", "HIVE_VISION_KEY", "HIVE_STT_KEY", "HIVE_STT_CUSTOM_KEY", "NVIDIA_API_KEY"];
+/** Provider keys (plus every API agent's keyEnv, added at call time). */
+const PROVIDER_KEYS = [
+  "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY", "AZURE_OPENAI_API_KEY",
+  "GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY", "OPENROUTER_API_KEY", "LLAMA_API_KEY", "QWEN_API_KEY", "DASHSCOPE_API_KEY",
+  "GROQ_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "XAI_API_KEY", "TOGETHER_API_KEY", "FIREWORKS_API_KEY", "COHERE_API_KEY",
+  "PERPLEXITY_API_KEY", "CEREBRAS_API_KEY", "MOONSHOT_API_KEY", "ZHIPU_API_KEY", "ZAI_API_KEY", "HF_TOKEN", "HUGGINGFACE_API_KEY", "HIVE_API_KEY",
+];
+/** A vendor CLI keeps its own provider's variables. */
+const VENDOR_KEEP: Record<string, string[]> = { claude: ["ANTHROPIC_", "CLAUDE_"], codex: ["OPENAI_", "CODEX_"], gemini: ["GEMINI_", "GOOGLE_"], qwen: ["QWEN_", "DASHSCOPE_"] };
+
+/**
+ * Environment for an agent's subprocess: the parent env minus bridge tokens,
+ * media keys and other providers' keys, plus the agent's own resolved env.
+ * Kept: what the agent names (needs, ${VAR} in its env) and its vendor's own variables.
+ */
+export function agentEnv(def: AgentDef, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const keep = new Set([def.needs, ...[...JSON.stringify(def.env ?? {}).matchAll(/\$\{(\w+)/g)].map((m) => m[1])].filter(Boolean).map((k) => k!.toUpperCase()));
+  const vendor = VENDOR_KEEP[def.id] ?? [];
+  // OpenCode is the home for API-key models: it reads providers' keys itself.
+  const keys = def.id === "opencode" ? new Set<string>() : new Set([...PROVIDER_KEYS, ...Object.values(AGENTS).map((a) => a.needs?.toUpperCase())]);
+  const out: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(base)) {
+    const K = k.toUpperCase();
+    const secret = SECRET_PREFIXES.some((p) => K.startsWith(p)) || keys.has(K);
+    if (!secret || keep.has(K) || vendor.some((p) => K.startsWith(p))) out[k] = v;
+  }
+  return { ...out, ...resolveEnv(def, base) };
+}
+
+/** An API agent's env for its MCP children: without its key (HIVE_API_KEY and the variable it came from). */
+export function withoutApiKey(base: NodeJS.ProcessEnv): Record<string, string> {
+  const key = base.HIVE_API_KEY;
+  const drop = new Set(["HIVE_API_KEY", base.HIVE_API_KEY_NAME ?? ""]);
+  const e: Record<string, string> = {};
+  for (const [k, v] of Object.entries(base)) if (v !== undefined && !drop.has(k) && !(key && v === key)) e[k] = v;
+  return e;
 }
 
 // ---- custom agents: <HIVE_HOME>/agents.json ----
@@ -223,6 +267,8 @@ export interface CustomAgent {
   command?: string;
   args?: string[];
   env?: Record<string, string>;
+  /** Extra MCP servers: inline {name, command, args, env?} or names from mcp.json (mcp-extra.ts). */
+  mcp?: McpRef[];
 }
 
 export function customAgentsPath(): string {
@@ -241,6 +287,12 @@ export function readCustomAgents(path = customAgentsPath()): Record<string, Cust
 }
 
 export function customAgentDef(id: string, c: CustomAgent): AgentDef {
+  const mcp = validateMcpRefs(c.mcp, `agent ${id}`);
+  const def = customAgentBase(id, c);
+  return mcp.length ? { ...def, mcp } : def;
+}
+
+function customAgentBase(id: string, c: CustomAgent): AgentDef {
   if (!/^[\w.-]{1,40}$/.test(id)) throw new Error(`agent id "${id}": letters, digits, _ . - only`);
   if (c.type === "acp") {
     if (!c.command) throw new Error(`agent ${id}: "command" is required for type acp`);
@@ -272,7 +324,17 @@ export function saveCustomAgent(id: string, c: CustomAgent | null, path = custom
 export function loadCustomAgents(path = customAgentsPath()): string[] {
   const added: string[] = [];
   for (const [id, c] of Object.entries(readCustomAgents(path))) {
-    if (AGENTS[id] && !AGENTS[id].custom) continue;
+    if (AGENTS[id] && !AGENTS[id].custom) {
+      // { "claude": { "mcp": [...] } } attaches MCP servers to a built-in type.
+      if (c?.mcp !== undefined)
+        try {
+          const mcp = validateMcpRefs(c.mcp, `agent ${id}`);
+          if (mcp.length) AGENTS[id] = { ...AGENTS[id], mcp };
+        } catch (e: any) {
+          process.stderr.write(`hive: agents.json: ${e.message}\n`);
+        }
+      continue;
+    }
     try {
       AGENTS[id] = customAgentDef(id, c);
       added.push(id);

@@ -3,14 +3,17 @@
  * Needs a display (on Linux CI run under xvfb-run). `npm run test:ui`.
  */
 import { _electron as electron, type ElectronApplication, type Page } from "playwright-core";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { assert, finish, freshDir, sleep } from "./util.js";
 import { projectDir } from "../src/core/home.js";
 import { AGENTS } from "../src/core/agents.js";
+import { findChromium } from "../src/hive/browser.js";
+import { createServer } from "node:http";
 
 const dir = freshDir(".hive-test-ui");
 process.env.HIVE_HOME = freshDir(".hive-test-ui-home"); // fresh default db + ui.json per run
@@ -24,6 +27,20 @@ if (!existsSync(electronBin)) {
   execFileSync(process.execPath, [require.resolve("electron/install.js")], { stdio: "inherit" });
   electronBin = require("electron") as unknown as string;
 }
+
+// Voice: a fake local Whisper server (OpenAI-compatible) for dictation.
+const sttSeen: { type: string; bytes: number }[] = [];
+const stt = createServer(async (req, res) => {
+  const chunks: Buffer[] = [];
+  for await (const c of req) chunks.push(c as Buffer);
+  const form = await new Request("http://x/", { method: "POST", headers: { "content-type": String(req.headers["content-type"]) }, body: Buffer.concat(chunks) }).formData();
+  const f = form.get("file") as File | null;
+  sttSeen.push({ type: f?.type ?? "", bytes: f?.size ?? 0 });
+  res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ text: "hello from the fake whisper" }));
+});
+await new Promise<void>((r) => stt.listen(0, "127.0.0.1", r));
+stt.unref();
+const sttUrl = `http://127.0.0.1:${(stt.address() as any).port}`;
 
 /** PID of the UI backend (node running src/ui/backend.ts). */
 function findBackendPid(): number | undefined {
@@ -46,8 +63,9 @@ function findBackendPid(): number | undefined {
 async function launch(): Promise<{ app: ElectronApplication; page: Page }> {
   const app = await electron.launch({
     executablePath: electronBin,
-    args: [resolve("dist-ui/main.cjs"), "--cwd", dir, ...(process.platform === "linux" ? ["--no-sandbox"] : [])],
-    env: { ...process.env, HIVE_NODE: process.execPath, HIVE_HOTKEY: "CommandOrControl+Alt+F12" } as Record<string, string>,
+    // Chromium's fake microphone (a beep) and no permission prompt: dictation can be tested end to end.
+    args: [resolve("dist-ui/main.cjs"), "--cwd", dir, "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", ...(process.platform === "linux" ? ["--no-sandbox"] : [])],
+    env: { ...process.env, HIVE_NODE: process.execPath, HIVE_HOTKEY: "CommandOrControl+Alt+F12", HIVE_SHOW_MOCK: "1", HIVE_STT: "local", HIVE_STT_URL: sttUrl, ELEVENLABS_API_KEY: "" } as Record<string, string>,
   });
   const page = await app.firstWindow();
   page.on("pageerror", (e) => console.error("[renderer error]", e.message));
@@ -69,6 +87,15 @@ async function addAgent(page: Page, name: string, policy = "ask", extra?: { cwd?
   await page.locator(`[data-pane="${name}"] textarea:not([disabled])`).waitFor({ timeout: 20_000 });
 }
 
+/** Poll an async condition (page.waitForFunction with a string is blocked by the app's CSP). */
+async function until(cond: () => Promise<boolean>, ms: number) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (await cond()) return;
+    await sleep(150);
+  }
+  throw new Error("timed out waiting");
+}
 const pane = (page: Page, name: string) => page.locator(`[data-pane="${name}"]`);
 /** Run a command through the Ctrl+K palette. */
 async function command(page: Page, text: string) {
@@ -144,8 +171,29 @@ try {
   await pane(page, "beta").locator("textarea").fill("");
   await page.keyboard.press("Control+1");
   assert(await activeIn(page, "alpha"), "Ctrl+1 focuses the first pane");
+  await page.locator(".agent-item.current", { hasText: "alpha" }).waitFor({ timeout: 2000 });
   await page.keyboard.press("Control+Tab");
   assert(await activeIn(page, "beta"), "Ctrl+Tab cycles to the next pane");
+  await page.locator(".agent-item.current", { hasText: "beta" }).waitFor({ timeout: 2000 });
+  assert(true, "the sidebar's current-agent highlight follows focus");
+
+  // stacked overlays: pane shortcuts and the palette don't act behind a dialog; Esc closes only the top one
+  await page.keyboard.press("Control+N");
+  await page.locator(".modal").waitFor();
+  await page.keyboard.press("Control+1");
+  await page.keyboard.press("Control+k");
+  await sleep(200);
+  assert(
+    (await page.locator(".palette").count()) === 0 && (await page.evaluate(() => !!document.activeElement?.closest(".modal"))),
+    "inside a dialog, Ctrl+1 and Ctrl+K don't reach the panes or open the palette",
+  );
+  await page.keyboard.press("Escape");
+  await page.locator(".modal").waitFor({ state: "detached", timeout: 2000 });
+  await page.keyboard.press("Control+k");
+  await page.locator(".palette").waitFor();
+  await page.keyboard.press("Escape");
+  await page.locator(".palette").waitFor({ state: "detached", timeout: 2000 });
+  assert((await page.locator(".pane").count()) === 2, "Esc closes the palette only");
 
   // ↑ recalls last prompt
   await page.keyboard.press("Control+1");
@@ -159,6 +207,43 @@ try {
   await pane(page, "alpha").locator(".msg.user", { hasText: "roll call" }).waitFor({ timeout: 10_000 });
   await pane(page, "beta").locator(".msg.user", { hasText: "roll call" }).waitFor({ timeout: 10_000 });
   assert(true, "broadcast reaches every pane");
+
+  // voice: mic button -> fake microphone -> fake Whisper server -> text at the cursor (not sent)
+  const ta = pane(page, "alpha").locator("textarea");
+  await ta.fill("note: ");
+  await ta.press("End");
+  await pane(page, "alpha").locator(".mic-btn").click();
+  await pane(page, "alpha").locator(".mic.recording .mic-live").waitFor({ timeout: 10_000 });
+  assert(/\d:\d\d/.test(await pane(page, "alpha").locator(".mic-time").innerText()), "recording shows a level meter and elapsed time");
+  await sleep(1200);
+  await pane(page, "alpha").locator(".mic-btn").click();
+  await page.waitForFunction(() => (document.querySelector('[data-pane="alpha"] textarea') as HTMLTextAreaElement).value.includes("fake whisper"), null, { timeout: 15_000 });
+  assert((await ta.inputValue()) === "note: hello from the fake whisper", `dictated text inserted at the cursor (${await ta.inputValue()})`);
+  assert(sttSeen.length === 1 && sttSeen[0].type.startsWith("audio/") && sttSeen[0].bytes > 500, `the recording went to the STT server (${JSON.stringify(sttSeen)})`);
+  assert((await pane(page, "alpha").locator(".msg.user", { hasText: "fake whisper" }).count()) === 0, "dictation doesn't send unless 'send after dictation' is on");
+  // push-to-talk: hold Ctrl+Shift+Space
+  await ta.fill("");
+  await ta.focus();
+  await page.keyboard.down("Control");
+  await page.keyboard.down("Shift");
+  await page.keyboard.down("Space");
+  await pane(page, "alpha").locator(".mic.recording").waitFor({ timeout: 10_000 });
+  await sleep(1000);
+  await page.keyboard.up("Space");
+  await page.keyboard.up("Shift");
+  await page.keyboard.up("Control");
+  await page.waitForFunction(() => (document.querySelector('[data-pane="alpha"] textarea') as HTMLTextAreaElement).value === "hello from the fake whisper", null, { timeout: 15_000 });
+  assert(sttSeen.length === 2, "holding Ctrl+Shift+Space records and types into the focused pane");
+  await ta.fill("");
+  // voice menu + palette entries
+  await pane(page, "alpha").locator('.voice-ctl button[aria-label="voice settings"]').click();
+  await page.locator(".voice-menu", { hasText: "Spoken replies need ELEVENLABS_API_KEY" }).waitFor({ timeout: 5000 });
+  await page.keyboard.press("Escape");
+  await page.locator(".voice-menu").waitFor({ state: "detached", timeout: 2000 });
+  assert(true, "pane voice menu opens and explains the missing ElevenLabs key; Esc closes it");
+  await command(page, "Send after dictation");
+  assert(JSON.parse(readFileSync(join(projectDir(dir), "ui.json"), "utf8")).voice?.sendAfter === true, "palette: send after dictation saved in the layout");
+  await command(page, "Send after dictation");
 
   // hostile markdown: images from agent output never load
   await pane(page, "beta").locator("textarea").fill("hostile-img");
@@ -233,6 +318,19 @@ try {
   assert(true, "missing required skill parameters are reported in the dialog");
   await page.keyboard.press("Escape");
   await pane(page, "skill-yt-titles").locator("button.close").click();
+  // a required choice without a default runs with the option the dialog shows (the first)
+  mkdirSync(join(process.env.HIVE_HOME!, "skills"), { recursive: true });
+  writeFileSync(
+    join(process.env.HIVE_HOME!, "skills", "choice-test.md"),
+    "---\nname: choice-test\ndescription: required choice\nparams:\n  - name: tone\n    type: choice\n    required: true\n    choices: [curious, bold]\n---\nWrite one {{tone}} line.\n",
+  );
+  await page.keyboard.press("Control+Shift+K");
+  await page.locator(".modal .skill", { hasText: "choice-test" }).click();
+  await page.locator(".modal label:has-text('Agent') select").selectOption("mock");
+  await page.locator(".modal button[type=submit]").click();
+  await pane(page, "skill-choice-test").locator(".msg.user", { hasText: "Write one curious line." }).first().waitFor({ timeout: 15_000 });
+  assert(true, "a required choice parameter is sent with the option shown");
+  await pane(page, "skill-choice-test").locator("button.close").click();
 
   // recipes: studio opens a chat pane
   await command(page, "set up a team");
@@ -242,6 +340,26 @@ try {
   await page.locator(`[data-pane="studio"] textarea:not([disabled])`).waitFor({ timeout: 20_000 });
   assert(true, "a recipe sets up its team and opens the agent you talk to");
   await pane(page, "studio").locator("button.close").click();
+
+  // Esc closes the Hive drawer without cancelling the turn of the pane you came from
+  await pane(page, "beta").locator("textarea").fill("slow esc-check");
+  await pane(page, "beta").locator("textarea").press("Enter");
+  await pane(page, "beta").locator(".msg.agent", { hasText: "working slowly" }).waitFor({ timeout: 10_000 });
+  await pane(page, "beta").locator("textarea").click();
+  await page.keyboard.press("Control+I");
+  await page.locator(".drawer").waitFor();
+  assert(await page.evaluate(() => !!document.activeElement?.closest(".drawer")), "the drawer takes keyboard focus when it opens");
+  await page.keyboard.press("Escape");
+  await page.locator(".drawer").waitFor({ state: "detached", timeout: 2000 });
+  await sleep(500);
+  assert(
+    (await pane(page, "beta").locator(".turn", { hasText: "cancelled" }).count()) === 0 && (await pane(page, "beta").locator(".st.st-working").count()) === 1,
+    "Esc in the drawer closes it and leaves the agent's turn running",
+  );
+  assert(await activeIn(page, "beta"), "closing the drawer gives focus back to the pane");
+  await page.keyboard.press("Escape");
+  await pane(page, "beta").locator(".turn", { hasText: "cancelled" }).waitFor({ timeout: 10_000 });
+  assert(true, "Esc in a pane still cancels its turn");
 
   // hive drawer: mail to the owner, report, blackboard, send as owner
   await pane(page, "alpha").locator("textarea").fill("tellowner: overnight run finished; bb ideas/dark-mode=add a dark mode toggle");
@@ -295,7 +413,9 @@ try {
   await pane(page, "alpha").locator("textarea").press("Enter");
   await pane(page, "beta").locator("textarea").click();
   await page.locator('[data-pane="alpha"].ready').waitFor({ timeout: 20_000 });
-  assert(await pane(page, "alpha").locator(".st.st-done").count() === 1, "a finished agent you weren't looking at shows 'done' (not looked at yet)");
+  // the pane goes green when the turn ends; the agent's status event (working → idle) can land a moment later
+  const doneShown = await pane(page, "alpha").locator(".st.st-done").waitFor({ timeout: 5000 }).then(() => true, () => false);
+  assert(doneShown && (await pane(page, "alpha").locator(".st.st-done").count()) === 1, "a finished agent you weren't looking at shows 'done' (not looked at yet)");
   assert(/ready/.test(await page.title()), "window title counts ready agents");
   await page.locator(".ready-btn").click();
   await page.locator('[data-pane="alpha"].ready').waitFor({ state: "detached", timeout: 5000 });
@@ -311,6 +431,100 @@ try {
   await page.keyboard.press("Enter");
   await page.waitForFunction(() => document.activeElement?.closest("[data-pane]")?.getAttribute("data-pane") === "beta", null, { timeout: 5000 });
   assert(await activeIn(page, "beta"), "palette jumps to the agent");
+
+  // ✦ improve: rough idea → full prompt in the same composer, undo, then send to the same agent
+  {
+    const box = pane(page, "beta").locator("textarea");
+    await box.fill("make the login remember the email");
+    await pane(page, "beta").locator("button.improve").click();
+    await until(async () => (await box.inputValue()).startsWith("IMPROVED:"), 30_000);
+    assert((await box.inputValue()).includes("make the login remember the email"), "✦ turns the draft into a fuller prompt in the same box");
+    await pane(page, "beta").locator("button.improve-undo").click();
+    assert((await box.inputValue()) === "make the login remember the email", "undo brings the draft back");
+    await box.press("Control+Shift+Enter");
+    await until(async () => (await box.inputValue()).startsWith("IMPROVED:"), 30_000);
+    await box.press("Enter");
+    await pane(page, "beta").locator(".msg.user", { hasText: "IMPROVED: make the login remember the email" }).waitFor({ timeout: 10_000 });
+    assert(true, "Ctrl+Shift+Enter improves, Enter sends it to the same agent");
+  }
+
+  // board: Ctrl+J, quick add, Esc closes; stats and themes from the palette
+  await page.keyboard.press("Control+j");
+  await page.locator(".kanban").waitFor({ timeout: 5000 });
+  await page.locator(".kb-add input").fill("Card from the UI test");
+  await page.keyboard.press("Enter");
+  await page.locator(".kb-card", { hasText: "Card from the UI test" }).waitFor({ timeout: 5000 });
+  assert((await page.locator(".kb-draft .kb-card", { hasText: "Card from the UI test" }).count()) === 1, "board: a quick-added card lands in Draft");
+  await page.keyboard.press("Escape");
+  await page.locator(".kanban").waitFor({ state: "detached", timeout: 5000 });
+  assert(true, "board: Esc closes it");
+  await command(page, "token stats");
+  await page.locator(".stats").waitFor({ timeout: 5000 });
+  assert((await page.locator(".stats-total .big").innerText()).length > 0, "token stats open from the palette");
+  await page.keyboard.press("Escape");
+  await command(page, "theme: oled");
+  assert((await page.evaluate("document.documentElement.dataset.theme")) === "oled" && (await page.evaluate("getComputedStyle(document.body).backgroundColor")) === "rgb(0, 0, 0)", "OLED theme: true black background");
+  await command(page, "theme: paper");
+  assert((await page.evaluate("document.documentElement.dataset.tone")) === "light", "Paper is a light theme");
+  await command(page, "theme: dark");
+
+  // code view: open a file from the palette, highlighted; select lines, "Explain" goes to a teacher (started on the spot)
+  mkdirSync(join(dir, "src"), { recursive: true });
+  writeFileSync(join(dir, "src", "hello.ts"), "// greet someone by name\nexport function greet(name: string): string {\n  const message = `Hello, ${name}!`;\n  return message;\n}\n");
+  await command(page, "open file");
+  await page.locator(".code-view").waitFor({ timeout: 5000 });
+  assert(await page.evaluate(() => document.activeElement?.closest(".code-find") != null), "Open file… opens the code view with the find box focused");
+  await page.locator(".code-find input").fill("hello");
+  await page.locator(".code-tree .code-node", { hasText: "src/hello.ts" }).waitFor({ timeout: 5000 });
+  await page.keyboard.press("Enter");
+  await page.locator(".code-lines .cl").first().waitFor({ timeout: 5000 });
+  assert((await page.locator(".code-lines .cl").count()) === 5 && (await page.locator(".code-path").innerText()).includes("src/hello.ts"), "the file opens with one row per line");
+  assert((await page.locator(".code-lines .hljs-keyword").count()) >= 3 && (await page.locator(".code-lines .hljs-comment").count()) === 1 && (await page.locator(".code-lines .hljs-string").count()) >= 1, "syntax highlighting: keyword, comment and string tokens");
+  const [kwColor, textColor] = await page.evaluate(() => [getComputedStyle(document.querySelector(".code-lines .hljs-keyword")!).color, getComputedStyle(document.querySelector(".code-lines .lc")!).color]);
+  assert(kwColor !== textColor, `keywords are coloured from the theme (${kwColor} vs ${textColor})`);
+  await page.locator('.cl[data-row="1"] .ln').click();
+  await page.locator('.cl[data-row="3"] .ln').click({ modifiers: ["Shift"] });
+  assert((await page.locator(".cl.sel").count()) === 3, "click + Shift+click on line numbers selects lines 2-4");
+  await page.locator(".code-ask button", { hasText: "Explain" }).click();
+  const td = page.locator(".modal", { hasText: "Start a teacher" });
+  await td.waitFor({ timeout: 5000 });
+  assert(true, "no teacher yet: Explain offers to start one");
+  await td.locator("select").selectOption("mock");
+  await td.locator("button[type=submit]").click();
+  await page.locator('[data-pane="teacher"]').waitFor({ state: "attached", timeout: 20_000 });
+  const asked = page.locator(".code-dock .msg.user", { hasText: "const message" });
+  await asked.waitFor({ timeout: 20_000 });
+  const askedText = await asked.innerText();
+  assert(askedText.includes("src/hello.ts lines 2–4") && askedText.includes("return message;") && askedText.includes("```ts") && askedText.includes("Help me understand what these lines do"), "Explain sends the path, line range and the code in a fenced block to the teacher");
+  assert((await pane(page, "teacher").locator(".msg.user", { hasText: "const message" }).count()) === 1, "the question is in the teacher's own pane too");
+  await page.locator(".code-dock .msg.agent", { hasText: "done" }).first().waitFor({ timeout: 20_000 });
+  assert(true, "the teacher answers in the docked transcript next to the code");
+  await page.screenshot({ path: join(shots, "hive-ui-code.png") });
+  await page.locator('.cl[data-row="0"] .ln').click();
+  await page.locator(".code-ask button", { hasText: "Quiz me" }).click();
+  await page.locator(".code-dock .msg.user", { hasText: "Quiz me" }).waitFor({ timeout: 10_000 });
+  assert((await page.locator(".modal").count()) === 0, "with a teacher running, questions go straight to it");
+  await page.keyboard.press("Escape");
+  assert((await page.locator(".cl.sel").count()) === 0 && (await page.locator(".code-view").count()) === 1, "Esc clears the selection first");
+  await page.locator(".code-tabs button", { hasText: "Changes" }).click();
+  await page.locator(".code-side .small", { hasText: /changed vs|repository/ }).first().waitFor({ timeout: 10_000 });
+  assert(true, "Changes tab lists what changed");
+  await page.keyboard.press("Escape");
+  await page.locator(".code-view").waitFor({ state: "detached", timeout: 2000 });
+  await page.keyboard.press("Control+p");
+  await page.locator(".code-view").waitFor({ timeout: 2000 });
+  assert(true, "Ctrl+P opens the code view");
+  await page.keyboard.press("Escape");
+  await page.locator(".code-view").waitFor({ state: "detached", timeout: 2000 });
+  await page.keyboard.press("Control+1");
+  await command(page, "explain every change by alpha");
+  await page.locator(".toast", { hasText: "Explain every change" }).first().waitFor({ timeout: 5000 });
+  await page.keyboard.press("Control+1");
+  await command(page, "explain every change by alpha: turn off");
+  await page.locator(".toast", { hasText: "is off for alpha" }).waitFor({ timeout: 5000 });
+  assert(true, "explain every change toggles per agent from the palette");
+  await pane(page, "teacher").locator("button.close").click();
+  await pane(page, "teacher").waitFor({ state: "detached", timeout: 5000 });
 
   // long prompt editor: write, save as skill with a parameter, send
   await pane(page, "alpha").locator("textarea").fill("draft line");
@@ -367,17 +581,19 @@ try {
   // alignment: every visible item in a row shares the row's vertical center (±1px)
   const misaligned = await alignment(page);
   writeFileSync(join(shots, "alignment.json"), JSON.stringify(misaligned, null, 2));
-  // close-ups at 3x for checking spacing by eye
-  const vp = page.viewportSize() ?? { width: 1600, height: 950 };
-  await page.setViewportSize({ width: vp.width * 3, height: vp.height * 3 }).catch(() => {});
-  await page.evaluate(`document.documentElement.style.zoom = "3"; document.body.classList.add("no-toasts")`);
-  await page.addStyleTag({ content: ".no-toasts .toasts { display: none !important; }" });
-  await page.waitForTimeout(300);
-  for (const [file, sel] of [["head", '[data-pane="alpha"] .pane-head'], ["side", ".agent-list"], ["groups", ".group-item"]] as const)
-    await page.locator(sel).first().screenshot({ path: join(shots, `align-${file}.png`) }).catch(() => {});
-  await page.locator(".topbar").screenshot({ path: join(shots, "align-top.png"), clip: undefined }).catch(() => {});
-  await page.evaluate(`document.documentElement.style.zoom = "1"; document.body.classList.remove("no-toasts")`);
-  await page.setViewportSize(vp).catch(() => {});
+  // close-ups at 3x for checking spacing by eye (ALIGN_SHOTS=1; a 3x window crashes small CI displays)
+  if (process.env.ALIGN_SHOTS === "1") {
+    const vp = page.viewportSize() ?? { width: 1600, height: 950 };
+    await page.setViewportSize({ width: vp.width * 3, height: vp.height * 3 }).catch(() => {});
+    await page.evaluate(`document.documentElement.style.zoom = "3"; document.body.classList.add("no-toasts")`);
+    await page.addStyleTag({ content: ".no-toasts .toasts { display: none !important; }" });
+    await page.waitForTimeout(300);
+    for (const [file, sel] of [["head", '[data-pane="alpha"] .pane-head'], ["side", ".agent-list"], ["groups", ".group-item"]] as const)
+      await page.locator(sel).first().screenshot({ path: join(shots, `align-${file}.png`) }).catch(() => {});
+    await page.locator(".topbar").screenshot({ path: join(shots, "align-top.png"), clip: undefined }).catch(() => {});
+    await page.evaluate(`document.documentElement.style.zoom = "1"; document.body.classList.remove("no-toasts")`);
+    await page.setViewportSize(vp).catch(() => {});
+  }
   assert(misaligned.length === 0, `rows are vertically aligned${misaligned.length ? ": " + misaligned.slice(0, 6).map((m) => `${m.row} > ${m.el} off by ${m.dy}px`).join("; ") : ""}`);
   await pane(page, "beta").locator(".group-chip").click();
   const gc = page.locator(".modal.wide", { hasText: "@alpha-beta" });
@@ -438,7 +654,40 @@ try {
   await page.locator(".toast", { hasText: "merged hive/gamma into main" }).waitFor({ timeout: 10_000 });
   assert(existsSync(join(repo, "feature.txt")), "merge button merged the agent branch into main");
   await page.screenshot({ path: join(shots, "hive-ui-worktree.png") });
+  // Ctrl+M right after closing the focused pane: nothing to maximize, the grid keeps its columns
+  await pane(page, "gamma").locator("textarea").click();
   await pane(page, "gamma").locator("button.close").click();
+  await pane(page, "gamma").waitFor({ state: "detached", timeout: 5000 });
+  await page.keyboard.press("Control+M");
+  await sleep(300);
+  const after = JSON.parse(readFileSync(join(projectDir(dir), "ui.json"), "utf8"));
+  assert(
+    (await page.locator(".pane").count()) === 2 && !after.maximized && (await page.locator(".grid").evaluate((g) => getComputedStyle(g).gridTemplateColumns.split(" ").length)) === 2,
+    "Ctrl+M after closing the focused pane doesn't save a stale maximized pane",
+  );
+  // device panes: the sandboxed browser opens from the palette and streams the page as pictures
+  if (!findChromium()) console.log("⏭  no Chromium: skipping the browser pane test");
+  else {
+    const site = createServer((_req, res) => res.writeHead(200, { "content-type": "text/html" }).end("<title>Pane test</title><h1 style='font-size:80px'>Hello pane</h1>"));
+    await new Promise<void>((r) => site.listen(0, "127.0.0.1", r));
+    await command(page, "Open browser");
+    await page.locator(".device-dock .browser-pane").waitFor({ timeout: 5000 });
+    assert((await page.locator(".dv-badge").innerText()).includes("sandboxed"), "browser pane opens from the palette with the sandbox badge");
+    await page.locator(".dv-url").fill(`127.0.0.1:${(site.address() as any).port}`);
+    await page.locator(".dv-url").press("Enter");
+    await page
+      .waitForFunction(() => (document.querySelector(".browser-pane .dv-view img") as HTMLImageElement | null)?.src.startsWith("data:image/jpeg"), null, { timeout: 45_000 })
+      .catch(async () => console.error(`[browser pane after 45 s] ${(await page.locator(".browser-pane").innerText().catch(() => "?")).replace(/\s+/g, " ").slice(0, 400)}`));
+    // the title arrives with the page's load event, which can come after the first frame
+    const titled = await page.locator(".dv-title", { hasText: "Pane test" }).waitFor({ timeout: 20_000 }).then(() => true, () => false);
+    const framed = await page.locator(".browser-pane .dv-view img").evaluate((i) => (i as HTMLImageElement).src.startsWith("data:image/jpeg")).catch(() => false);
+    if (!titled) console.error(`[browser pane, no title] ${(await page.locator(".browser-pane").innerText().catch(() => "?")).replace(/\s+/g, " ").slice(0, 400)}`);
+    assert(titled && framed, "the page loads in the sandboxed browser and frames reach the pane");
+    await page.screenshot({ path: join(shots, "hive-ui-browser.png") });
+    await page.locator(".dv-tab button[aria-label='close Browser pane']").click();
+    await page.locator(".device-dock").waitFor({ state: "detached", timeout: 5000 });
+    site.close();
+  }
 } catch (e) {
   await page.screenshot({ path: join(shots, "hive-ui-failure.png") }).catch(() => {});
   throw e;

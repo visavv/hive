@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { JobView, Layout, PaneSpec, Policy, WorktreeView } from "../protocol.js";
 import { connect, hello, onEvent, onFocusLast, rpc } from "./bridge.js";
 import { ping, store, useStore } from "./store.js";
@@ -7,19 +7,47 @@ import { Drawer } from "./Drawer.js";
 import { agentNameProblem } from "../../core/names.js";
 import { GroupChat, GroupsSection, LinkDialog, PauseIcon } from "./Links.js";
 import { VerdictWindow } from "./Verdict.js";
+import { StatsDialog } from "./Stats.js";
+import { KanbanView } from "./Kanban.js";
+import { CodeHost, codeActions, openCode } from "./Code.js";
+import { DeviceDock, openDevice } from "./Devices.js";
+import { installVoice, MicButton, useVoiceTarget, voiceActions, VoiceLayer } from "./Voice.js";
+import { MobileNav, useMobile, useMobileAgent } from "./Mobile.js";
+
+export const THEMES: { id: NonNullable<Layout["theme"]>; label: string; hint: string; tone: "dark" | "light" }[] = [
+  { id: "dark", label: "Dark", hint: "neutral grays, periwinkle accent", tone: "dark" },
+  { id: "oled", label: "OLED black", hint: "true black, pixels off", tone: "dark" },
+  { id: "midnight", label: "Midnight", hint: "deep navy, cyan", tone: "dark" },
+  { id: "forest", label: "Forest", hint: "green-black, mint", tone: "dark" },
+  { id: "ember", label: "Ember", hint: "warm charcoal, orange", tone: "dark" },
+  { id: "rose", label: "Rosé", hint: "plum, soft pink", tone: "dark" },
+  { id: "light", label: "Light", hint: "white, indigo", tone: "light" },
+  { id: "paper", label: "Paper", hint: "warm sepia, ink blue", tone: "light" },
+];
 import { Palette, type PaletteAction } from "./Palette.js";
 import { agentState, rollup, STATE_LABEL, StatePill } from "./state.js";
 import { IconBell, IconBellOff, IconColumns, IconInbox, IconMenu, IconPlus, IconRows, IconScale, IconSearch, IconSpark, IconTeam } from "./Icons.js";
 import { RecipesDialog, SkillsDialog } from "./Extras.js";
-import { focus } from "./focus.js";
+import { focus, onActivate, overlays, useOverlay } from "./focus.js";
 import { ctxPct, fmtIdle, parseDuration, statusLabel, suggestName, noteLabel } from "./format.js";
 
 const POLICIES: Policy[] = ["ask", "allow-reads", "allow-all", "reject-all"];
 
-function saveLayout(patch: Partial<Layout>) {
+export function saveLayout(patch: Partial<Layout>) {
   store.layout = { ...store.layout, ...patch };
   store.changed();
   void rpc("saveLayout", store.layout);
+}
+
+/** The maximized pane, or null when none is (or the saved name is no longer open). */
+export function maxedName(l: Layout): string | null {
+  return l.maximized && l.panes.some((p) => p.name === l.maximized) ? l.maximized : null;
+}
+
+/** Maximize / restore a pane; ignores names that aren't open (e.g. a pane just closed). */
+export function toggleMaximize(name: string | undefined) {
+  if (!name || !store.layout.panes.some((p) => p.name === name)) return;
+  saveLayout({ maximized: maxedName(store.layout) === name ? null : name });
 }
 
 export async function openPane(spec: PaneSpec, persist = true, startJob = false) {
@@ -78,6 +106,7 @@ function boot() {
     if (up) void sync();
   });
   onFocusLast(() => focus.last());
+  installVoice();
 }
 
 export function App() {
@@ -88,7 +117,7 @@ export function App() {
   const [adding, setAdding] = useState(false);
   const [jobFor, setJobFor] = useState<string | null>(null);
   const [drawer, setDrawer] = useState<false | "default" | "usage">(false);
-  const [dialog, setDialog] = useState<"" | "recipes" | "skills">("");
+  const [dialog, setDialog] = useState<"" | "recipes" | "skills" | "stats" | "board">("");
   const [palette, setPalette] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const skillReq = useStore((s) => s.skillRequest);
@@ -96,7 +125,11 @@ export function App() {
   const groupOpen = useStore((s) => s.groupOpen);
 
   const names = layout.panes.map((p) => p.name);
-  const visible = layout.maximized && names.includes(layout.maximized) ? [layout.maximized] : names;
+  const maximized = maxedName(layout);
+  // phones: one agent at a time, picked in the bottom bar (Mobile.tsx)
+  const mobile = useMobile();
+  const mobileAgent = useMobileAgent(names);
+  const visible = mobile ? (mobileAgent ? [mobileAgent] : []) : maximized ? [maximized] : names;
   useEffect(() => focus.setOrder(names), [names.join("|")]);
 
   // Title shows how many agents need you, so it's visible from the taskbar.
@@ -110,16 +143,28 @@ export function App() {
   const portrait = useMedia("(max-aspect-ratio: 4/5), (max-width: 820px)");
   const orientation = layout.orientation ?? "auto";
   const vertical = orientation === "vertical" || (orientation === "auto" && portrait);
-  const sidebar = vertical ? !!layout.vsidebar : layout.sidebar;
+  const sidebar = !mobile && (vertical ? !!layout.vsidebar : layout.sidebar);
   const columns = vertical ? (layout.vcolumns ?? 1) : layout.columns;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
+      // Read the layout now, not from the render this handler was made in.
+      const names = store.layout.panes.map((p) => p.name);
+      const maximized = maxedName(store.layout);
+      // A dialog, the drawer or the palette is open: pane shortcuts would act on
+      // what's hidden behind it. Only zoom, and the key that closes the top overlay, pass.
+      const top = overlays.top;
+      if (top) {
+        const zoom = mod && (e.key === "=" || e.key === "+" || e.key === "-" || e.key === "0");
+        const k = e.key.toLowerCase();
+        const closesTop = mod && !e.shiftKey && ((top === "palette" && k === "k") || (top === "drawer" && k === "i"));
+        if (!zoom && !closesTop) return;
+      }
       if (mod && /^[1-9]$/.test(e.key)) {
         e.preventDefault();
         const i = Number(e.key) - 1;
-        if (layout.maximized && layout.maximized !== names[i]) {
+        if (maximized && maximized !== names[i]) {
           saveLayout({ maximized: null });
           // the target pane mounts on the next frame
           requestAnimationFrame(() => requestAnimationFrame(() => focus.nth(i)));
@@ -153,24 +198,30 @@ export function App() {
       } else if (mod && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setPalette((v) => !v);
+      } else if (mod && e.key.toLowerCase() === "j") {
+        e.preventDefault();
+        setDialog((d) => (d === "board" ? "" : "board"));
       } else if (mod && e.key.toLowerCase() === "i") {
         e.preventDefault();
         setDrawer((d) => (d ? false : "default"));
+      } else if (mod && !e.shiftKey && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        openCode({ find: true });
       } else if (mod && e.key.toLowerCase() === "m") {
         e.preventDefault();
-        const a = focus.active;
-        if (a) saveLayout({ maximized: store.layout.maximized === a ? null : a });
+        toggleMaximize(focus.active);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [layout.maximized]);
+  }, []);
 
   useEffect(() => {
     (document.documentElement.style as any).zoom = String(layout.zoom ?? 1);
   }, [layout.zoom]);
   useEffect(() => {
     document.documentElement.dataset.theme = layout.theme ?? "dark";
+    document.documentElement.dataset.tone = THEMES.find((t) => t.id === (layout.theme ?? "dark"))?.tone ?? "dark";
     document.documentElement.dataset.density = layout.density ?? "comfortable";
   }, [layout.theme, layout.density]);
 
@@ -182,24 +233,30 @@ export function App() {
     { id: "link", label: "Link agents so they can talk", run: () => store.requestLink([]) },
     { id: "inbox", label: "Inbox and messages waiting for review", keys: "Ctrl+I", run: () => setDrawer("default") },
     { id: "usage", label: "Usage, limits and spending guards", run: () => setDrawer("usage") },
+    { id: "stats", label: "Token stats: by provider, model, task, project", hint: "all projects, kept for good", run: () => setDialog("stats") },
     { id: "broadcast", label: "Message all agents", keys: "Ctrl+Shift+B", run: () => setTimeout(() => document.querySelector<HTMLInputElement>(".broadcast input")?.focus(), 0) },
     { id: "sidebar", label: "Toggle sidebar", keys: "Ctrl+B", run: () => toggleSidebar() },
-    { id: "max", label: "Maximize / restore the focused agent", keys: "Ctrl+M", run: () => focus.active && saveLayout({ maximized: store.layout.maximized === focus.active ? null : focus.active }) },
+    { id: "max", label: "Maximize / restore the focused agent", keys: "Ctrl+M", run: () => toggleMaximize(focus.active) },
     { id: "layout", label: `Layout: ${layout.orientation === "vertical" ? "horizontal" : layout.orientation === "horizontal" ? "auto" : "vertical"} (now ${layout.orientation ?? "auto"})`, run: () => saveLayout({ orientation: layout.orientation === "vertical" ? "horizontal" : layout.orientation === "horizontal" ? "auto" : "vertical" }) },
-    { id: "theme", label: `Theme: ${layout.theme === "light" ? "dark" : "light"}`, run: () => saveLayout({ theme: layout.theme === "light" ? "dark" : "light" }) },
+    { id: "board", label: "Board (Kanban): Draft, In progress, Done", keys: "Ctrl+J", run: () => setDialog("board") },
+    ...codeActions(),
+    { id: "browser", label: "Open browser…", hint: "sandboxed: its own profile, never your logins", run: () => openDevice("browser") },
+    { id: "android", label: "Android device…", hint: "emulator or phone over adb", run: () => openDevice("android") },
+    ...THEMES.filter((t) => t.id !== (layout.theme ?? "dark")).map((t) => ({ id: "theme-" + t.id, label: `Theme: ${t.label}`, hint: t.hint, run: () => saveLayout({ theme: t.id }) })),
     ...(["compact", "comfortable", "spacious"] as const)
       .filter((d) => d !== (layout.density ?? "comfortable"))
       .map((d) => ({ id: "density-" + d, label: `Density: ${d}`, run: () => saveLayout({ density: d }) })),
     { id: "hover", label: `Hover to focus panes: ${layout.hoverFocus ? "turn off" : "turn on"}`, hint: "for Handy / voice typing", run: () => saveLayout({ hoverFocus: !layout.hoverFocus }) },
     { id: "ping", label: `Finish chime: ${layout.ping === false ? "turn on" : "turn off"}`, run: () => saveLayout({ ping: layout.ping === false }) },
     { id: "zoomin", label: "Zoom in / out / reset", keys: "Ctrl+= / Ctrl+- / Ctrl+0", run: () => {} },
+    ...voiceActions(names),
   ];
 
   if (!ready) return <div className="boot">starting hive…</div>;
 
   return (
-    <div className={`app${sidebar ? "" : " nosidebar"}${vertical ? " vertical" : ""}`}>
-      <TopBar
+    <div className={`app${sidebar ? "" : " nosidebar"}${vertical ? " vertical" : ""}${mobile ? " mobile" : ""}`}>
+      {!mobile && <TopBar
         names={names}
         selected={selected}
         setSelected={setSelected}
@@ -207,9 +264,10 @@ export function App() {
         onHive={() => setDrawer(drawer ? false : "default")}
         onUsage={() => setDrawer(drawer === "usage" ? false : "usage")}
         onPalette={() => setPalette(true)}
+        onBoard={() => setDialog((d) => (d === "board" ? "" : "board"))}
         vertical={vertical}
         columns={columns}
-      />
+      />}
       {sidebar && <Sidebar names={names} onAdd={() => setAdding(true)} onSearch={() => setPalette(true)} />}
       <main className="grid-wrap">
         {names.length === 0 ? (
@@ -239,13 +297,13 @@ export function App() {
             </p>
           </div>
         ) : (
-          <Grid names={visible} columns={layout.maximized ? 1 : columns} widths={layout.maximized || vertical ? undefined : layout.widths} minRow={vertical ? 360 : 220}>
+          <Grid names={visible} columns={maximized ? 1 : columns} widths={maximized || vertical ? undefined : layout.widths} minRow={vertical ? 360 : 220}>
             {visible.map((n) => (
               <Pane
                 key={n}
                 name={n}
                 index={names.indexOf(n)}
-                onMaximize={() => saveLayout({ maximized: layout.maximized === n ? null : n })}
+                onMaximize={() => toggleMaximize(n)}
                 onJob={() => setJobFor(n)}
                 selected={selected.has(n)}
                 onSelect={(v) => {
@@ -258,11 +316,24 @@ export function App() {
             ))}
           </Grid>
         )}
+        {dialog === "board" && <KanbanView onClose={() => setDialog("")} />}
+        <CodeHost />
       </main>
+      {mobile && (
+        <MobileNav
+          names={names}
+          actions={actions}
+          board={dialog === "board"}
+          onBoard={() => setDialog((d) => (d === "board" ? "" : "board"))}
+          onInbox={() => setDrawer("default")}
+          onPalette={() => setPalette(true)}
+        />
+      )}
       {adding && <AddAgentDialog onClose={() => setAdding(false)} />}
       {jobFor && <JobDialog agent={jobFor} onClose={() => setJobFor(null)} />}
       {drawer && <Drawer key={drawer} initialTab={drawer === "usage" ? "usage" : undefined} onClose={() => setDrawer(false)} />}
       {dialog === "recipes" && <RecipesDialog onClose={() => setDialog("")} />}
+      {dialog === "stats" && <StatsDialog onClose={() => setDialog("")} />}
       {linkReq && (
         <LinkDialog
           members={linkReq}
@@ -273,6 +344,7 @@ export function App() {
         />
       )}
       <VerdictWindow />
+      <VoiceLayer />
       {palette && <Palette actions={actions} onClose={() => setPalette(false)} />}
       {groupOpen && <GroupChat key={groupOpen} name={groupOpen} onClose={() => store.openGroup(null)} />}
       {(dialog === "skills" || skillReq) && (
@@ -286,6 +358,7 @@ export function App() {
           }}
         />
       )}
+      <DeviceDock />
       <div className="toasts" role="status" aria-live="polite">
         {toasts.map((t) => (
           <div key={t.id} className={`toast ${t.level}`} role={t.level === "error" ? "alert" : undefined}>
@@ -317,7 +390,7 @@ function toggleSidebar() {
 
 // ---- top bar: broadcast + layout controls ----
 
-function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onPalette, vertical, columns }: {
+function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onPalette, onBoard, vertical, columns }: {
   onUsage: () => void;
   vertical: boolean;
   columns: number;
@@ -327,14 +400,16 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onPalett
   onAdd: () => void;
   onHive: () => void;
   onPalette: () => void;
+  onBoard: () => void;
 }) {
   const unread = useStore((s) => s.ownerUnread);
   const held = useStore((s) => s.heldTotal);
   const layout = useStore((s) => s.layout);
   const [text, setText] = useState("");
   const targets = names.filter((n) => selected.has(n) && store.agents.has(n));
-  const send = () => {
-    const t = text.trim();
+  const bcRef = useRef<HTMLInputElement>(null);
+  const send = (raw = text) => {
+    const t = raw.trim();
     if (!t) return;
     const to = targets.length ? targets : names.filter((n) => store.agents.has(n));
     if (!to.length) return store.toast("no running agents to broadcast to", "error");
@@ -342,6 +417,7 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onPalett
     store.toast(`sent to ${to.join(", ")}`);
     setText("");
   };
+  useVoiceTarget("@broadcast", { el: () => bcRef.current, setText, send });
   const cols = columns;
   const setCols = (n: number) => saveLayout(vertical ? { vcolumns: n } : { columns: n, widths: undefined });
   const readyNames = useStore((s) => names.filter((n) => s.readyAt.has(n)));
@@ -351,6 +427,7 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onPalett
       <span className="brand">hive</span>
       <div className="broadcast">
         <input
+          ref={bcRef}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && send()}
@@ -358,7 +435,8 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onPalett
             targets.length ? `broadcast to ${targets.join(", ")}…` : `broadcast to all ${names.length} agents… (tick pane boxes to pick)`
           }
         />
-        <button onClick={send} disabled={!text.trim()}>Send</button>
+        <MicButton target="@broadcast" />
+        <button onClick={() => send()} disabled={!text.trim()}>Send</button>
         {selected.size > 0 && (
           <button className="ghost" onClick={() => setSelected(new Set())} title="clear selection">
             ✕ {selected.size}
@@ -392,7 +470,7 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onPalett
       </button>
       <span className="cols" title="panes per row">
         <button className="ghost" disabled={cols <= 1} onClick={() => setCols(cols - 1)} aria-label="fewer columns">−</button>
-        {cols} cols
+        {cols} {cols === 1 ? "col" : "cols"}
         <button className="ghost" disabled={cols >= 8} onClick={() => setCols(cols + 1)} aria-label="more columns">+</button>
       </span>
       <UsageChip onClick={onUsage} />
@@ -401,6 +479,9 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onPalett
       </button>
       <button className="ghost cmd-btn" onClick={onPalette} title="jump to an agent or run any command (Ctrl+K)">
         <IconSearch /> <span className="bl">Commands</span> <kbd>Ctrl K</kbd>
+      </button>
+      <button className="ghost" onClick={onBoard} title="Kanban board (Ctrl+J)">
+        <IconColumns /> <span className="bl">Board</span>
       </button>
       <button className={`hive-btn${unread || held ? " has-mail" : ""}`} onClick={onHive} title={`report, inbox, blackboard, mail (Ctrl+I)${held ? ` · ${held} message${held === 1 ? "" : "s"} waiting for your review` : ""}`}>
         <IconInbox /> <span className="bl">Hive</span>
@@ -504,6 +585,7 @@ function Sidebar({ names, onAdd, onSearch }: { names: string[]; onAdd: () => voi
   const starting = useStore((s) => s.starting);
   const jobs = useStore((s) => s.jobs);
   const layout = useStore((s) => s.layout);
+  const current = useSyncExternalStore(focus.subscribe, () => focus.active);
   const active = jobs.filter((j) => j.state === "active" || j.state === "queued");
   const [runsFor, setRunsFor] = useState<JobView | null>(null);
   const ended = jobs.filter((j) => !(j.state === "active" || j.state === "queued")).slice(-5).reverse();
@@ -527,14 +609,19 @@ function Sidebar({ names, onAdd, onSearch }: { names: string[]; onAdd: () => voi
           const st = starting.get(n);
           const state = agentState(n);
           const model = a?.config.find((c) => c.category === "model" || c.id === "model");
+          const go = () => {
+            if (layout.maximized && layout.maximized !== n) saveLayout({ maximized: null });
+            setTimeout(() => focus.to(n), 0);
+          };
           return (
             <li
               key={n}
-              className={`agent-item state-${state}${layout.maximized === n ? " max" : ""}${focus.active === n ? " current" : ""}`}
-              onClick={() => {
-                if (layout.maximized && layout.maximized !== n) saveLayout({ maximized: null });
-                setTimeout(() => focus.to(n), 0);
-              }}
+              className={`agent-item state-${state}${layout.maximized === n ? " max" : ""}${current === n ? " current" : ""}`}
+              role="button"
+              tabIndex={0}
+              aria-current={current === n ? "true" : undefined}
+              onClick={go}
+              onKeyDown={onActivate(go)}
             >
               <div className="row1">
                 <span className="idx">{i < 9 ? i + 1 : ""}</span>
@@ -547,11 +634,12 @@ function Sidebar({ names, onAdd, onSearch }: { names: string[]; onAdd: () => voi
                 )}
                 <span className={`state-word st-${state}`}>{STATE_LABEL[state]}</span>
               </div>
-              <div className="row2 mono-meta">
+              <div className="row2 mono-meta" title={[a?.kind ?? st?.kind, model && labelOf(model), a?.branch].filter(Boolean).join(" · ")}>
+                {/* one line; the model (longest, also in the pane header) is cut first */}
                 <span>{a?.kind ?? st?.kind}</span>
-                {model && <span>· {labelOf(model)}</span>}
-                {a?.branch?.startsWith("hive/") && <span className="branch">· {a.branch}</span>}
-                {a?.ctx && <span>· {ctxPct(a.ctx.used, a.ctx.size)}%</span>}
+                {a?.branch?.startsWith("hive/") && <span className="branch"> · {a.branch}</span>}
+                {a?.ctx && <span> · {ctxPct(a.ctx.used, a.ctx.size)}%</span>}
+                {model && <span> · {labelOf(model)}</span>}
               </div>
               {a?.note && state !== "idle" && <div className="row3" title={a.note}>{noteLabel(a.note)}</div>}
               {st?.error && <div className="row3 err">{st.error}</div>}
@@ -568,7 +656,7 @@ function Sidebar({ names, onAdd, onSearch }: { names: string[]; onAdd: () => voi
       </div>
       <ul className="job-list">
         {active.map((j) => (
-          <li key={j.id} title={j.prompt} className="clickable" onClick={() => setRunsFor(j)}>
+          <li key={j.id} title={j.prompt} className="clickable" role="button" tabIndex={0} onClick={() => setRunsFor(j)} onKeyDown={onActivate(() => setRunsFor(j))}>
             <div className="row1">
               <span className={`dot ${j.state === "active" ? "working" : "idle"}`} />
               <strong>#{j.id}</strong> <span className="kind">{j.kind}</span> <span>{j.agent}</span>
@@ -589,7 +677,7 @@ function Sidebar({ names, onAdd, onSearch }: { names: string[]; onAdd: () => voi
           </li>
         ))}
         {ended.map((j) => (
-          <li key={j.id} className="ended clickable" title={j.prompt} onClick={() => setRunsFor(j)}>
+          <li key={j.id} className="ended clickable" title={j.prompt} role="button" tabIndex={0} onClick={() => setRunsFor(j)} onKeyDown={onActivate(() => setRunsFor(j))}>
             <div className="row1 dim">
               #{j.id} {j.kind} {j.agent} — {j.state} · {j.runs} run{j.runs === 1 ? "" : "s"}
             </div>
@@ -741,18 +829,14 @@ function labelOf(o: { currentValue: string | boolean; options?: { value: string;
 
 export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const k = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", k);
-    return () => window.removeEventListener("keydown", k);
-  }, [onClose]);
+  const isTop = useOverlay("modal", onClose);
   // Keep keyboard focus inside the dialog, and give it back to where it was on close.
   useEffect(() => {
     const before = document.activeElement as HTMLElement | null;
     const el = ref.current;
     if (el && !el.contains(document.activeElement)) (el.querySelector<HTMLElement>("[autofocus], input, select, textarea, button") ?? el).focus();
     const trap = (e: KeyboardEvent) => {
-      if (e.key !== "Tab" || !el) return;
+      if (e.key !== "Tab" || !el || !isTop()) return;
       const items = [...el.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter((x) => !(x as HTMLButtonElement).disabled && x.offsetParent !== null);
       if (!items.length) return;
       const first = items[0];
@@ -794,6 +878,12 @@ function AddAgentDialog({ onClose }: { onClose: () => void }) {
   const [worktree, setWorktree] = useState(false);
   const [startJob, setStartJob] = useState(true);
   const [err, setErr] = useState("");
+  // ---- creator: extra MCP servers from <HIVE_HOME>/mcp.json ----
+  const [mcpList, setMcpList] = useState<{ name: string; command: string }[]>([]);
+  const [mcp, setMcp] = useState<string[]>([]);
+  useEffect(() => {
+    rpc("mcpServers", {}).then(setMcpList, () => setMcpList([]));
+  }, []);
   const preset = presets.find((p) => p.id === presetId);
   const pickPreset = (id: string) => {
     setPresetId(id);
@@ -810,7 +900,7 @@ function AddAgentDialog({ onClose }: { onClose: () => void }) {
     if (taken.has(n)) return setErr(`"${n}" is already open`);
     onClose();
     void openPane(
-      { name: n, kind, cwd: cwd.trim() || store.cwd, role: role.trim(), policy, worktree, preset: presetId || undefined },
+      { name: n, kind, cwd: cwd.trim() || store.cwd, role: role.trim(), policy, worktree, preset: presetId || undefined, ...(mcp.length ? { mcp } : {}) },
       true,
       !!preset?.job && startJob,
     );
@@ -892,6 +982,23 @@ function AddAgentDialog({ onClose }: { onClose: () => void }) {
           <div className="hint small warn" role="note">
             Allow all outside a worktree: this agent runs commands as you and can change any file you can, including your checkout and hive's own settings. Prefer
             a worktree, or "ask".
+          </div>
+        )}
+        {mcpList.length > 0 && (
+          <div className="creator-mcp">
+            <span>MCP</span>
+            <div className="creator-mcp-list">
+              {mcpList.map((m) => (
+                <label key={m.name} className="check" title={m.command}>
+                  <input
+                    type="checkbox"
+                    checked={mcp.includes(m.name)}
+                    onChange={(e) => setMcp(e.target.checked ? [...mcp, m.name] : mcp.filter((x) => x !== m.name))}
+                  />
+                  {m.name}
+                </label>
+              ))}
+            </div>
           </div>
         )}
         {preset?.job && (

@@ -1,6 +1,7 @@
 // Bundles the pane UI into dist-ui/: electron main + preload (CJS) and the React renderer.
 import { build, context } from "esbuild";
-import { copyFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, cpSync, mkdirSync, writeFileSync } from "node:fs";
+import { markPng, markSvg } from "./hex-icon.mjs";
 
 const watch = process.argv.includes("--watch");
 const out = "dist-ui";
@@ -21,6 +22,19 @@ for (const [pkg, files, lic] of fonts) {
   }
 }
 
+// The browser / phone build (hive web, src/ui/web.ts serves only this folder): its own page, manifest,
+// service worker and icons, plus the same styles and fonts.
+const web = `${out}/web`;
+mkdirSync(`${web}/icons`, { recursive: true });
+for (const f of ["index.html", "manifest.webmanifest", "sw.js"]) copyFileSync(`src/ui/renderer/web/${f}`, `${web}/${f}`);
+copyFileSync("src/ui/renderer/styles.css", `${web}/styles.css`);
+cpSync(`${out}/fonts`, `${web}/fonts`, { recursive: true });
+writeFileSync(`${web}/icons/icon.svg`, markSvg());
+writeFileSync(`${web}/icons/icon-192.png`, markPng({ size: 192 }));
+writeFileSync(`${web}/icons/icon-512.png`, markPng({ size: 512 }));
+writeFileSync(`${web}/icons/icon-180.png`, markPng({ size: 180, bg: "square" }));
+writeFileSync(`${web}/icons/maskable-512.png`, markPng({ size: 512, bg: "square", mark: 0.46 }));
+
 const common = { bundle: true, sourcemap: true, logLevel: "info" };
 const configs = [
   { ...common, entryPoints: ["src/ui/electron-main.ts"], outfile: `${out}/main.cjs`, platform: "node", format: "cjs", external: ["electron"], target: "node20" },
@@ -37,6 +51,8 @@ const configs = [
     minify: !watch,
   },
 ];
+// same renderer, with the WebSocket bridge in front (src/ui/renderer/web-bridge.ts)
+configs.push({ ...configs[2], entryPoints: ["src/ui/renderer/web-main.tsx"], outfile: `${web}/renderer.js` });
 
 if (watch) {
   for (const c of configs) await (await context(c)).watch();
