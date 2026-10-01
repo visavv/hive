@@ -21,16 +21,16 @@
   hive link <a> <b> [--name g] [--review]   let agents talk (a group with you in it); --review: you approve each message
   hive group mode <name> direct|review [--times N]   review = messages wait for you; N = max agent messages per hour
   hive scope open|linked                  linked: agents only reach agents they're linked with · hive held · hive release|drop <id>
-  hive recipe list · hive recipe apply <id> [--agent claude] [--alt codex]   a ready-made team (review-loop, solid-code, idea-pipeline, studio)
+  hive recipe list · hive recipe apply <id> [--agent claude] [--alt codex]   a ready-made team (squad, review-loop, solid-code, idea-pipeline, studio)
   hive skill list · hive skill run <name> k=v … · hive skill new <name> [--describe "…"]   reusable prompts with parameters
  *   hive once <agent> [--in 20m | --at 2026-10-01T09:00] "prompt"
  *   hive jobs [--all]                         list jobs
- *   hive job stop|start|runs|rm <id>
+ *   hive job stop|start|runs|show|rm <id|agent>
  *   hive serve                                run every job + mail delivery until Ctrl-C
  *   hive start <agent> --as security|scout|bughunter   a preset's default job
  *
  * Worktrees (one per coding agent)
- *   hive chat claude --worktree               agent works in .hive/worktrees/<name> on branch hive/<name>
+ *   hive chat claude --worktree               agent works in its own worktree (per-user state dir, see core/home.ts) on branch hive/<name>
  *   hive worktrees                            branches, ahead/behind, diffstat, dirty files
  *   hive merge <name>                         merge hive/<name> into the main checkout (--no-ff)
  *   hive worktree rm <name> [--force]
@@ -73,66 +73,88 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { listWorktrees, mergeWorktree, removeWorktree, syncWorktree } from "../core/worktree.js";
 import { HiveDb, type JobRow, type NewJob } from "../hive/db.js";
 
-const { values, positionals } = parseArgs({
-  allowPositionals: true,
-  options: {
-    name: { type: "string" },
-    cwd: { type: "string" },
-    role: { type: "string" },
-    policy: { type: "string" },
-    db: { type: "string" },
-    quiet: { type: "boolean", short: "q", default: false },
-    fresh: { type: "boolean", default: false },
-    times: { type: "string" },
-    hours: { type: "string" },
-    for: { type: "string" },
-    "min-lines": { type: "string" },
-    "max-wait": { type: "string" },
-    in: { type: "string" },
-    at: { type: "string" },
-    "keep-context": { type: "boolean", default: false },
-    detach: { type: "boolean", short: "d", default: false },
-    all: { type: "boolean", default: false },
-    quick: { type: "boolean", default: false },
-    as: { type: "string" },
-    since: { type: "string" },
-    subject: { type: "string" },
-    worktree: { type: "boolean", default: false },
-    force: { type: "boolean", default: false },
-    branches: { type: "boolean", default: false },
-    bb: { type: "string" },
-    alt: { type: "string" },
-    agent: { type: "string" },
-    prefix: { type: "string" },
-    describe: { type: "string" },
-    project: { type: "boolean", default: false },
-    out: { type: "string" },
-    bridge: { type: "string" },
-    cooldown: { type: "string" },
-    base: { type: "string" },
-    "key-env": { type: "string" },
-    model: { type: "string" },
-    label: { type: "string" },
-    context: { type: "string" },
-    voice: { type: "string" },
-    voices: { type: "boolean", default: false },
-    review: { type: "boolean", default: false },
-    agents: { type: "string" },
-    by: { type: "string" },
-    days: { type: "string" },
-    vendor: { type: "string" },
-    category: { type: "string" },
-    "in-project": { type: "string" },
-    judge: { type: "string" },
-    text: { type: "boolean", default: false },
-    body: { type: "string" },
-    size: { type: "string" },
-    edit: { type: "string" },
-    mask: { type: "string" },
-    help: { type: "boolean", short: "h", default: false },
-  },
-});
+const OPTIONS = {
+  name: { type: "string" },
+  cwd: { type: "string" },
+  role: { type: "string" },
+  policy: { type: "string" },
+  db: { type: "string" },
+  quiet: { type: "boolean", short: "q", default: false },
+  fresh: { type: "boolean", default: false },
+  times: { type: "string" },
+  hours: { type: "string" },
+  for: { type: "string" },
+  "min-lines": { type: "string" },
+  "max-wait": { type: "string" },
+  in: { type: "string" },
+  at: { type: "string" },
+  "keep-context": { type: "boolean", default: false },
+  detach: { type: "boolean", short: "d", default: false },
+  all: { type: "boolean", default: false },
+  quick: { type: "boolean", default: false },
+  as: { type: "string" },
+  since: { type: "string" },
+  subject: { type: "string" },
+  worktree: { type: "boolean", default: false },
+  force: { type: "boolean", default: false },
+  branches: { type: "boolean", default: false },
+  bb: { type: "string" },
+  alt: { type: "string" },
+  agent: { type: "string" },
+  prefix: { type: "string" },
+  describe: { type: "string" },
+  project: { type: "boolean", default: false },
+  out: { type: "string" },
+  bridge: { type: "string" },
+  cooldown: { type: "string" },
+  base: { type: "string" },
+  "key-env": { type: "string" },
+  model: { type: "string" },
+  label: { type: "string" },
+  context: { type: "string" },
+  voice: { type: "string" },
+  voices: { type: "boolean", default: false },
+  review: { type: "boolean", default: false },
+  agents: { type: "string" },
+  by: { type: "string" },
+  days: { type: "string" },
+  vendor: { type: "string" },
+  category: { type: "string" },
+  "in-project": { type: "string" },
+  judge: { type: "string" },
+  text: { type: "boolean", default: false },
+  body: { type: "string" },
+  size: { type: "string" },
+  edit: { type: "string" },
+  mask: { type: "string" },
+  help: { type: "boolean", short: "h", default: false },
+  version: { type: "boolean", short: "v", default: false },
+} as const;
+
+function parseCli() {
+  try {
+    return parseArgs({ allowPositionals: true, options: OPTIONS });
+  } catch (e: any) {
+    // ERR_PARSE_ARGS_*: one line, not a stack trace.
+    const msg = String(e?.message ?? e).split("\n")[0].replace(/\s*To specify a positional.*$/, "");
+    process.stderr.write(
+      `hive: ${msg}\n` +
+        `  text that starts with "-" goes after --, e.g. hive run claude -- "-fix this"; hive --help lists the options\n`,
+    );
+    process.exit(2);
+  }
+}
+const { values, positionals } = parseCli();
 const [cmd, ...rest] = positionals;
+if (values.version) {
+  const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
+  console.log(`hive ${pkg.version}`);
+  process.exit(0);
+}
+if (values.policy !== undefined && !POLICIES.includes(values.policy as PermissionPolicy)) {
+  process.stderr.write(`hive: unknown --policy "${values.policy}" (use ${POLICIES.join(", ")})\n`);
+  process.exit(2);
+}
 // SEC-004: allow-all outside a worktree is the riskiest setup; say so (once, on stderr).
 if (values.policy === "allow-all" && !values.worktree && ["run", "chat", "loop", "every", "watch", "once", "start"].includes(cmd ?? ""))
   process.stderr.write(
@@ -174,11 +196,11 @@ const USAGE = `hive — local multi-agent harness
   hive link <a> <b> [--name g] [--review]   let agents talk (a group with you in it); --review: you approve each message
   hive group mode <name> direct|review [--times N]   review = messages wait for you; N = max agent messages per hour
   hive scope open|linked                  linked: agents only reach agents they're linked with · hive held · hive release|drop <id>
-  hive recipe list · hive recipe apply <id> [--agent claude] [--alt codex]   a ready-made team (review-loop, solid-code, idea-pipeline, studio)
+  hive recipe list · hive recipe apply <id> [--agent claude] [--alt codex]   a ready-made team (squad, review-loop, solid-code, idea-pipeline, studio)
   hive skill list · hive skill run <name> k=v … · hive skill new <name> [--describe "…"]   reusable prompts with parameters
   hive once <agent> [--in 20m | --at 2026-10-01T09:00] "prompt"
   hive jobs [--all]                       list jobs
-  hive job stop|start|runs|rm <id>
+  hive job stop|start|runs|show|rm <id|agent>
   hive serve [--bridge discord,whatsapp]  run all jobs + mail delivery until Ctrl-C (optionally reachable from chat)
   hive start <agent> --as security|scout|bughunter    run a preset's default job
 
@@ -1533,7 +1555,8 @@ async function chat(hub: Hub, s: AgentSession) {
 main().then(
   () => process.exit(process.exitCode ?? 0),
   (e) => {
-    console.error(red(String(e?.stack ?? e)));
+    // A message is enough for expected failures (not a repository, no such worktree…); HIVE_DEBUG=1 for the stack.
+    console.error(red(String((process.env.HIVE_DEBUG === "1" ? e?.stack : e?.message) || e)));
     process.exit(1);
   },
 );
