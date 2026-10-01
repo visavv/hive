@@ -113,8 +113,10 @@ export interface JobRunRow {
 /** Broadcasts sent before an agent joined the hive aren't its mail. */
 const JOINED = `COALESCE((SELECT joined_at FROM agents WHERE name=@agent), 0)`;
 /** The human ("owner") gets mail addressed to "owner", not agents' broadcasts. */
-const BCAST = `((m.to_agent='*' AND @agent<>'owner' AND m.ts >= ${JOINED}) OR (m.to_agent LIKE '@%' AND EXISTS (SELECT 1 FROM group_members g WHERE g.grp=substr(m.to_agent,2) AND g.member=@agent AND m.ts >= g.added_at)))`;
-/** Messages delivered to many (broadcast "*" or a group "@name") keep read state per agent. */
+const BCAST = `(((m.to_agent='*' AND @agent<>'owner' AND m.ts >= ${JOINED}) OR (m.to_agent LIKE '@%' AND EXISTS (SELECT 1 FROM group_members g WHERE g.grp=substr(m.to_agent,2) AND g.member=@agent AND m.ts >= g.added_at)))
+  AND NOT EXISTS (SELECT 1 FROM message_reads s WHERE s.message_id=m.id AND s.agent=@agent AND s.read_at=0))`;
+/** Messages delivered to many (broadcast "*" or a group "@name") keep read state per agent.
+ *  A message_reads row with read_at=0 means "not for this agent" (a guarded copy went to review instead). */
 const SHARED = `(m.to_agent='*' OR m.to_agent LIKE '@%')`;
 
 export class HiveDb {
@@ -272,6 +274,7 @@ export class HiveDb {
       ["policy", "TEXT"],
       ["preset", "TEXT"],
       ["briefing", "TEXT"],
+      ["auto_since", "INTEGER"],
     ] as const)
       if (!agentCols.has(name)) this.db.exec(`ALTER TABLE agents ADD COLUMN ${name} ${type}`);
     const runCols = new Set((this.db.prepare(`PRAGMA table_info(job_runs)`).all() as { name: string }[]).map((c) => c.name));
@@ -279,6 +282,9 @@ export class HiveDb {
     const msgCols = new Set((this.db.prepare(`PRAGMA table_info(messages)`).all() as { name: string }[]).map((c) => c.name));
     if (!msgCols.has("held")) this.db.exec(`ALTER TABLE messages ADD COLUMN held TEXT`);
     if (!msgCols.has("via")) this.db.exec(`ALTER TABLE messages ADD COLUMN via TEXT`);
+    // Who added a group member: 'owner' (or a row from before this column) = a link the human made or approved.
+    const gmCols = new Set((this.db.prepare(`PRAGMA table_info(group_members)`).all() as { name: string }[]).map((c) => c.name));
+    if (!gmCols.has("added_by")) this.db.exec(`ALTER TABLE group_members ADD COLUMN added_by TEXT NOT NULL DEFAULT 'owner'`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS messages_held ON messages(held) WHERE held IS NOT NULL`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS messages_via ON messages(via, ts) WHERE via IS NOT NULL`);
     this.db.exec(`CREATE TABLE IF NOT EXISTS verdicts (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, state TEXT NOT NULL)`);
@@ -323,6 +329,14 @@ export class HiveDb {
     if (a.status === "asleep") return a.status;
     if (!a.owner || (a.lease_until ?? 0) < Date.now()) return "asleep";
     return a.status;
+  }
+  /** An automatic turn (job run, mail wake-up) started or ended: max_concurrent counts these across processes. */
+  setAutoTurn(name: string, on: boolean) {
+    this.db.prepare(`UPDATE agents SET auto_since=? WHERE name=?`).run(on ? Date.now() : null, name);
+  }
+  /** Agents in an automatic turn right now, in a live hive process (a dead one's lease has run out). */
+  autoTurns(): string[] {
+    return (this.db.prepare(`SELECT name FROM agents WHERE auto_since IS NOT NULL AND lease_until>?`).all(Date.now()) as { name: string }[]).map((r) => r.name);
   }
   setPid(name: string, pid: number | null) {
     this.db.prepare(`UPDATE agents SET pid=? WHERE name=?`).run(pid, name);
@@ -407,9 +421,42 @@ export class HiveDb {
     if (this.overCap(grp, s.max_per_hour)) return { ok: true, held: `@${grp} reached its limit of ${s.max_per_hour} agent messages per hour`, via: grp };
     return { ok: true, via: grp };
   }
+  /** Is `name` an agent that may run anything (and so only takes mail from agents the owner linked it with)? */
+  isGuarded(name: string): boolean {
+    return name !== "owner" && this.guardAllowAll() && this.getAgent(name)?.policy === "allow-all";
+  }
+  /** Do `a` and `b` share a group whose membership the owner made or approved (not one agents built themselves)? */
+  ownerLinked(a: string, b: string): boolean {
+    return !!this.db
+      .prepare(`SELECT 1 FROM group_members x JOIN group_members y ON x.grp=y.grp WHERE x.member=? AND y.member=? AND x.added_by='owner' AND y.added_by='owner' LIMIT 1`)
+      .get(a, b);
+  }
+  private guardHeld(from: string, to: string): string {
+    return `${to} can run anything and isn't linked with ${from}; waiting for your review`;
+  }
+  /**
+   * Mail to many ("*" or "@group") from an agent: allow-all recipients the owner
+   * hasn't linked with the sender don't get it; each gets a held copy for the
+   * owner's review instead. Returns those recipients.
+   */
+  guardShared(id: number): string[] {
+    const m = this.db.prepare(`SELECT * FROM messages WHERE id=?`).get(id) as Message | undefined;
+    if (!m || m.from_agent === "owner" || m.held || !(m.to_agent === "*" || m.to_agent.startsWith("@")) || !this.guardAllowAll()) return [];
+    const to = m.to_agent === "*" ? this.listAgents().map((a) => a.name) : this.groupMembers(m.to_agent.slice(1));
+    const guarded = to.filter((r) => r !== m.from_agent && this.isGuarded(r) && !this.ownerLinked(m.from_agent, r));
+    const skip = this.db.prepare(`INSERT OR REPLACE INTO message_reads (message_id, agent, read_at) VALUES (?,?,0)`);
+    this.db.transaction(() => {
+      for (const r of guarded) {
+        skip.run(id, r);
+        this.send(m.from_agent, r, m.subject, m.body, m.thread ?? undefined, { held: `${this.guardHeld(m.from_agent, r)} (sent to ${m.to_agent})`, via: m.via ?? undefined });
+      }
+    })();
+    return guarded;
+  }
   /**
    * May `from` message `to`, and is it delivered now or held for the owner?
    * The owner is never restricted, and agents can always reach the owner.
+   * Mail to many reaching allow-all agents is guarded per recipient: see guardShared.
    */
   route(from: string, to: string): Route {
     if (from === "owner" || to === "owner") return { ok: true };
@@ -424,14 +471,12 @@ export class HiveDb {
       return this.throughGroup(g);
     }
     const shared = mine.filter((g) => g.members.includes(to));
-    if (!shared.length) {
-      if (linked) return { ok: false, reason: `You aren't linked with ${to}; only the human links agents. Your groups: ${list}. Ask the owner if you need ${to}.` };
-      // An agent that may run anything only takes orders from agents you linked it with:
-      // mail from anyone else waits for you (a peer can't steer it into running commands).
-      if (this.guardAllowAll() && this.getAgent(to)?.policy === "allow-all")
-        return { ok: true, held: `${to} can run anything and isn't linked with ${from}; waiting for your review` };
-      return { ok: true };
-    }
+    if (linked && !shared.length) return { ok: false, reason: `You aren't linked with ${to}; only the human links agents. Your groups: ${list}. Ask the owner if you need ${to}.` };
+    // An agent that may run anything only takes orders from agents you linked it with
+    // (a group agents built themselves doesn't count): mail from anyone else waits for
+    // you, so a peer can't steer it into running commands.
+    if (this.isGuarded(to) && !this.ownerLinked(from, to)) return { ok: true, held: this.guardHeld(from, to) };
+    if (!shared.length) return { ok: true };
     // The most permissive shared group wins: a direct group under its cap delivers now.
     const routes = shared.map((g) => this.throughGroup(g.name));
     return routes.find((r) => r.ok && !r.held) ?? routes[0];
@@ -543,8 +588,11 @@ export class HiveDb {
       }),
     )();
   }
-  thread(thread: string): Message[] {
-    return this.db.prepare(`SELECT * FROM messages WHERE thread=? ORDER BY id`).all(thread) as Message[];
+  /** A thread as `agent` may see it: mail it sent or received (broadcasts, its groups), nothing held. */
+  thread(thread: string, agent: string): Message[] {
+    return this.db
+      .prepare(`SELECT m.* FROM messages m WHERE m.thread=@thread AND m.held IS NULL AND (m.from_agent=@agent OR m.to_agent=@agent OR ${BCAST}) ORDER BY m.id`)
+      .all({ thread, agent }) as Message[];
   }
 
   // ---- usage, limits, settings ----
@@ -587,6 +635,10 @@ export class HiveDb {
       return row;
     })();
   }
+  /** Media jobs claimed before `id` that are still running (they hold a slot of the daily cap). */
+  runningMedia(id: number): { id: number; kind: string; params: string }[] {
+    return this.db.prepare(`SELECT id, kind, params FROM media_jobs WHERE status='running' AND id<? AND ts>=?`).all(id, Date.now() - 86_400_000) as any;
+  }
   finishMedia(id: number, result: string | null, error: string | null) {
     this.db.prepare(`UPDATE media_jobs SET status=?, result=?, error=? WHERE id=?`).run(error ? "failed" : "done", result, error, id);
   }
@@ -606,10 +658,14 @@ export class HiveDb {
   }
 
   // ---- groups ----
-  addToGroup(grp: string, members: string[]) {
-    const stmt = this.db.prepare(`INSERT OR IGNORE INTO group_members (grp, member, added_at) VALUES (?,?,?)`);
+  /** Add members; `by` is the agent doing it, or "owner" (the human), whose change approves the whole group. */
+  addToGroup(grp: string, members: string[], by = "owner") {
+    const stmt = this.db.prepare(`INSERT OR IGNORE INTO group_members (grp, member, added_at, added_by) VALUES (?,?,?,?)`);
     const now = Date.now();
-    this.db.transaction(() => members.forEach((m) => stmt.run(grp, m, now)))();
+    this.db.transaction(() => {
+      members.forEach((m) => stmt.run(grp, m, now, by));
+      if (by === "owner") this.db.prepare(`UPDATE group_members SET added_by='owner' WHERE grp=?`).run(grp);
+    })();
   }
   removeFromGroup(grp: string, member: string) {
     this.db.prepare(`DELETE FROM group_members WHERE grp=? AND member=?`).run(grp, member);

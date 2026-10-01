@@ -4,6 +4,7 @@
  * with count + senders, fresh sessions, config options, context %.
  */
 import { Hub } from "../src/core/hub.js";
+import { AGENTS } from "../src/core/agents.js";
 import type { SessionEvent } from "../src/core/session.js";
 import { assert, finish, freshDir, mock, until } from "./util.js";
 
@@ -197,6 +198,22 @@ await until(() => hub.db.unreadCount("sleeper") === 0, 20_000, "sleeper woken").
 assert(hub.db.unreadCount("sleeper") === 0, "serve-style hub wakes a sleeping agent to deliver its mail");
 assert(waker.sessions.get("sleeper")?.sessionId === slSession, "the woken agent resumed its previous session");
 await waker.close();
+
+// ---- waking backs off after a failed start, and doesn't wake while the budget holds automatic work ----
+AGENTS["broken-test"] = { id: "broken-test", label: "broken", command: `${dir}/no-such-cli`, args: [], install: "" };
+const wk = new Hub({ hiveDb: `${dir}/wk.db`, pollMs: 200, wakeSleeping: true, onEvent });
+for (const [name, kind] of [["broken", "broken-test"], ["held", "mock"]]) {
+  wk.db.upsertAgent({ name, kind, cwd: process.cwd(), role: "", status: "asleep", status_note: "", session_id: null });
+  wk.db.send("owner", name, "task", "do it");
+}
+wk.db.setSetting("budget.daily_tokens.mock", "1");
+wk.db.recordUsage("x", "mock", 10, 0, true);
+wk.run();
+await new Promise((r) => setTimeout(r, 6500));
+const wakes = (n: string) => log.filter((l) => l.agent === n && l.e.type === "notice" && /^waking /.test((l.e as any).text)).length;
+assert(wakes("broken") === 1 && log.some((l) => l.agent === "broken" && /trying again in 30s/.test((l.e as any).text ?? "")), `a failed wake-up backs off instead of respawning every few seconds (${wakes("broken")} tries)`);
+assert(wakes("held") === 0 && !wk.sessions.has("held"), "agents aren't woken while the budget holds automatic work");
+await wk.close();
 
 await hub.close();
 finish("session");

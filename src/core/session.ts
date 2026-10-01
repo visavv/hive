@@ -20,7 +20,8 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import * as acp from "@agentclientprotocol/sdk";
 import type * as schema from "@agentclientprotocol/sdk";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { AGENTS, groupSpawn, killTree, resolveEnv, spawnSpec, type AgentDef } from "./agents.js";
+import { confine } from "./confine.js";
+import { AGENTS, agentEnv, groupSpawn, killTree, spawnSpec, type AgentDef } from "./agents.js";
 import { nodeEntry } from "./paths.js";
 import { AUTH_STATUS_UPDATE, authLabel, type AuthStatus } from "./doctor.js";
 import { HiveDb } from "../hive/db.js";
@@ -204,9 +205,8 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
   }
 
   async start(): Promise<void> {
-    const env: NodeJS.ProcessEnv = { ...process.env, ...resolveEnv(this.def) };
-    // Media keys are only used by the hub (media.ts); agents don't need to see them.
-    for (const k of ["ELEVENLABS_API_KEY", "HIVE_IMAGE_KEY"]) if (!JSON.stringify(this.def.env ?? {}).includes(k)) delete env[k];
+    // Bridge tokens, media keys and other providers' keys stay in the hive process.
+    const env = agentEnv(this.def);
     const spec = spawnSpec(this.def);
     this.proc = spawn(spec.command, spec.args, {
       cwd: this.cwd,
@@ -638,6 +638,7 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
     }
     this.busy = true;
     this.automatic = automatic;
+    if (automatic) this.db.setAutoTurn(this.name, true);
     this.lastActivity = Date.now();
     this.dbStatus(this.name, "working", text.slice(0, 120));
     this.emitEv({ type: "status", status: "working", note: text.slice(0, 120) });
@@ -688,6 +689,7 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
       this.lastReply = this.replyText;
       this.emitEv({ type: "turn_end", stopReason: result.stopReason, usage: result.usage });
       if (this.db.db.open) {
+        if (this.automatic) this.db.setAutoTurn(this.name, false);
         const tokens = (result.usage as any)?.totalTokens ?? 0;
         const cost = Math.max(0, this.costTotal - this.costLogged);
         this.costLogged = this.costTotal;
@@ -787,6 +789,8 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
   /** Agents must send absolute paths; refuse anything else. */
   private checkPath(p: string): string {
     if (!isAbsolute(p)) throw new Error(`path must be absolute: ${p}`);
+    // A chat-only agent has no business with files outside its folder (other policies ask per tool call).
+    if (this.policy === "reject-all") return confine(this.cwd, p);
     return p;
   }
 

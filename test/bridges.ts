@@ -192,6 +192,9 @@ assert(wgot.map((g) => g.text).join(",") === "status,report 12h" && wgot[0].from
 await wt.send("user:+358 40 123 4567", "hello");
 assert(waSent[0] === "358401234567@s.whatsapp.net:hello", "whatsapp: replies go to the normalized number");
 assert(qrShown === "QR-CODE-DATA", "whatsapp: the pairing QR is surfaced on first login");
+(wt as any).reconnects = 19;
+ev.emit("connection.update", { connection: "open" });
+assert((wt as any).reconnects === 0, "whatsapp: a successful connection resets the reconnect count");
 await wt.stop();
 
 finish("bridges");
