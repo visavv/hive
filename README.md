@@ -21,6 +21,7 @@ Design goals, in order:
 | Automation | loops, intervals, watch-for-new-code/commits/blackboard, cooldowns, recipes (coder + reviewer, tester + improver, idea pipeline, creator studio) |
 | Skills | prompts with parameters (YouTube titles/descriptions/chapters from a transcript **or a YouTube link**, code review, prompt-engineer) |
 | Media | ElevenLabs voice-over, image generate/edit (keys stay in the hive process) |
+| Board & stats | Kanban board for notes and projects (agents and automations add cards; `hive board`), token ledger by provider / model / task / project (`hive stats`) |
 | Safety & cost | per-agent permission policies, worktrees, untrusted-content labelling, usage + limit windows with reset times, daily budgets, pause switch |
 | Terminal | `hive tui`: the pane grid in your terminal, starting with a four-agent squad (planner, coder, reviewer, tester); `/add`, `/rm`, `/link`, `/group` ([docs/TUI.md](docs/TUI.md)) |
 | Cloud | run hive on a server or VPS and open the same agents, sessions, board and stats from any machine: `hive ui --remote you@server --remote-cwd ~/code/app` ([docs/CLOUD.md](docs/CLOUD.md)) |
@@ -39,7 +40,20 @@ How it compares with Maestro, Agent Deck, Zed, Claude Code teams and others: [do
 | ![Code review](docs/screenshots/06-review.png) **Reviewer:** finished turns fold their tool calls into "Worked for …" so the answer is what you read | ![Group chat](docs/screenshots/07-group-chat.png) **Group chat:** what linked agents said to each other; review-each-message mode holds mail for you |
 | ![Hive drawer](docs/screenshots/08-hive-drawer.png) **Since you left:** what needs you, job runs, blackboard changes | ![Usage and spending guards](docs/screenshots/09-usage.png) **Usage:** limit windows, daily caps, pause all automatic work |
 | ![Verdict setup](docs/screenshots/10-verdict.png) **Verdict:** one prompt to several agents, a blind judge picks the best parts | ![Recipes](docs/screenshots/02-recipes.png) **Recipes:** ready-made teams (squad, coder + reviewer, idea pipeline, creator studio) |
-| ![Light theme](docs/screenshots/11-light.png) **Light theme and density** from the palette | ![Terminal UI](docs/screenshots/13-tui.png) **`hive tui`:** the same squad in a terminal, over SSH from your phone |
+| ![Kanban board](docs/screenshots/14-board.png) **Board (Ctrl+J):** Draft, In progress, Done hidden away; agents add cards too | ![Token stats](docs/screenshots/16-stats-task.png) **Token stats:** by provider, model, task and project, across all projects |
+| ![Light theme](docs/screenshots/11-light.png) **Themes and density** from the palette | ![Terminal UI](docs/screenshots/13-tui.png) **`hive tui`:** the same squad in a terminal, over SSH from your phone |
+
+**Themes:** Dark, OLED black, Midnight, Forest, Ember, Rosé, Light, Paper (Ctrl+K → "theme").
+
+<table><tr>
+<td><img src="docs/screenshots/17-theme-oled.png" alt="OLED black"><br><sub>OLED black</sub></td>
+<td><img src="docs/screenshots/17-theme-midnight.png" alt="Midnight"><br><sub>Midnight</sub></td>
+<td><img src="docs/screenshots/17-theme-forest.png" alt="Forest"><br><sub>Forest</sub></td>
+</tr><tr>
+<td><img src="docs/screenshots/17-theme-ember.png" alt="Ember"><br><sub>Ember</sub></td>
+<td><img src="docs/screenshots/17-theme-rose.png" alt="Rosé"><br><sub>Rosé</sub></td>
+<td><img src="docs/screenshots/17-theme-paper.png" alt="Paper"><br><sub>Paper</sub></td>
+</tr></table>
 
 <img src="docs/screenshots/12-vertical.png" width="300" align="right" alt="Vertical 9:16 layout">
 

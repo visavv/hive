@@ -8,6 +8,18 @@ import { agentNameProblem } from "../../core/names.js";
 import { GroupChat, GroupsSection, LinkDialog, PauseIcon } from "./Links.js";
 import { VerdictWindow } from "./Verdict.js";
 import { StatsDialog } from "./Stats.js";
+import { KanbanView } from "./Kanban.js";
+
+export const THEMES: { id: NonNullable<Layout["theme"]>; label: string; hint: string; tone: "dark" | "light" }[] = [
+  { id: "dark", label: "Dark", hint: "neutral grays, periwinkle accent", tone: "dark" },
+  { id: "oled", label: "OLED black", hint: "true black, pixels off", tone: "dark" },
+  { id: "midnight", label: "Midnight", hint: "deep navy, cyan", tone: "dark" },
+  { id: "forest", label: "Forest", hint: "green-black, mint", tone: "dark" },
+  { id: "ember", label: "Ember", hint: "warm charcoal, orange", tone: "dark" },
+  { id: "rose", label: "Rosé", hint: "plum, soft pink", tone: "dark" },
+  { id: "light", label: "Light", hint: "white, indigo", tone: "light" },
+  { id: "paper", label: "Paper", hint: "warm sepia, ink blue", tone: "light" },
+];
 import { Palette, type PaletteAction } from "./Palette.js";
 import { agentState, rollup, STATE_LABEL, StatePill } from "./state.js";
 import { IconBell, IconBellOff, IconColumns, IconInbox, IconMenu, IconPlus, IconRows, IconScale, IconSearch, IconSpark, IconTeam } from "./Icons.js";
@@ -178,6 +190,9 @@ export function App() {
       } else if (mod && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setPalette((v) => !v);
+      } else if (mod && e.key.toLowerCase() === "j") {
+        e.preventDefault();
+        setDialog((d) => (d === "board" ? "" : "board"));
       } else if (mod && e.key.toLowerCase() === "i") {
         e.preventDefault();
         setDrawer((d) => (d ? false : "default"));
@@ -195,6 +210,7 @@ export function App() {
   }, [layout.zoom]);
   useEffect(() => {
     document.documentElement.dataset.theme = layout.theme ?? "dark";
+    document.documentElement.dataset.tone = THEMES.find((t) => t.id === (layout.theme ?? "dark"))?.tone ?? "dark";
     document.documentElement.dataset.density = layout.density ?? "comfortable";
   }, [layout.theme, layout.density]);
 
@@ -211,7 +227,8 @@ export function App() {
     { id: "sidebar", label: "Toggle sidebar", keys: "Ctrl+B", run: () => toggleSidebar() },
     { id: "max", label: "Maximize / restore the focused agent", keys: "Ctrl+M", run: () => toggleMaximize(focus.active) },
     { id: "layout", label: `Layout: ${layout.orientation === "vertical" ? "horizontal" : layout.orientation === "horizontal" ? "auto" : "vertical"} (now ${layout.orientation ?? "auto"})`, run: () => saveLayout({ orientation: layout.orientation === "vertical" ? "horizontal" : layout.orientation === "horizontal" ? "auto" : "vertical" }) },
-    { id: "theme", label: `Theme: ${layout.theme === "light" ? "dark" : "light"}`, run: () => saveLayout({ theme: layout.theme === "light" ? "dark" : "light" }) },
+    { id: "board", label: "Board (Kanban): Draft, In progress, Done", keys: "Ctrl+J", run: () => setDialog("board") },
+    ...THEMES.filter((t) => t.id !== (layout.theme ?? "dark")).map((t) => ({ id: "theme-" + t.id, label: `Theme: ${t.label}`, hint: t.hint, run: () => saveLayout({ theme: t.id }) })),
     ...(["compact", "comfortable", "spacious"] as const)
       .filter((d) => d !== (layout.density ?? "comfortable"))
       .map((d) => ({ id: "density-" + d, label: `Density: ${d}`, run: () => saveLayout({ density: d }) })),
@@ -232,6 +249,7 @@ export function App() {
         onHive={() => setDrawer(drawer ? false : "default")}
         onUsage={() => setDrawer(drawer === "usage" ? false : "usage")}
         onPalette={() => setPalette(true)}
+        onBoard={() => setDialog((d) => (d === "board" ? "" : "board"))}
         vertical={vertical}
         columns={columns}
       />
@@ -283,6 +301,7 @@ export function App() {
             ))}
           </Grid>
         )}
+        {dialog === "board" && <KanbanView onClose={() => setDialog("")} />}
       </main>
       {adding && <AddAgentDialog onClose={() => setAdding(false)} />}
       {jobFor && <JobDialog agent={jobFor} onClose={() => setJobFor(null)} />}
@@ -343,7 +362,7 @@ function toggleSidebar() {
 
 // ---- top bar: broadcast + layout controls ----
 
-function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onPalette, vertical, columns }: {
+function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onPalette, onBoard, vertical, columns }: {
   onUsage: () => void;
   vertical: boolean;
   columns: number;
@@ -353,6 +372,7 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onPalett
   onAdd: () => void;
   onHive: () => void;
   onPalette: () => void;
+  onBoard: () => void;
 }) {
   const unread = useStore((s) => s.ownerUnread);
   const held = useStore((s) => s.heldTotal);
@@ -427,6 +447,9 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onPalett
       </button>
       <button className="ghost cmd-btn" onClick={onPalette} title="jump to an agent or run any command (Ctrl+K)">
         <IconSearch /> <span className="bl">Commands</span> <kbd>Ctrl K</kbd>
+      </button>
+      <button className="ghost" onClick={onBoard} title="Kanban board (Ctrl+J)">
+        <IconColumns /> <span className="bl">Board</span>
       </button>
       <button className={`hive-btn${unread || held ? " has-mail" : ""}`} onClick={onHive} title={`report, inbox, blackboard, mail (Ctrl+I)${held ? ` · ${held} message${held === 1 ? "" : "s"} waiting for your review` : ""}`}>
         <IconInbox /> <span className="bl">Hive</span>
