@@ -6,7 +6,8 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { store, useStore } from "./store.js";
-import { focus } from "./focus.js";
+import { focus, useOverlay } from "./focus.js";
+import { saveLayout } from "./App.js";
 import { agentState, STATE_LABEL, StatePill } from "./state.js";
 
 export interface PaletteAction {
@@ -22,6 +23,7 @@ export function Palette({ actions, onClose }: { actions: PaletteAction[]; onClos
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
+  useOverlay("palette", onClose);
   const items = useMemo(() => {
     const agents = names.map((n, i) => {
       const st = agentState(n);
@@ -33,10 +35,7 @@ export function Palette({ actions, onClose }: { actions: PaletteAction[]; onClos
         keys: i < 9 ? `Ctrl+${i + 1}` : undefined,
         state: st,
         run: () => {
-          if (store.layout.maximized && store.layout.maximized !== n) {
-            store.layout = { ...store.layout, maximized: null };
-            store.changed();
-          }
+          if (store.layout.maximized && store.layout.maximized !== n) saveLayout({ maximized: null });
           setTimeout(() => focus.to(n), 0);
         },
       };
@@ -74,8 +73,7 @@ export function Palette({ actions, onClose }: { actions: PaletteAction[]; onClos
           placeholder="Jump to an agent or run a command…"
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Escape") onClose();
-            else if (e.key === "ArrowDown") {
+            if (e.key === "ArrowDown") {
               e.preventDefault();
               setSel((s) => Math.min(items.length - 1, s + 1));
             } else if (e.key === "ArrowUp") {

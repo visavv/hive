@@ -3,7 +3,7 @@ import type { AgentView, ElicitationAsk, PermissionAsk } from "../protocol.js";
 import { rpc } from "./bridge.js";
 import { renderMarkdown } from "./markdown.js";
 import { store, usePane, useStore, type Item } from "./store.js";
-import { focus } from "./focus.js";
+import { focus, onActivate } from "./focus.js";
 import { ctxPct, fmtIdle, statusLabel, noteLabel } from "./format.js";
 import { PromptEditor } from "./Extras.js";
 import { GroupChips, groupColor } from "./Links.js";
@@ -182,6 +182,8 @@ function closePane(name: string) {
   store.layout = { ...l, panes: l.panes.filter((p) => p.name !== name), maximized: l.maximized === name ? null : l.maximized };
   store.starting.delete(name);
   store.panes.delete(name);
+  store.readyAt.delete(name);
+  focus.forget(name);
   store.changed();
   void rpc("saveLayout", store.layout);
   void rpc("removeAgent", { name, stopJobs: true }).catch(() => {});
@@ -412,7 +414,14 @@ function ToolCard({ item }: { item: Item & { k: "tool" } }) {
   const loc = item.locations?.[0]?.path;
   return (
     <div className={`tool ${item.status}`}>
-      <div className="tool-head" onClick={() => hasBody && setOpen(!open)}>
+      <div
+        className="tool-head"
+        onClick={() => hasBody && setOpen(!open)}
+        role={hasBody ? "button" : undefined}
+        tabIndex={hasBody ? 0 : undefined}
+        aria-expanded={hasBody ? open : undefined}
+        onKeyDown={hasBody ? onActivate(() => setOpen(!open)) : undefined}
+      >
         <span className="tstatus">{item.status === "completed" ? "✓" : item.status === "failed" ? "✗" : item.status === "in_progress" ? "…" : "○"}</span>
         <span className="tkind">{item.kind ?? "tool"}</span>
         <span className="ttitle">{item.title}</span>
@@ -578,6 +587,11 @@ function Composer({ name, agent }: { name: string; agent?: AgentView }) {
     if (ref.current) focus.register(name, ref.current);
     return () => focus.unregister(name);
   }, [name]);
+  // A new agent's pane was asked for focus while its input was still disabled.
+  const usable = !!agent;
+  useEffect(() => {
+    if (usable) focus.ready(name);
+  }, [usable, name]);
   const send = (raw = text) => {
     const t = raw.trim();
     if (!t || !agent) return;
