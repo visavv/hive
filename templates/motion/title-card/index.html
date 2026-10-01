@@ -1,0 +1,76 @@
+<!doctype html>
+<!--
+  hive motion template: kinetic title card.
+  Contract: window.hiveRender = { duration, fps, width, height, seek(t) }.
+  seek(t) must draw the frame at t seconds from scratch: no timers, no
+  requestAnimationFrame, no Date.now(), no randomness without a fixed seed.
+  Everything the page loads must sit in this folder (remote URLs are blocked).
+  Render: hive render out/motion/<name> [--alpha] [--fps 60] [--size 1920x1080]
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<title>Title card</title>
+<style>
+  :root { --bg1: #0f1226; --bg2: #2a1b4d; --fg: #ffffff; --accent: #ffcc33; }
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+  body { font-family: "Segoe UI", "Inter", "Helvetica Neue", Arial, sans-serif; }
+  .bg { position: absolute; inset: 0; background: radial-gradient(circle at 30% 40%, var(--bg2), var(--bg1) 70%); }
+  .alpha .bg { display: none; }
+  .stage { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .title { font-size: 13vh; font-weight: 800; color: var(--fg); letter-spacing: -0.02em; white-space: pre; }
+  .title span { display: inline-block; will-change: transform, opacity; }
+  .bar { height: 1.1vh; background: var(--accent); margin-top: 3vh; border-radius: 1vh; }
+  .sub { font-size: 4.2vh; font-weight: 500; color: var(--fg); opacity: 0; margin-top: 2.5vh; letter-spacing: 0.25em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+<div class="bg"></div>
+<div class="stage">
+  <div class="title" id="title"></div>
+  <div class="bar" id="bar"></div>
+  <div class="sub" id="sub"></div>
+</div>
+<script>
+  // ---- edit these ----
+  const TITLE = "BUILD IT FAST";
+  const SUBTITLE = "episode 12";
+  const DURATION = 4; // seconds
+
+  if (new URLSearchParams(location.search).has("alpha")) document.documentElement.classList.add("alpha");
+  const title = document.getElementById("title");
+  const bar = document.getElementById("bar");
+  const sub = document.getElementById("sub");
+  sub.textContent = SUBTITLE;
+  const letters = [...TITLE].map((ch) => {
+    const s = document.createElement("span");
+    s.textContent = ch;
+    title.appendChild(s);
+    return s;
+  });
+
+  const clamp = (x) => Math.min(1, Math.max(0, x));
+  const easeOutBack = (x) => 1 + 2.7 * Math.pow(x - 1, 3) + 1.7 * Math.pow(x - 1, 2);
+  const easeInOut = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+
+  function seek(t) {
+    // letters drop in one after another, then everything leaves at the end
+    const out = clamp((t - (DURATION - 0.6)) / 0.6);
+    letters.forEach((s, i) => {
+      const p = clamp((t - 0.15 - i * 0.05) / 0.5);
+      const e = easeOutBack(p);
+      s.style.opacity = String(p * (1 - out));
+      s.style.transform = `translateY(${(1 - e) * 40 - out * 20}vh) rotate(${(1 - e) * -12}deg) scale(${0.6 + 0.4 * e})`;
+    });
+    const b = easeInOut(clamp((t - 0.6) / 0.8));
+    bar.style.width = `${b * 60 * (1 - out)}vw`;
+    const sp = easeInOut(clamp((t - 1.1) / 0.6));
+    sub.style.opacity = String(sp * (1 - out));
+    sub.style.transform = `translateY(${(1 - sp) * 3}vh)`;
+  }
+
+  window.hiveRender = { duration: DURATION, fps: 30, width: 1920, height: 1080, seek };
+  seek(0);
+</script>
+</body>
+</html>

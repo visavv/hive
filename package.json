@@ -11,7 +11,7 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/cli/index.ts",
     "hive-mcp": "tsx src/hive/server.ts",
-    "test": "tsx test/e2e.ts && tsx test/session.ts && tsx test/scheduler.ts && tsx test/unit.ts && tsx test/backend.ts && tsx test/worktree.ts && tsx test/groups.ts && tsx test/skills.ts && tsx test/bridges.ts && tsx test/budget.ts && tsx test/api.ts && tsx test/media.ts && tsx test/links.ts && tsx test/fixes.ts && tsx test/youtube.ts && tsx test/verdict.ts && tsx test/tui.ts && tsx test/ledger.ts && tsx test/kanban.ts && tsx test/mux.ts && tsx test/improve.ts && tsx test/code.ts && tsx test/devices.ts && tsx test/voice.ts && tsx test/web.ts",
+    "test": "tsx test/e2e.ts && tsx test/session.ts && tsx test/scheduler.ts && tsx test/unit.ts && tsx test/backend.ts && tsx test/worktree.ts && tsx test/groups.ts && tsx test/skills.ts && tsx test/bridges.ts && tsx test/budget.ts && tsx test/api.ts && tsx test/media.ts && tsx test/links.ts && tsx test/fixes.ts && tsx test/youtube.ts && tsx test/verdict.ts && tsx test/tui.ts && tsx test/ledger.ts && tsx test/kanban.ts && tsx test/mux.ts && tsx test/improve.ts && tsx test/code.ts && tsx test/devices.ts && tsx test/voice.ts && tsx test/web.ts && tsx test/mcp-extra.ts && tsx test/twitch.ts && tsx test/motion.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.ui.json",
     "ui:build": "node scripts/build-ui.mjs",
     "ui": "tsx src/cli/index.ts ui",

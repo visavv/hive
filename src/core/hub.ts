@@ -15,6 +15,8 @@ import { hiveHome } from "./home.js";
 import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { mediaKinds, runMedia } from "../hive/media.js";
 import { Devices, type DeviceKind } from "../hive/devices.js";
+import { storeMcp, storedMcp } from "./mcp-extra.js";
+import { startTwitchWatcher } from "../hive/twitch.js";
 
 export interface HubOptions {
   hiveDb: string;
@@ -82,6 +84,7 @@ export class Hub {
       this.mediaTimer = setInterval(() => void this.mediaTick(), 300);
       this.mediaTimer.unref?.();
     }
+    if (opts.wakeSleeping) this.twitch = startTwitchWatcher(this.db);
     if (opts.devices !== false) {
       this.devices = new Devices({ projectDir: dirname(this.hiveDb), db: this.db });
       this.deviceTimer = setInterval(() => void this.deviceTick(), 250);
@@ -117,6 +120,8 @@ export class Hub {
   }
 
   private mediaTimer?: NodeJS.Timeout;
+  /** Twitch VOD/clip polling (creator: hive twitch watch --detach / recipe twitch-clips); serve and the app only. */
+  private twitch?: { stop: () => void };
   private mediaBusy = 0;
   private async mediaTick() {
     if (!this.db.db.open || this.mediaBusy >= 2) return;
@@ -183,6 +188,8 @@ export class Hub {
 
   private async startClaimed(o: AddOptions): Promise<AgentSession> {
     const { resume, worktree, preset, ...rest } = o;
+    // Extra MCP servers: given now, else the ones this agent had last time (wake-ups, restarts).
+    rest.mcp = o.mcp ?? storedMcp(this.db, o.name);
     // Worktrees live next to the hive db (the per-user project dir by default).
     if (worktree) rest.cwd = (await ensureWorktree(o.cwd, o.name, join(dirname(this.hiveDb), "worktrees"))).path;
     let resumeSessionId = rest.resumeSessionId;
@@ -216,6 +223,7 @@ export class Hub {
     await s.start();
     this.db.setPid(o.name, s.pid ?? null);
     this.db.setAgentConfig(o.name, rest.policy ?? "ask", preset ?? null, rest.briefing ?? null);
+    storeMcp(this.db, o.name, rest.mcp);
     this.sessions.set(o.name, s);
     return s;
   }
@@ -227,8 +235,10 @@ export class Hub {
       await s.close();
       this.sessions.delete(name);
     }
-    if (forget) this.db.removeAgent(name, this.id);
-    else this.db.releaseAgent(name, this.id);
+    if (forget) {
+      this.db.removeAgent(name, this.id);
+      storeMcp(this.db, name, []);
+    } else this.db.releaseAgent(name, this.id);
   }
 
   /** Agents this hub started only to deliver their mail. */
@@ -325,6 +335,7 @@ export class Hub {
     if (this.mediaTimer) clearInterval(this.mediaTimer);
     if (this.deviceTimer) clearInterval(this.deviceTimer);
     await this.devices?.dispose().catch(() => {});
+    this.twitch?.stop();
     this.timer = undefined;
     await Promise.all([...this.sessions.values()].map((s) => s.close()));
     if (this.db.db.open) for (const n of this.sessions.keys()) this.db.releaseAgent(n, this.id);

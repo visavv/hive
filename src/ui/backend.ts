@@ -38,6 +38,7 @@ import type { AccountView, AgentView, BackendEvent, DeviceKind, DeviceMethods, E
 import { speakFor, sttStatus, transcribeFor } from "../hive/voice.js";
 import { ttsAvailable, voices as listVoices } from "../hive/media.js";
 import { projectRoot } from "../core/home.js";
+import { mcpServerList, parseMcpNames } from "../core/mcp-extra.js";
 
 // stdout is the protocol channel: keep stray logging off it.
 const out = process.stdout.write.bind(process.stdout);
@@ -283,6 +284,7 @@ function view(s: AgentSession): AgentView {
     auth: s.authStatus ? (s.authStatus.kind === "none" ? `not logged in${s.authStatus.detail ? ` · ${s.authStatus.detail}` : ""}` : (s.authStatus.label ?? s.authStatus.kind)) : undefined,
     jobs: hub.db.listJobs(false).filter((j) => j.agent === s.name).length,
     branch: branchOf(s.cwd),
+    mcp: s.extraMcp,
   };
 }
 
@@ -555,6 +557,8 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
   getState: () => handlersExtra.getState(),
   ...codeHandlers,
   ...deviceHandlers,
+  // ---- creator ----
+  mcpServers: () => mcpServerList(),
   async addAgent(p) {
     const name = need(p.name, "name").trim();
     if (!/^[\w.-]{1,40}$/.test(name)) throw new Error(`name must be letters, digits, _ . - (got "${name}")`);
@@ -576,6 +580,7 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
       briefing: r?.briefing,
       worktree: p.worktree ?? r?.worktree ?? false,
       resume: p.resume ?? true,
+      mcp: p.mcp ? parseMcpNames(p.mcp) : undefined,
     });
     if (p.startJob && r?.job) {
       const j = r.job;

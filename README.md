@@ -23,6 +23,8 @@ Design goals, in order:
 | Media | ElevenLabs voice-over, image generate/edit (keys stay in the hive process) |
 | Devices | a sandboxed browser (its own Chromium profile, never your logins) and an Android emulator/phone pane over adb; you watch and click, agents test web and Android apps with `hive_browser_*` / `hive_android_*` ([docs/DEVICES.md](docs/DEVICES.md)) |
 | Voice | dictation on every prompt box (mic button or hold Ctrl+Shift+Space; local Whisper, OpenAI or ElevenLabs), each agent can answer out loud in its own voice, "Talk with &lt;agent&gt;" conversation mode ([docs/VOICE.md](docs/VOICE.md)) |
+| Motion graphics | HTML/three.js animations rendered frame by frame to MP4 or ProRes 4444 with alpha for DaVinci (`hive render`, skill `motion`, starter template) ([docs/CREATOR.md](docs/CREATOR.md)) |
+| Twitch | new VODs and clips become board cards (`hive twitch watch`); recipe `twitch-clips`: a clipper cuts shorts with yt-dlp + ffmpeg, a studio agent writes titles ([docs/CREATOR.md](docs/CREATOR.md)) |
 | Board & stats | Kanban board for notes and projects (agents and automations add cards; `hive board`), token ledger by provider / model / task / project (`hive stats`) |
 | Safety & cost | per-agent permission policies, worktrees, untrusted-content labelling, usage + limit windows with reset times, daily budgets, pause switch |
 | Terminal | `hive tui`: the pane grid in your terminal, starting with a four-agent squad (planner, coder, reviewer, tester); `/add`, `/rm`, `/link`, `/group` ([docs/TUI.md](docs/TUI.md)) |
@@ -30,6 +32,7 @@ Design goals, in order:
 | Phone | Tailscale + SSH + tmux: `hive tui` from anywhere, one-command setup for Ubuntu/Fedora/Windows; Discord pushes ([docs/REMOTE.md](docs/REMOTE.md)) |
 | Phone app | the full pane UI on your phone: `hive web` + `tailscale serve`, one agent per screen with a bottom bar; install it from Chrome (PWA) or as an Android APK ([docs/MOBILE.md](docs/MOBILE.md)) |
 | Platforms | Windows ([docs/WINDOWS.md](docs/WINDOWS.md), one-script install), Linux/Fedora ([docs/LINUX.md](docs/LINUX.md)), Ubuntu server + chat bridges ([docs/BRIDGES.md](docs/BRIDGES.md)) |
+| Extra MCP servers | attach DaVinci Resolve or any MCP server to an agent type (`agents.json`) or one agent (`--mcp NAME`, Add-agent checkboxes) ([docs/MCP.md](docs/MCP.md)) |
 
 How it compares with Maestro, Agent Deck, Zed, Claude Code teams and others: [docs/COMPARISON.md](docs/COMPARISON.md). Audit records: [audit/](audit/).
 

@@ -43,7 +43,7 @@
  */
 import { parseArgs } from "node:util";
 import readline from "node:readline";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
 import { nodeEntry } from "../core/paths.js";
 import { existsSync } from "node:fs";
@@ -64,6 +64,9 @@ import { RECIPES, applyRecipe } from "../core/recipes.js";
 import { findSkill, listSkills, parseSkill, projectSkillsDir, skillPolicy, skillTemplate, userSkillsDir } from "../core/skills.js";
 import { runSkill, writeSkill } from "../core/skill-run.js";
 import { createBridges } from "../bridges/index.js";
+import { mcpConfigPath, mcpServerList, parseMcpNames, readMcpConfig, storeMcp } from "../core/mcp-extra.js";
+import { TWITCH_EVERY_KEY, TWITCH_MIN_EVERY, pollTwitch, twitchMissing } from "../hive/twitch.js";
+import { motionTemplates, newMotion, renderMotion } from "../core/motion.js";
 import { BUDGET_KEYS, setBudget, usageSummary } from "../core/budget.js";
 import { runMedia } from "../hive/media.js";
 import { applyVerdict, runVerdict, type VerdictState } from "../core/verdict.js";
@@ -134,6 +137,15 @@ const OPTIONS = {
   size: { type: "string" },
   edit: { type: "string" },
   mask: { type: "string" },
+  // ---- creator ----
+  mcp: { type: "string", multiple: true },
+  every: { type: "string" },
+  channel: { type: "string" },
+  fps: { type: "string" },
+  alpha: { type: "boolean", default: false },
+  frames: { type: "boolean", default: false },
+  seconds: { type: "string" },
+  template: { type: "string" },
   help: { type: "boolean", short: "h", default: false },
   version: { type: "boolean", short: "v", default: false },
 } as const;
@@ -167,6 +179,16 @@ if (values.policy === "allow-all" && !values.worktree && ["run", "chat", "loop",
   process.stderr.write(
     "\x1b[33mnote: --policy allow-all without --worktree lets the agent run any command as you and change any file you can (your checkout, hive's settings). Prefer --worktree or --as coder.\x1b[0m\n",
   );
+// --mcp davinci[,other]: extra MCP servers from <HIVE_HOME>/mcp.json (core/mcp-extra.ts).
+let mcpNames: string[] | undefined;
+try {
+  mcpNames = values.mcp ? parseMcpNames(values.mcp) : undefined;
+  const known = readMcpConfig();
+  for (const n of mcpNames ?? []) if (!known[n]) throw new Error(`MCP server "${n}" is not defined in ${mcpConfigPath()} (hive mcp lists them)`);
+} catch (e: any) {
+  process.stderr.write(`hive: ${e.message}\n`);
+  process.exit(2);
+}
 // One hive per repo, kept outside the workspace (see core/home.ts).
 values.db = resolve(values.db ?? defaultDb(values.cwd ?? process.cwd()));
 
@@ -214,6 +236,12 @@ const USAGE = `hive — local multi-agent harness
   hive report [--since 12h]               what happened: job runs + summaries, commits, mail to you
   hive tts "text" [--voice ID] [--out name]           ElevenLabs voice-over → out/media/*.mp3  (hive tts --voices lists voices)
   hive image "prompt" [--size 1536x1024] [--edit img.png [--mask m.png]]   generate / edit an image → out/media/*.png
+  hive motion new <name> [--template title-card]   start a motion graphic in out/motion/<name>/ (skill: motion)
+  hive render <dir|index.html> [--fps 60] [--size 1920x1080] [--alpha] [--out file] [--frames]
+                                          HTML animation → MP4 (H.264) or, with --alpha, ProRes 4444 .mov (docs/CREATOR.md)
+  hive twitch poll|watch [--every 10m] [--detach] [--channel login] [--in-project P] · hive twitch off
+                                          new VODs/clips → board cards (TWITCH_CLIENT_ID/SECRET/CHANNEL; docs/CREATOR.md)
+  hive mcp                                extra MCP servers (<HIVE_HOME>/mcp.json) · attach with --mcp NAME (docs/MCP.md)
   hive usage · hive budget [set k=v …]    tokens per provider, limit windows + resets · spending guards
   hive ui --remote you@server --remote-cwd ~/code/app   the app with its agents on another machine (docs/CLOUD.md)
   hive board [--all] [--in-project P] · add "title" · mv <id> draft|doing|done · rm <id>   the Kanban board
@@ -548,6 +576,7 @@ async function submitJob(j: Omit<NewJob, "agent" | "cwd" | "policy" | "role" | "
     db.updateJob(id, { agent: name });
   }
   const job = db.getJob(id)!;
+  if (mcpNames) storeMcp(db, job.agent, mcpNames);
   // Visible in the hive (hive agents, hive send) before its first run.
   if (!db.getAgent(job.agent)) {
     db.upsertAgent({ name: job.agent, kind: job.agent_kind, cwd, role: job.role, status: "asleep", status_note: `waiting for job ${id}`, session_id: null });
@@ -571,6 +600,112 @@ async function main() {
     return;
   }
   switch (cmd) {
+    case "motion": {
+      const sub = rest[0] ?? "templates";
+      if (sub === "templates") {
+        for (const t of motionTemplates()) console.log(t);
+        return;
+      }
+      if (sub !== "new") die(`unknown subcommand "${sub}" (new|templates)`);
+      const name = rest[1] ?? die("usage: hive motion new <name> [--template title-card]");
+      try {
+        const d = newMotion(values.cwd ?? process.cwd(), name, values.template);
+        console.log(`${green("created")} ${d}\n${dim(`edit index.html (or ask an agent: hive skill run motion name=${name} brief="…"), then: hive render ${relative(values.cwd ?? process.cwd(), d) || "."}`)}`);
+      } catch (e: any) {
+        die(e.message);
+      }
+      return;
+    }
+
+    case "render": {
+      const target = rest[0] ?? die("usage: hive render <dir|index.html> [--fps 60] [--size 1920x1080] [--alpha] [--out file] [--frames]");
+      let last = 0;
+      try {
+        const r = await renderMotion({
+          target: resolve(values.cwd ?? process.cwd(), target),
+          out: values.out ? resolve(values.out) : undefined,
+          fps: values.fps ? positiveInt(values.fps, "--fps") : undefined,
+          size: values.size,
+          alpha: values.alpha,
+          frames: values.frames,
+          maxSeconds: values.seconds ? Number(values.seconds) : undefined,
+          onProgress: (f, n) => {
+            if (!tty || (Date.now() - last < 200 && f < n)) return;
+            last = Date.now();
+            process.stdout.write(`\r${dim(`frame ${f}/${n}`)}  `);
+          },
+        });
+        if (tty) process.stdout.write("\r");
+        console.log(`${green("rendered")} ${r.out} ${dim(`(${r.frames} frames, ${r.info.width}x${r.info.height} @ ${r.info.fps} fps, ${(r.ms / 1000).toFixed(1)} s)`)}`);
+        // Logged in the project's hive (no tokens: nothing goes to the token ledger).
+        const db = new HiveDb(values.db!);
+        db.log("owner", "render", { target, out: r.out, frames: r.frames, ...r.info, alpha: values.alpha, ms: r.ms });
+        db.close();
+      } catch (e: any) {
+        if (tty) process.stdout.write("\n");
+        die(e?.message ?? String(e));
+      }
+      return;
+    }
+
+    case "twitch": {
+      const sub = rest[0] ?? "poll";
+      const db = new HiveDb(values.db!);
+      if (sub === "off") {
+        db.setSetting(TWITCH_EVERY_KEY, null);
+        db.close();
+        console.log("Twitch polling off for this project");
+        return;
+      }
+      if (sub !== "poll" && sub !== "watch") die(`unknown subcommand "${sub}" (poll|watch|off)`);
+      const missing = twitchMissing();
+      if (missing) die(missing);
+      const channel = values.channel ?? process.env.TWITCH_CHANNEL;
+      if (!channel) die("set TWITCH_CHANNEL (your channel login) or pass --channel");
+      const project = values["in-project"];
+      const every = Math.max(TWITCH_MIN_EVERY, values.every ? duration(values.every, "--every") : 10 * 60_000);
+      if (sub === "watch" && values.detach) {
+        db.setSetting(TWITCH_EVERY_KEY, String(every));
+        db.setSetting("twitch.channel", values.channel ?? null);
+        db.setSetting("twitch.project", project ?? null);
+        db.close();
+        console.log(`hive serve and the app will poll ${channel} every ${formatDuration(every)} (hive twitch off to stop)`);
+        return;
+      }
+      const once = async () => {
+        try {
+          const r = await pollTwitch({ db, channel, project });
+          for (const c of r.created) console.log(`${green(`card #${c.id}`)} ${c.title}`);
+          console.log(dim(`${new Date().toLocaleTimeString()}: ${r.created.length} new, ${r.known} known${r.skipped ? `, ${r.skipped} older ones skipped on the first poll` : ""}`));
+        } catch (e: any) {
+          console.error(red(e?.message ?? String(e)));
+          if (sub === "poll") process.exitCode = 1;
+        }
+      };
+      await once();
+      if (sub === "poll") return db.close();
+      console.log(dim(`polling every ${formatDuration(every)}; Ctrl-C to stop`));
+      await new Promise<void>((done) => {
+        const t = setInterval(() => void once(), every);
+        process.once("SIGINT", () => {
+          clearInterval(t);
+          done();
+        });
+      });
+      db.close();
+      return;
+    }
+
+    case "mcp": {
+      const servers = mcpServerList();
+      if (!servers.length) console.log(dim(`no extra MCP servers yet: add them to ${mcpConfigPath()} (docs/MCP.md)`));
+      for (const sv of servers) console.log(`${cyan(sv.name.padEnd(14))} ${dim(sv.command)}`);
+      const typed = Object.values(AGENTS).filter((d) => d.mcp?.length);
+      for (const d of typed) console.log(`${dim("type")} ${d.id}: ${d.mcp!.map((m) => (typeof m === "string" ? m : m.name)).join(", ")}`);
+      console.log(dim(`\nattach to one agent: hive chat claude --mcp ${servers[0]?.name ?? "davinci"}  ·  to a type: "mcp" in ${customAgentsPath()}`));
+      return;
+    }
+
     case "agents": {
       const db = new HiveDb(values.db!);
       const rows = db.listAgents();
@@ -707,6 +842,7 @@ async function main() {
           // ensureWorktree finds the agent's existing worktree, so this is safe on reopen too.
           worktree: values.worktree || r?.worktree,
           resume: !values.fresh,
+          mcp: mcpNames,
         });
       } catch (e: any) {
         await hub.close();
