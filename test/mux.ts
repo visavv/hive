@@ -1,5 +1,6 @@
 /** Mux: one backend, many clients; ids routed back, events broadcast, ready replayed, restart on crash. */
-import { writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { createConnection, type Socket } from "node:net";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
@@ -7,7 +8,8 @@ import { execFileSync } from "node:child_process";
 import { assert, finish, freshDir, sleep, until } from "./util.js";
 
 const dir = freshDir(".hive-test-mux");
-process.env.HIVE_HOME = join(dir, "home");
+// short home: a unix socket path must stay under ~104 bytes (deep checkouts, e.g. worktrees, overflow it)
+process.env.HIVE_HOME = mkdtempSync(join(tmpdir(), "hive-mux-"));
 execFileSync("git", ["init", "-q"], { cwd: dir });
 const { runMux, isLive } = await import("../src/ui/mux.js");
 
