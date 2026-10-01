@@ -21,6 +21,8 @@ export interface LedgerEntry {
   inputTokens?: number;
   outputTokens?: number;
   costUsd?: number;
+  /** Set for non-model work (dictation, spoken replies): stored as is, and kept even with 0 tokens (counted in calls). */
+  category?: string;
 }
 
 export type LedgerDim = "vendor" | "model" | "category" | "project" | "kind" | "agent" | "day";
@@ -60,6 +62,9 @@ export function vendorOf(kind: string, model?: string): string {
   if (k.startsWith("qwen")) return "Alibaba";
   if (k.startsWith("ollama")) return "Local";
   if (k.startsWith("media:")) return k.slice(6) === "tts" ? "ElevenLabs" : "Images";
+  if (k === "tts" || k === "stt:elevenlabs") return "ElevenLabs";
+  if (k === "stt:openai") return "OpenAI";
+  if (k === "stt:local") return "Local";
   if (k === "mock") return "Test";
   return kind;
 }
@@ -113,7 +118,7 @@ function open(): Database.Database {
 }
 
 export function record(e: LedgerEntry): void {
-  if (!(e.tokens > 0) && !(e.costUsd! > 0)) return;
+  if (!(e.tokens > 0) && !(e.costUsd! > 0) && !e.category) return;
   open()
     .prepare(
       `INSERT INTO ledger (ts, project, project_name, agent, kind, vendor, model, category, automatic, tokens, input_tokens, output_tokens, cost_usd) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -126,7 +131,7 @@ export function record(e: LedgerEntry): void {
       e.kind,
       vendorOf(e.kind, e.model),
       e.model ?? "",
-      categoryOf(e.role, e.agent, e.automatic),
+      e.category ?? categoryOf(e.role, e.agent, e.automatic),
       e.automatic ? 1 : 0,
       Math.max(0, Math.round(e.tokens || 0)),
       e.inputTokens ?? null,

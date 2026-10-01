@@ -171,6 +171,28 @@ app.whenReady().then(() => {
     if (details.url.startsWith("devtools:") || details.url.startsWith("data:")) return cb({});
     cb({ cancel: true }); // no network from the renderer
   });
+  // ---- voice: permissions ----
+  // Microphone (audio only) for dictation, notifications and clipboard writes the
+  // UI already uses, for the app's own page only; everything else is denied.
+  const ownPage = (url?: string) => {
+    try {
+      return !!url && url.startsWith("file:") && resolve(fileURLToPath(url)).startsWith(appDir);
+    } catch {
+      return false;
+    }
+  };
+  const allowed = (permission: string, audioOnly: boolean) =>
+    (permission === "media" && audioOnly) || permission === "notifications" || permission === "clipboard-sanitized-write";
+  session.defaultSession.setPermissionRequestHandler((wc, permission, cb, details) => {
+    const types = (details as { mediaTypes?: string[] }).mediaTypes ?? [];
+    cb(wc === win?.webContents && ownPage(details.requestingUrl) && allowed(permission, types.length > 0 && types.every((t) => t === "audio")));
+  });
+  session.defaultSession.setPermissionCheckHandler((wc, permission, origin, details) => {
+    if (!wc || wc !== win?.webContents) return false;
+    const url = (details as { requestingUrl?: string }).requestingUrl;
+    if (url ? !ownPage(url) : !origin.startsWith("file:")) return false;
+    return allowed(permission, (details as { mediaType?: string }).mediaType !== "video");
+  });
   startBackend();
   ipcMain.on("hive:send", (_e, line: string) => {
     if (backend?.stdin?.writable) backend.stdin.write(line + "\n");

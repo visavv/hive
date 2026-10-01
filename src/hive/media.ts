@@ -16,7 +16,7 @@ import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
 import type { HiveDb } from "./db.js";
 import { confine } from "../core/confine.js";
-import { budgetSetting, startOfToday } from "../core/budget.js";
+import { budgetSetting, isMediaProvider, startOfToday } from "../core/budget.js";
 
 const env = process.env;
 const MAX_IMAGE = 20_000_000;
@@ -44,7 +44,7 @@ export function checkMediaCap(db: HiveDb, units = 1, jobId?: number) {
   const cap = Number(budgetSetting(db, "media_daily") ?? "40");
   const used = db
     .usageSince(startOfToday())
-    .filter((u) => u.provider.startsWith("media:"))
+    .filter((u) => isMediaProvider(u.provider))
     .reduce((n, u) => n + u.turns, 0);
   const reserved = jobId === undefined ? 0 : db.runningMedia(jobId).reduce((n, j) => n + mediaUnits(j.kind, JSON.parse(j.params)), 0);
   if (cap >= 0 && used + reserved + units > cap)
@@ -81,7 +81,8 @@ async function failText(r: Response, what: string): Promise<never> {
   throw new Error(`${what} ${r.status}: ${t}`);
 }
 
-export async function tts(o: { cwd: string; text: string; voice?: string; model?: string; name?: string }): Promise<{ path: string; bytes: number }> {
+/** ElevenLabs text → speech as mp3 bytes (no file, no budget: callers check and count). */
+export async function ttsAudio(o: { text: string; voice?: string; model?: string }): Promise<Buffer> {
   if (!ttsAvailable()) throw new Error("ELEVENLABS_API_KEY is not set");
   const text = o.text.trim();
   if (!text) throw new Error("text is empty");
@@ -95,8 +96,12 @@ export async function tts(o: { cwd: string; text: string; voice?: string; model?
     signal: AbortSignal.timeout(120_000),
   });
   if (!r.ok) await failText(r, "ElevenLabs");
-  const buf = Buffer.from(await r.arrayBuffer());
-  const path = outFile(o.cwd, o.name, text.slice(0, 40), ".mp3");
+  return Buffer.from(await r.arrayBuffer());
+}
+
+export async function tts(o: { cwd: string; text: string; voice?: string; model?: string; name?: string }): Promise<{ path: string; bytes: number }> {
+  const buf = await ttsAudio(o);
+  const path = outFile(o.cwd, o.name, o.text.trim().slice(0, 40), ".mp3");
   writeFileSync(path, buf);
   return { path, bytes: buf.length };
 }

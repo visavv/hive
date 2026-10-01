@@ -11,7 +11,7 @@
  *                           mail wake-ups, across hive processes   (default: 3)
  *   daily_tokens_api        per pay-per-token API provider (gemini-api, openrouter…)
  *                           without its own daily_tokens.<provider>   (default: 2,000,000)
- *   media_daily             image/voice API calls per day          (default: 40)
+ *   media_daily             image/voice/dictation API calls per day         (default: 40)
  *   paused                  "1" stops all automatic work           (default: off)
  */
 import type { HiveDb } from "../hive/db.js";
@@ -24,6 +24,9 @@ const DEFAULTS: Record<string, string> = { reserve_pct: "85", max_concurrent: "3
 function isApiProvider(provider: string): boolean {
   return !!AGENTS[provider]?.api;
 }
+
+/** usage_log rows that are media API calls (count toward media_daily, not tokens): images, voice clips, transcriptions. */
+export const isMediaProvider = (p: string) => p.startsWith("media:") || p.startsWith("stt:");
 
 export function budgetSetting(db: HiveDb, key: string): string | undefined {
   return db.getSetting(`budget.${key}`) ?? DEFAULTS[key];
@@ -110,8 +113,8 @@ export function usageSummary(db: HiveDb, now = Date.now()): UsageSummary {
   const d1 = db.usageSince(startOfToday(now));
   const d7 = db.usageSince(now - 7 * 86_400_000);
   const limits = db.limits();
-  const names = new Set([...d7.map((u) => u.provider), ...limits.map((l) => l.provider)].filter((p) => !p.startsWith("media:")));
-  const mediaToday = d1.filter((u) => u.provider.startsWith("media:")).reduce((n, u) => n + u.turns, 0);
+  const names = new Set([...d7.map((u) => u.provider), ...limits.map((l) => l.provider)].filter((p) => !isMediaProvider(p)));
+  const mediaToday = d1.filter((u) => isMediaProvider(u.provider)).reduce((n, u) => n + u.turns, 0);
   const budget: Record<string, string> = {};
   for (const k of BUDGET_KEYS) {
     const v = budgetSetting(db, k);
