@@ -891,3 +891,33 @@ button.danger { color: var(--st-error); }
   .kb-cols.n2, .kb-cols.n3 { grid-template-columns: 1fr; overflow-y: auto; }
   .kb-search input { width: 120px; }
 }
+
+/* ---- device panes ---- */
+.device-dock { position: fixed; top: 52px; right: 10px; bottom: 10px; z-index: 25; display: flex; flex-direction: column; min-width: 320px; max-width: calc(100vw - 20px); background: var(--bg-1); border: 1px solid var(--border-strong); border-radius: var(--r-4); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35); overflow: hidden; }
+.dv-resize { position: absolute; left: 0; top: 0; bottom: 0; width: 6px; cursor: ew-resize; z-index: 1; }
+.dv-resize:hover { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+.dv-tabs { display: flex; gap: 2px; padding: 6px 8px 0; border-bottom: 1px solid var(--border); background: var(--bg-2); }
+.dv-tab { display: inline-flex; align-items: center; border-radius: var(--r-2) var(--r-2) 0 0; }
+.dv-tab.on { background: var(--bg-1); }
+.dv-tab .dv-x { padding: 2px 4px; }
+.dv-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.dv-bar, .dv-sub { display: flex; align-items: center; gap: 6px; padding: 6px 8px; }
+.dv-bar { border-bottom: 1px solid var(--border); }
+.dv-sub { font-size: 11.5px; color: var(--text-2); padding-top: 4px; padding-bottom: 4px; }
+.dv-sub input:not([type]) { flex: 1; min-width: 0; height: 24px; }
+.dv-url { flex: 1; min-width: 0; height: 28px; font-family: var(--mono); font-size: 12px; }
+.dv-badge { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 8px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-weight: 550; white-space: nowrap; }
+.dv-check { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; cursor: pointer; }
+.dv-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40%; color: var(--text-3); }
+.dv-view { position: relative; flex: 1; min-height: 0; background: var(--bg-0); outline: none; }
+.dv-view:focus-visible { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent); }
+.dv-view img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; user-select: none; cursor: default; }
+.dv-view.phone img { cursor: pointer; }
+.dv-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; text-align: center; color: var(--text-2); }
+.dv-empty .dim { color: var(--text-3); font-size: 12px; }
+.dv-avds { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+.dv-problem { padding: 6px 10px; font-size: 11.5px; color: var(--st-error); border-top: 1px solid var(--border); }
+@media (max-width: 760px) {
+  .device-dock { left: 6px; right: 6px; top: 48px; bottom: 6px; width: auto !important; min-width: 0; }
+  .dv-resize { display: none; }
+}

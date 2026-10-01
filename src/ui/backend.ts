@@ -29,7 +29,7 @@ import { runSkill, skillAgentName } from "../core/skill-run.js";
 import { BB_PREFIX, BRANCHES } from "../core/watch.js";
 import { setBudget, usageSummary } from "../core/budget.js";
 import { applyVerdict, runVerdict } from "../core/verdict.js";
-import type { AccountView, AgentView, BackendEvent, ElicitationAsk, GroupView, JobView, Layout, Methods, PermissionAsk, Request } from "./protocol.js";
+import type { AccountView, AgentView, BackendEvent, DeviceKind, DeviceMethods, ElicitationAsk, GroupView, JobView, Layout, Methods, PermissionAsk, Request } from "./protocol.js";
 
 // stdout is the protocol channel: keep stray logging off it.
 const out = process.stdout.write.bind(process.stdout);
@@ -408,8 +408,67 @@ async function checkAccounts(): Promise<AccountView[]> {
   accountsCache = { at: Date.now(), rows };
   return rows;
 }
+// ---- device panes: sandboxed browser and Android (src/hive/devices.ts) ----
+// The hub owns the devices; panes watch them as frame streams (only while watched).
+const devices = hub.devices!;
+const watching = new Set<DeviceKind>();
+const FPS: Record<DeviceKind, number> = { browser: 8, android: 3 };
+devices.on("frame", (device: DeviceKind, frame) => {
+  if (watching.has(device)) send({ event: "device_frame", device, frame });
+});
+devices.on("state", (device: DeviceKind, state) => send({ event: "device_state", device, state } as BackendEvent));
+devices.on("activity", (device: DeviceKind, agent: string, action: string) => send({ event: "device_activity", device, agent, action }));
+devices.on("problem", (device: DeviceKind, text: string) => send({ event: "device_problem", device, text }));
+const deviceHandlers: { [K in keyof DeviceMethods]: (p: Parameters<DeviceMethods[K]>[0]) => Promise<ReturnType<DeviceMethods[K]>> | ReturnType<DeviceMethods[K]> } = {
+  async deviceWatch({ device, on }) {
+    if (device !== "browser" && device !== "android") throw new Error(`unknown device ${device}`);
+    if (on) watching.add(device);
+    else watching.delete(device);
+    if (device === "browser") await devices.browser.watch(on ? FPS.browser : 0);
+    else devices.android.watch(on ? FPS.android : 0);
+  },
+  browserState: () => devices.browser.state(),
+  browserOpen: ({ url }) => devices.browser.open(url),
+  browserNav: ({ action }) => {
+    if (!["back", "forward", "reload", "stop"].includes(action)) throw new Error(`unknown action ${action}`);
+    return devices.browser.nav(action);
+  },
+  browserInput: (p) => devices.browser.input(p),
+  async browserSettings({ persistent }) {
+    await devices.setPersistent(!!persistent);
+    return devices.browser.state();
+  },
+  browserClose: () => devices.browser.close(),
+  androidState: () => devices.android.state(),
+  async androidSelect({ serial }) {
+    await devices.android.select(serial ?? undefined);
+    return devices.android.state();
+  },
+  async androidInput(p) {
+    const a = devices.android;
+    if (p.type === "tap") await a.tap(p.x, p.y);
+    else if (p.type === "swipe") await a.swipe(p.x1, p.y1, p.x2, p.y2, p.ms);
+    else if (p.type === "text") await a.text(String(p.text ?? ""));
+    else if (p.type === "key") await a.key(String(p.key ?? ""));
+    else throw new Error("unknown input");
+  },
+  async androidAction({ action, value }) {
+    const a = devices.android;
+    if (action === "rotate") return a.rotate();
+    // The owner may install any APK path they choose (agents only from their own folder).
+    if (action === "install") return a.install(need(value, "apk path"));
+    if (action === "launch") return a.launch(need(value, "package"));
+    if (action === "startAvd") {
+      a.startAvd(need(value, "emulator name"));
+      return `starting ${value}… it shows up in the device list once booted`;
+    }
+    throw new Error(`unknown action ${action}`);
+  },
+};
+
 const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promise<ReturnType<Methods[K]>> | ReturnType<Methods[K]> } = {
   getState: () => handlersExtra.getState(),
+  ...deviceHandlers,
   async addAgent(p) {
     const name = need(p.name, "name").trim();
     if (!/^[\w.-]{1,40}$/.test(name)) throw new Error(`name must be letters, digits, _ . - (got "${name}")`);
