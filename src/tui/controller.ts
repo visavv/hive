@@ -48,6 +48,8 @@ const EXTRA_ROLES: Record<string, Omit<PaneSpec, "name" | "kind">> = {
   chat: { role: "assistant", policy: "reject-all" },
 };
 
+const GROUP_NAME = /^[\w.-]{1,40}$/;
+
 const HIVE_QUIET = /^(mcp__hive__)?hive_(inbox|status|agents|bb_get|bb_list|bb_set|thread)\b/;
 
 export class TuiController extends EventEmitter {
@@ -270,6 +272,25 @@ export class TuiController extends EventEmitter {
     this.say(`${r.label}${res.groups.length ? `, linked in @${res.groups.join(" @")}` : ""}. ${r.next}`, 12000);
   }
 
+  /**
+   * Reopen a saved layout. A pane that can't be opened (an agent kind that no
+   * longer exists, a bad name in a hand-edited tui.json) is skipped with a hint
+   * instead of failing the whole TUI; the layout is re-saved without it.
+   */
+  async restore(specs: PaneSpec[]): Promise<string[]> {
+    const skipped: string[] = [];
+    await Promise.all(
+      specs.map((s) =>
+        this.open(s).catch((e: any) => {
+          skipped.push(`${s?.name ?? "?"}: ${e?.message ?? e}`);
+        }),
+      ),
+    );
+    this.save();
+    if (skipped.length) this.say(`skipped ${skipped.join("; ")} (removed from the saved layout)`, 15000);
+    return skipped;
+  }
+
   save() {
     if (!this.opts.layoutFile) return;
     try {
@@ -304,6 +325,52 @@ export class TuiController extends EventEmitter {
     const opt = p.options.find((o) => want.includes(o.kind)) ?? p.options[allow ? 0 : p.options.length - 1];
     p.resolve(opt.optionId);
     return true;
+  }
+
+  // ---- prompt editing (the cursor is a UTF-16 index, always on a code point boundary) ----
+
+  /** Insert text at the cursor (a keystroke or a whole paste, newlines kept). */
+  insert(text: string) {
+    if (!text) return;
+    this.input = this.input.slice(0, this.cursor) + text + this.input.slice(this.cursor);
+    this.cursor += text.length;
+    this.changed();
+  }
+  private prevStep(): number {
+    const i = this.cursor;
+    if (i <= 0) return 0;
+    const lo = this.input.charCodeAt(i - 1);
+    const hi = i >= 2 ? this.input.charCodeAt(i - 2) : 0;
+    return lo >= 0xdc00 && lo <= 0xdfff && hi >= 0xd800 && hi <= 0xdbff ? 2 : 1;
+  }
+  private nextStep(): number {
+    const i = this.cursor;
+    if (i >= this.input.length) return 0;
+    const cp = this.input.codePointAt(i)!;
+    return cp > 0xffff ? 2 : 1;
+  }
+  backspace() {
+    const n = this.prevStep();
+    this.input = this.input.slice(0, this.cursor - n) + this.input.slice(this.cursor);
+    this.cursor -= n;
+    this.changed();
+  }
+  deleteForward() {
+    this.input = this.input.slice(0, this.cursor) + this.input.slice(this.cursor + this.nextStep());
+    this.changed();
+  }
+  left() {
+    this.cursor -= this.prevStep();
+    this.changed();
+  }
+  right() {
+    this.cursor += this.nextStep();
+    this.changed();
+  }
+
+  /** Esc with an empty prompt: cancel the focused agent's turn (not recorded in history). */
+  async stopFocused() {
+    await this.hub.sessions.get(this.panes[this.focus]?.name ?? "")?.cancel();
   }
 
   historyUp() {
@@ -429,9 +496,10 @@ export class TuiController extends EventEmitter {
       }
       case "rm":
       case "close": {
+        const forget = bool("--forget");
         const name = args[0] ?? this.panes[this.focus]?.name;
-        if (!name) throw new Error("usage: /rm <name>");
-        await this.close(name, bool("--forget"));
+        if (!name) throw new Error("usage: /rm <name> [--forget]");
+        await this.close(name, forget);
         this.say(`closed ${name}`);
         return;
       }
@@ -445,6 +513,7 @@ export class TuiController extends EventEmitter {
         if (members.length < 2) throw new Error("usage: /link a b [c…] [--review] [--name group]");
         for (const m of members) if (!this.hub.db.getAgent(m)) throw new Error(`no agent "${m}"`);
         const g = (name || members.join("-")).slice(0, 40);
+        if (!GROUP_NAME.test(g)) throw new Error(`invalid group name "${g}" (letters, digits, _ . -; use --name)`);
         this.hub.db.addToGroup(g, [...members, "owner"]);
         if (review) this.hub.db.setGroupSettings(g, { mode: "review" });
         this.say(`linked @${g}: ${members.join(", ")}${review ? " (you review each message: /held)" : ""}`);
@@ -460,6 +529,7 @@ export class TuiController extends EventEmitter {
       case "group": {
         const [g, ...members] = args;
         if (!g || !members.length) throw new Error("usage: /group <name> <agent> [agent…]");
+        if (!GROUP_NAME.test(g.replace(/^@/, ""))) throw new Error(`invalid group name "${g}" (letters, digits, _ . -, max 40)`);
         for (const m of members) if (m !== "owner" && !this.hub.db.getAgent(m)) throw new Error(`no agent "${m}"`);
         this.hub.db.addToGroup(g.replace(/^@/, ""), members);
         this.say(`@${g.replace(/^@/, "")}: ${this.hub.db.groupMembers(g.replace(/^@/, "")).join(", ")}`);
@@ -512,6 +582,7 @@ export class TuiController extends EventEmitter {
       }
       case "release":
       case "drop": {
+        if (!/^\d+$/.test(args[0] ?? "")) throw new Error(`usage: /${cmd} <id> (see /held)`);
         const id = Number(args[0]);
         const ok = cmd === "release" ? this.hub.db.releaseMessage(id) : this.hub.db.dropMessage(id);
         if (!ok) throw new Error(`#${args[0]} isn't waiting (see /held)`);
@@ -534,7 +605,7 @@ export class TuiController extends EventEmitter {
       }
       case "verdict": {
         const agents = flag("--agents");
-        const judge = flag("--judge") ?? this.opts.kind ?? "claude";
+        const judge = flag("--judge") || this.opts.kind || "claude";
         const text = bool("--text");
         const prompt = args.join(" ").replace(/^"|"$/g, "");
         if (!agents || !prompt) throw new Error('usage: /verdict <prompt> --agents claude,codex [--judge claude] [--text]');
