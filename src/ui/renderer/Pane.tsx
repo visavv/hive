@@ -249,7 +249,7 @@ function ConfigSelectors({ agent }: { agent: AgentView }) {
 
 // ---- transcript ----
 
-const Transcript = memo(function Transcript({ name }: { name: string }) {
+export const Transcript = memo(function Transcript({ name }: { name: string }) {
   const pane = usePane(name);
   const ref = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -425,7 +425,7 @@ function ToolCard({ item }: { item: Item & { k: "tool" } }) {
         <span className="tstatus">{item.status === "completed" ? "✓" : item.status === "failed" ? "✗" : item.status === "in_progress" ? "…" : "○"}</span>
         <span className="tkind">{item.kind ?? "tool"}</span>
         <span className="ttitle">{item.title}</span>
-        {loc && <span className="tloc">{shortPath(loc)}</span>}
+        {loc && <span className="tloc code-link" data-path={loc} data-line={item.locations[0]?.line ?? undefined} title={`open ${loc} in the code view`}>{shortPath(loc)}</span>}
         {diffs.length > 0 && <span className="tdiff">{diffStat(diffs)}</span>}
         {hasBody && <span className="chev">{open ? "▾" : "▸"}</span>}
       </div>
@@ -475,7 +475,7 @@ function Diff({ path, oldText, newText }: { path: string; oldText: string; newTe
   const rows = diffRows(oldText, newText).slice(0, 600);
   return (
     <div className="diff">
-      <div className="diff-path">{path}</div>
+      <div className="diff-path code-link" data-path={path} title={`open ${path} in the code view`}>{path}</div>
       <pre>
         {rows.map((r, i) => (
           <div key={i} className={r.t === "+" ? "add" : r.t === "-" ? "del" : "ctx"}>

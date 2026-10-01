@@ -14,10 +14,11 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { createConnection, createServer, type Socket } from "node:net";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { projectDir, projectRoot } from "../core/home.js";
 
 export function socketPath(cwd: string): string {
@@ -25,7 +26,11 @@ export function socketPath(cwd: string): string {
     const h = createHash("sha1").update(projectRoot(cwd).toLowerCase()).digest("hex").slice(0, 12);
     return `\\\\.\\pipe\\hive-${process.env.USERNAME ?? "user"}-${h}`;
   }
-  return join(projectDir(cwd), "hive.sock");
+  const p = join(projectDir(cwd), "hive.sock");
+  // unix socket paths are limited to ~104 bytes; a deep HIVE_HOME falls back to a short owner-only dir in /tmp
+  if (Buffer.byteLength(p) <= 100) return p;
+  const h = createHash("sha1").update(projectRoot(cwd)).digest("hex").slice(0, 12);
+  return join(tmpdir(), `hive-${process.getuid?.() ?? "u"}`, `${h}.sock`);
 }
 
 interface Client {
@@ -48,6 +53,9 @@ export async function runMux(o: MuxOptions): Promise<{ close: () => Promise<void
   const log = o.log ?? (() => {});
   if (process.platform !== "win32") {
     mkdirSync(join(path, ".."), { recursive: true, mode: 0o700 });
+    // the /tmp fallback must be ours and private (another user could have made it first)
+    const st = statSync(join(path, ".."));
+    if (process.getuid && (st.uid !== process.getuid() || (st.mode & 0o077) !== 0)) throw new Error(`refusing to use ${join(path, "..")}: not owned by you or not private`);
     if (existsSync(path)) {
       if (await isLive(path)) throw new Error(`hive is already running for this project (${path})`);
       rmSync(path, { force: true }); // stale socket from a crash
