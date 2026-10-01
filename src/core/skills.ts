@@ -31,6 +31,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hiveHome, projectRoot } from "./home.js";
+import { confine } from "./confine.js";
+import { transcriptFile, youtubeId } from "./youtube.js";
 import type { PermissionPolicy } from "./session.js";
 
 export type ParamType = "text" | "file" | "number" | "choice";
@@ -168,6 +170,15 @@ export function findSkill(cwd: string, name: string): Skill {
   return s;
 }
 
+/**
+ * The policy a skill actually runs with. Only built-in skills may auto-approve
+ * everything; a skill file from a repo or your skills folder that asks for
+ * allow-all runs with "ask" instead (a cloned repo can't grant itself a shell).
+ */
+export function skillPolicy(s: Skill): PermissionPolicy {
+  return s.policy === "allow-all" && s.source !== "built-in" ? "ask" : s.policy;
+}
+
 /** Fill in a skill: validates params, reads file params, expands {{x}} and {{#if x}}…{{/if}}. */
 export function renderSkill(s: Skill, values: Record<string, string>, cwd: string): string {
   const v: Record<string, string> = {};
@@ -201,10 +212,8 @@ export function outputPath(s: Skill, cwd: string, now = new Date()): string | un
   if (!s.output) return undefined;
   const stamp = now.toISOString().slice(0, 16).replace(/[:T]/g, "-");
   const rel = s.output.replace(/\{name\}/g, s.name).replace(/\{date\}/g, stamp);
-  const p = resolve(cwd, rel);
-  // Stay inside the folder the skill ran in.
-  if (!p.startsWith(resolve(cwd))) throw new Error(`skill output must stay inside ${cwd}`);
-  return p;
+  // Stay inside the folder the skill ran in (symlinks followed).
+  return confine(cwd, rel, `skill output ${rel}`);
 }
 
 export function saveOutput(path: string, text: string) {
@@ -282,4 +291,17 @@ export function skillFromPrompt(name: string, description: string, body: string)
   ].join("\n");
   parseSkill(text, name + ".md");
   return { text, params };
+}
+
+/**
+ * Resolve inputs that need fetching before a skill renders: a YouTube link in
+ * a file parameter becomes a transcript file. Returns new values.
+ */
+export async function prepareSkillValues(s: Skill, values: Record<string, string>): Promise<Record<string, string>> {
+  const out = { ...values };
+  for (const p of s.params) {
+    const v = out[p.name];
+    if (p.type === "file" && v && youtubeId(v)) out[p.name] = await transcriptFile(v, out.lang || out.language || "en");
+  }
+  return out;
 }

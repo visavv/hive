@@ -247,6 +247,13 @@ export function customAgentDef(id: string, c: CustomAgent): AgentDef {
     return { id, label: c.label ?? id, command: c.command, args: c.args ?? [], env: c.env, install: "Custom ACP agent from agents.json.", custom: true };
   }
   if (!c.base || !c.model) throw new Error(`agent ${id}: "base" and "model" are required for type api`);
+  if (!/\$\{/.test(c.base)) {
+    let u: URL | undefined;
+    try {
+      u = new URL(c.base);
+    } catch {}
+    if (!u || (u.protocol !== "https:" && u.protocol !== "http:")) throw new Error(`agent ${id}: base must be an http(s) URL like https://api.example.com/v1 (got "${c.base}")`);
+  }
   if (c.keyEnv && !/^\w+$/.test(c.keyEnv)) throw new Error(`agent ${id}: keyEnv must be an environment variable name, not the key itself`);
   return apiAgent({ id, label: c.label ?? id, base: c.base, keyEnv: c.keyEnv, model: c.model, models: c.models?.join(","), context: c.context, tools: c.tools, custom: true });
 }

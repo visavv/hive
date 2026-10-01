@@ -26,6 +26,8 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { hiveHome } from "../core/home.js";
+import { confine } from "../core/confine.js";
+import { TRUST_POLICY, untrusted } from "../core/trust.js";
 
 const env = process.env;
 const BASE = (env.HIVE_API_BASE ?? "").replace(/\/+$/, "");
@@ -187,10 +189,8 @@ async function toolDefs(mcp: Sess["mcp"]): Promise<ToolDef[]> {
 }
 
 function inside(cwd: string, p: string): string {
-  const abs = isAbsolute(p) ? resolve(p) : resolve(cwd, p || ".");
-  const rel = relative(resolve(cwd), abs);
-  if (rel.startsWith("..") || isAbsolute(rel)) throw new Error(`${p} is outside the working folder`);
-  return abs;
+  // Follows symlinks: a link in the folder that points outside is refused.
+  return confine(cwd, p || ".", p || ".");
 }
 
 function listTree(root: string, max = 400): string {
@@ -275,6 +275,7 @@ function systemPrompt(cwd: string): string {
     TOOLS
       ? "You can read, list and write files in the working folder with read_file / list_files / write_file, and talk to other agents and the human through the hive_* tools (hive_inbox, hive_send, hive_bb_set, …). You cannot run shell commands."
       : "You have no tools; answer in text.",
+    TRUST_POLICY,
     "Be concise and concrete.",
   ].join("\n");
 }
@@ -327,7 +328,7 @@ async function runTool(cx: acp.AgentContext, s: Sess, call: ToolCall): Promise<s
   try {
     if (name === "read_file" || name === "list_files" || name === "write_file") {
       const abs = inside(s.cwd, String(args.path ?? ""));
-      const rel = relative(s.cwd, abs) || ".";
+      const rel = relative(confine(s.cwd, "."), abs) || ".";
       const kind: acp.ToolKind = name === "write_file" ? "edit" : name === "read_file" ? "read" : "search";
       const title = name === "write_file" ? `Write ${rel}` : name === "read_file" ? `Read ${rel}` : `List ${rel}`;
       await cx.notify(acp.methods.client.session.update, {
@@ -342,7 +343,7 @@ async function runTool(cx: acp.AgentContext, s: Sess, call: ToolCall): Promise<s
       let out: string;
       if (name === "read_file") {
         if (statSync(abs).size > MAX_READ) throw new Error(`${rel} is larger than ${MAX_READ / 1000} KB`);
-        out = await readFile(abs, "utf8");
+        out = untrusted(`contents of ${rel}`, await readFile(abs, "utf8"));
       } else if (name === "list_files") out = listTree(abs) || "(empty)";
       else {
         const content = String(args.content ?? "");

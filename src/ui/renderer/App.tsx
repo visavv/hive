@@ -4,6 +4,7 @@ import { connect, hello, onEvent, onFocusLast, rpc } from "./bridge.js";
 import { ping, store, useStore } from "./store.js";
 import { Pane } from "./Pane.js";
 import { Drawer } from "./Drawer.js";
+import { agentNameProblem } from "../../core/names.js";
 import { GroupChat, GroupsSection, LinkDialog } from "./Links.js";
 import { RecipesDialog, SkillsDialog } from "./Extras.js";
 import { focus } from "./focus.js";
@@ -726,7 +727,8 @@ function AddAgentDialog({ onClose }: { onClose: () => void }) {
   };
   const submit = () => {
     const n = name.trim();
-    if (!/^[\w.-]{1,40}$/.test(n)) return setErr("name: letters, digits, _ . - only");
+    const problem = agentNameProblem(n);
+    if (problem) return setErr(`name: ${problem}`);
     if (taken.has(n)) return setErr(`"${n}" is already open`);
     onClose();
     void openPane(

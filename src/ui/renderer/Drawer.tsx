@@ -222,6 +222,7 @@ export function AccountsView() {
 const kTok = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
 const BUDGET_HELP: Record<string, string> = {
   daily_tokens: "all providers, per day (empty = no cap)",
+  daily_tokens_api: "each pay-per-token API provider without its own cap (gemini-api, openrouter…)",
   reserve_pct: "stop automatic work when a subscription window is this full",
   max_concurrent: "automatic runs at once",
   media_daily: "image / voice API calls per day",
@@ -288,6 +289,9 @@ export function UsageView() {
           {!p.guard.ok && <div className="warn small">automatic work held: {p.guard.reason}</div>}
         </section>
       ))}
+      <div className="dim small">
+        Media calls today: {u.media.today} / {u.media.cap}
+      </div>
       <section>
         <h3>Spending guards</h3>
         <div className="dim small">Only automatic work (scheduled jobs, agents waking each other) is held. Values: 2m, 500k. Empty = default/off.</div>

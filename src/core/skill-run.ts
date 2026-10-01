@@ -4,9 +4,9 @@
  * "more like #3") and it remembers the conversation.
  */
 import type { Hub } from "./hub.js";
-import type { PermissionPolicy, TurnResult } from "./session.js";
+import type { TurnResult } from "./session.js";
 import { AGENTS } from "./agents.js";
-import { extractSkill, outputPath, parseSkill, renderSkill, saveOutput, skillWriterPrompt, type Skill } from "./skills.js";
+import { extractSkill, outputPath, parseSkill, prepareSkillValues, renderSkill, saveOutput, skillPolicy, skillWriterPrompt, type Skill } from "./skills.js";
 
 export function skillAgentName(skill: string): string {
   return `skill-${skill}`.replace(/[^\w.-]/g, "-").slice(0, 40);
@@ -25,6 +25,7 @@ export async function runSkill(
   values: Record<string, string>,
   o: { cwd: string; kind?: string; name?: string; fresh?: boolean },
 ): Promise<SkillRun> {
+  values = await prepareSkillValues(skill, values); // e.g. YouTube link → transcript file
   const prompt = renderSkill(skill, values, o.cwd);
   const kind = o.kind ?? skill.agent ?? "claude";
   if (!AGENTS[kind]) throw new Error(`unknown agent "${kind}"`);
@@ -34,7 +35,7 @@ export async function runSkill(
     agent: kind,
     cwd: o.cwd,
     role: `skill: ${skill.description}`.slice(0, 120),
-    policy: skill.policy as PermissionPolicy,
+    policy: skillPolicy(skill),
     resume: false,
   });
   const result = await session.runOnce(prompt, { fresh: o.fresh ?? true, automatic: false });

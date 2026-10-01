@@ -7,6 +7,7 @@ import { createServer } from "node:http";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { assert, finish, freshDir } from "./util.js";
+import { usageSummary } from "../src/core/budget.js";
 
 const dir = freshDir(".hive-test-media");
 const work = join(dir, "work");
@@ -68,7 +69,8 @@ try {
 if (agentEnv) assert(!agentEnv.includes("el-test") && !agentEnv.includes("img-test"), "media API keys are not in the agent's environment");
 
 // daily media budget
-hub.db.setSetting("budget.media_daily", "4");
+assert(usageSummary(hub.db).media.today === 3, `only successful calls count toward the media budget (${usageSummary(hub.db).media.today})`);
+hub.db.setSetting("budget.media_daily", "3");
 await a.runOnce('calltool hive_tts {"text":"one more"}', { automatic: false });
 assert(/daily media budget reached/.test(a.lastReply), `media_daily caps calls (${a.lastReply.trim().slice(-120)})`);
 

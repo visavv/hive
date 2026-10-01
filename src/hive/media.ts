@@ -15,6 +15,7 @@
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
 import type { HiveDb } from "./db.js";
+import { confine } from "../core/confine.js";
 import { budgetSetting, startOfToday } from "../core/budget.js";
 
 const env = process.env;
@@ -27,22 +28,24 @@ const imageKey = () => env.HIVE_IMAGE_KEY || env.OPENAI_API_KEY || "";
 const imageBase = () => (env.HIVE_IMAGE_BASE || "https://api.openai.com/v1").replace(/\/+$/, "");
 const elBase = () => (env.ELEVENLABS_BASE || "https://api.elevenlabs.io").replace(/\/+$/, "");
 
-/** Throws when today's media budget is used up; otherwise records one call. */
-export function chargeMedia(db: HiveDb, agent: string, kind: "tts" | "image") {
+/** Throws when today's media budget is used up. */
+export function checkMediaCap(db: HiveDb) {
   const cap = Number(budgetSetting(db, "media_daily") ?? "40");
   const used = db
     .usageSince(startOfToday())
     .filter((u) => u.provider.startsWith("media:"))
     .reduce((n, u) => n + u.turns, 0);
   if (cap >= 0 && used >= cap) throw new Error(`daily media budget reached (${used}/${cap}); raise it with hive budget set media_daily=N`);
+}
+/** Count one successful media call. */
+export function recordMedia(db: HiveDb, agent: string, kind: "tts" | "image") {
   db.recordUsage(agent, `media:${kind}`, 0);
 }
 
 export function insideFolder(cwd: string, p: string): string {
-  const abs = isAbsolute(p) ? resolve(p) : resolve(cwd, p);
-  const rel = relative(resolve(cwd), abs);
-  if (!rel || rel.startsWith("..") || isAbsolute(rel)) throw new Error(`${p} is outside the working folder`);
-  return abs;
+  const real = confine(cwd, p);
+  if (real === confine(cwd, ".")) throw new Error(`${p} is a folder, not a file`);
+  return real;
 }
 
 function outFile(cwd: string, name: string | undefined, fallback: string, ext: string): string {
@@ -162,15 +165,20 @@ export function mediaKinds(): string[] {
 /** Run one media request from an agent. `cwd` is the agent's folder as the hub knows it. */
 export async function runMedia(db: HiveDb, agent: string, cwd: string, kind: string, p: any): Promise<string> {
   if (kind === "voices") return JSON.stringify(await voices(), null, 1);
-  chargeMedia(db, agent, kind === "tts" ? "tts" : "image");
+  if (kind === "tts" && !ttsAvailable()) throw new Error("ELEVENLABS_API_KEY is not set");
+  if (kind === "image" && !imageAvailable()) throw new Error("set HIVE_IMAGE_KEY (or OPENAI_API_KEY) to generate or edit images");
+  // Check the cap first, count the call only when it succeeded (failures don't eat the budget).
+  checkMediaCap(db);
   if (kind === "tts") {
     const r = await tts({ cwd, text: String(p.text ?? ""), voice: p.voice, name: p.name });
+    recordMedia(db, agent, "tts");
     return `saved ${r.path} (${Math.round(r.bytes / 1024)} KB)`;
   }
   if (kind === "image") {
     const files = p.edit
       ? await imageEdit({ cwd, image: String(p.image ?? ""), prompt: String(p.prompt ?? ""), mask: p.mask, size: p.size, name: p.name })
       : await imageGenerate({ cwd, prompt: String(p.prompt ?? ""), size: p.size, n: p.n, name: p.name });
+    recordMedia(db, agent, "image");
     return `saved:\n${files.join("\n")}`;
   }
   throw new Error(`unknown media kind ${kind}`);

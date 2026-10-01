@@ -155,8 +155,10 @@ acp
     const inboxRaw = process.env.MOCK_DEAF === "1" ? "[]" : await callTool(sess, "hive_inbox", {});
     await toolCall(cx, sessionId, `t${n}`, "hive_inbox", "completed", "fetch");
     let inbox: any[] = [];
+    // Like a model reading hive_inbox: skip the trust note, read through the untrusted markers.
+    const unwrap = (v: any) => (typeof v === "string" ? v.replace(/^<<untrusted[^\n]*>>\n/, "").replace(/\n<<end untrusted>>$/, "") : v);
     try {
-      inbox = JSON.parse(inboxRaw);
+      inbox = JSON.parse(inboxRaw.slice(inboxRaw.indexOf("["))).map((m: any) => ({ ...m, subject: unwrap(m.subject), body: unwrap(m.body) }));
     } catch {}
     for (const m of inbox) {
       if (m.subject?.startsWith("re:")) {

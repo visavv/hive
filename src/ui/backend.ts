@@ -22,7 +22,7 @@ import { defaultDb } from "../core/home.js";
 import { listWorktrees, mergeWorktree } from "../core/worktree.js";
 import { buildReport } from "../core/report.js";
 import { RECIPES, applyRecipe } from "../core/recipes.js";
-import { findSkill, listSkills, renderSkill, skillFromPrompt, userSkillsDir } from "../core/skills.js";
+import { findSkill, listSkills, prepareSkillValues, renderSkill, skillFromPrompt, skillPolicy, userSkillsDir } from "../core/skills.js";
 import { runSkill, skillAgentName } from "../core/skill-run.js";
 import { BB_PREFIX, BRANCHES } from "../core/watch.js";
 import { setBudget, usageSummary } from "../core/budget.js";
@@ -546,24 +546,25 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
       description: sk.description,
       source: sk.source,
       agent: sk.agent,
-      policy: sk.policy,
+      policy: skillPolicy(sk),
       output: sk.output,
       params: sk.params,
     }));
   },
-  runSkill({ name, params, kind }) {
+  async runSkill({ name, params: raw, kind }) {
     const sk = findSkill(defaultCwd, name);
+    const params = await prepareSkillValues(sk, raw); // YouTube link → transcript (errors show in the dialog)
     renderSkill(sk, params, defaultCwd); // validate now, so errors show in the dialog
     const k = kind || sk.agent || "claude";
     if (!AGENTS[k]) throw new Error(`unknown agent "${k}"`);
     const agent = skillAgentName(sk.name);
-    policies.set(agent, sk.policy);
+    policies.set(agent, skillPolicy(sk));
     void runSkill(hub, sk, params, { cwd: defaultCwd, kind: k })
       .then((r) => {
         if (r.saved) send({ event: "job", agent, jobId: 0, text: `saved to ${r.saved}` });
       })
       .catch((e) => send({ event: "error", text: `${name}: ${e?.message ?? e}` }));
-    return { agent, kind: k, policy: sk.policy };
+    return { agent, kind: k, policy: skillPolicy(sk) };
   },
   groups() {
     return hub.db.groups();
