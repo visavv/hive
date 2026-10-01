@@ -23,7 +23,7 @@ hive talks to them through their official ACP adapters (bundled with hive, no ex
 
 ## 2. Get hive
 
-**Quick way (one script):** clone, then let the installer do the rest. It checks Node and Git (and offers to install them with winget), updates, builds, puts `hive` on PATH, checks your agents, and with `-Project` adds a Start-menu entry and opens hive:
+**Quick way (one script):** clone, then let the installer do the rest. It checks Node and Git (and offers to install them with winget), updates, builds, puts `hive` on PATH, builds **hive.exe** (pixel-art icon) with **hive** shortcuts on your Desktop and in the Start menu, checks your agents, and with `-Project` adds a Start-menu entry for that project and opens hive:
 
 Any folder or drive works for hive itself (here `H:\HIVE`). `-Project` is the code the agents should work on, a different folder; if it doesn't exist yet the script offers to create it as an empty git project.
 
@@ -54,7 +54,8 @@ If PowerShell says running scripts is disabled when you type `hive`, either run 
 ```powershell
 cd C:\code\myproject
 hive doctor          # claude / codex: "proto v1 auth: <your account>" means ready
-hive ui              # the pane UI for this project
+hive                 # open the app: this folder if it's a project, else the last one (first time: pick a folder)
+hive ui              # the pane UI for this project, logs stay in this terminal
 ```
 
 In the UI: **+ Agent** (Ctrl+N) → pick Claude Code, a name, a preset (Coder gives it its own git worktree) → type in its pane. Hover a pane and talk with Handy; the text goes to that pane.
@@ -102,6 +103,7 @@ hive bb ideas/              # the scout's ideas
 - CLI: `hive link coder reviewer --review`, `hive held`, `hive release 12`.
 - Safety default: an agent set to **allow all** only takes mail from agents you linked it with (groups agents make themselves don't count, and agents can't add it to one). Mail from anyone else waits in **✉ Hive → Inbox → Waiting for your review** (Release, Edit, Drop, or **Link & release**). Switch it off under Groups if you really want unlinked agents to drive it.
 - `hive accounts` (or the Accounts tab in ✉ Hive) shows which agents are signed in or have their keys.
+- **hive.exe / the Desktop icon** opens hive the same way as typing `hive`. Pin it: right-click → Pin to taskbar. It's built from `scripts\windows\hive-launcher.cs` by the installer (re-run the installer after moving the hive folder).
 - `hive desktop --cwd C:\code\myproject` adds a Start-menu entry that opens hive on that project.
 
 ## 6. Where things are

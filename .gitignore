@@ -8,3 +8,4 @@ dist-ui
 .hive-test-home/
 .hive-audit*/
 .claude/worktrees/
+hive.exe

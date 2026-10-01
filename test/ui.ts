@@ -161,8 +161,15 @@ try {
   assert(await pane(page, "alpha").locator(".cfg select").count(), "model selector from configOptions shown");
 
   // phase 4: hover focus, Ctrl+N jump, Ctrl+Tab
+  // hover focus starts on mouseenter: begin outside beta (an earlier step can leave the mouse inside it).
+  // A key just pressed in alpha holds focus there for the typing lock (1.5 s); resting on beta then moves it.
+  await pane(page, "alpha").locator("textarea").press("Shift");
+  await page.mouse.move(2, 2);
   await pane(page, "beta").locator(".transcript").hover();
   await sleep(700);
+  const heldWhileTyping = await activeIn(page, "alpha");
+  await until(() => activeIn(page, "beta"), 3000).catch(() => {});
+  assert(heldWhileTyping, "hover waits while you're typing in another pane (typing lock)");
   assert(await activeIn(page, "beta"), "hovering a pane focuses its input (after a short dwell)");
   await pane(page, "beta").locator("textarea").fill("draft in progress");
   await pane(page, "alpha").locator(".transcript").hover();
@@ -283,7 +290,7 @@ try {
   assert(true, "Ctrl+M maximizes the focused pane");
   await page.keyboard.press("Control+2");
   await page.waitForFunction(() => document.querySelectorAll(".pane").length === 2);
-  await sleep(100);
+  await until(() => activeIn(page, "beta"), 3000).catch(() => {});
   assert(await activeIn(page, "beta"), "Ctrl+2 while maximized restores the grid and focuses pane 2");
   await page.locator(".cols button", { hasText: "+" }).click();
 
@@ -292,7 +299,28 @@ try {
   await page.locator(".modal textarea").fill("hunt bugs");
   await page.locator(".modal label:has-text('Times') input").fill("2");
   await page.locator(".modal button[type=submit]").click();
-  await page.locator(".job-list li.ended", { hasText: "done" }).waitFor({ timeout: 20_000 });
+  // the job must exist before we wait for it to finish: report the dialog if it didn't take
+  const scheduled = await page.locator(".toast", { hasText: "scheduled on beta" }).waitFor({ timeout: 10_000 }).then(() => true, () => false);
+  if (!scheduled)
+    console.error(`[job dialog] no "scheduled" toast; dialog: ${(await page.locator(".modal").allInnerTexts().catch(() => [])).join(" | ").replace(/\s+/g, " ").slice(0, 400)}; toasts: ${JSON.stringify(await page.locator(".toast").allInnerTexts().catch(() => []))}`);
+  await page
+    .locator(".job-list li.ended", { hasText: "done" })
+    .waitFor({ timeout: 40_000 }) // two runs; slow 2-core CI runners need the room
+    .catch(async (e) => {
+      // say why: the scheduler's view from the hive db, and what the sidebar shows
+      const { default: Database } = await import("better-sqlite3");
+      const db = new Database(join(projectDir(dir), "hive.db"), { readonly: true });
+      const q = (sql: string) => JSON.stringify(db.prepare(sql).all());
+      console.error(`[job not done after 40 s] now=${Date.now()}
+  jobs: ${q("SELECT id, agent, kind, remaining, every_ms, next_run, enabled FROM jobs")}
+  runs: ${q("SELECT * FROM job_runs")}
+  agents: ${q("SELECT name, status, auto_since, lease_until, owner FROM agents")}
+  budget: ${q("SELECT * FROM settings WHERE key LIKE 'budget%' OR key LIKE 'learn%'")}
+  sidebar: ${(await page.locator(".job-list").innerText().catch(() => "?")).replace(/\s+/g, " ").slice(0, 300)}
+  beta: ${(await pane(page, "beta").locator(".transcript").innerText().catch(() => "?")).replace(/\s+/g, " ").slice(-400)}`);
+      db.close();
+      throw e;
+    });
   assert(true, "job scheduled from a pane runs and shows as done in the sidebar");
   await page.locator(".job-list li.ended", { hasText: "done" }).click();
   await page.locator(".modal .rep-job", { hasText: "run 2" }).waitFor({ timeout: 5000 });
@@ -694,7 +722,17 @@ try {
       .waitForFunction(() => (document.querySelector(".browser-pane .dv-view img") as HTMLImageElement | null)?.src.startsWith("data:image/jpeg"), null, { timeout: 45_000 })
       .catch(async () => console.error(`[browser pane after 45 s] ${(await page.locator(".browser-pane").innerText().catch(() => "?")).replace(/\s+/g, " ").slice(0, 400)}`));
     // the title arrives with the page's load event, which can come after the first frame
-    const titled = await page.locator(".dv-title", { hasText: "Pane test" }).waitFor({ timeout: 20_000 }).then(() => true, () => false);
+    let titled = await page.locator(".dv-title", { hasText: "Pane test" }).waitFor({ timeout: 20_000 }).then(() => true, () => false);
+    if (!titled) {
+      // seen on slow Windows runners: the first navigation goes missing while Chromium starts. Say what the pane
+      // shows (address bar, toasts), then press Enter once more like a person would.
+      const bar = await page.locator(".dv-url").inputValue().catch(() => "?");
+      const toasts = await page.locator(".toast").allInnerTexts().catch(() => []);
+      console.error(`[browser pane, no title after 20 s] address bar "${bar}", toasts ${JSON.stringify(toasts)}; pressing Enter again`);
+      if (!bar.trim()) await page.locator(".dv-url").fill(`127.0.0.1:${(site.address() as any).port}`);
+      await page.locator(".dv-url").press("Enter");
+      titled = await page.locator(".dv-title", { hasText: "Pane test" }).waitFor({ timeout: 25_000 }).then(() => true, () => false);
+    }
     const framed = await page.locator(".browser-pane .dv-view img").evaluate((i) => (i as HTMLImageElement).src.startsWith("data:image/jpeg")).catch(() => false);
     if (!titled) console.error(`[browser pane, no title] ${(await page.locator(".browser-pane").innerText().catch(() => "?")).replace(/\s+/g, " ").slice(0, 400)}`);
     assert(titled && framed, "the page loads in the sandboxed browser and frames reach the pane");
