@@ -1,4 +1,4 @@
-# hive vs Odysseus
+# hive compared with similar tools
 
 Odysseus: https://github.com/odysseus-dev/odysseus. Reviewed on 2026-10-01 from a shallow clone of `main` (commit e303582) plus its README and THREAT_MODEL. I read the code and docs; I didn't install or run it.
 
@@ -47,3 +47,57 @@ Odysseus: https://github.com/odysseus-dev/odysseus. Reviewed on 2026-10-01 from 
 ## Bottom line
 
 They overlap less than it looks. Odysseus is an all-in-one personal AI workspace that you host. hive orchestrates the coding agents you already pay for, with teamwork between them and tight local control. For your workflow (coding automations plus YouTube tools on Windows and Fedora), hive is the better base. The Odysseus ideas worth taking are untrusted-content wrapping, YouTube URL transcripts, and blind multi-model comparison.
+
+---
+
+# The wider field (research 2026-10-01)
+
+Yes, there are comparable apps. Parallel coding agents in git worktrees became a crowded category in 2026. The table comes from official READMEs, docs and product pages; facts that only third-party articles mention are flagged as such. These are documentation reviews, not hands-on tests.
+
+| Tool | Type | Platforms | Parallel agents + worktrees | Agents (subscriptions?) | Agents talk / orchestration | Scheduling / triggers | License |
+|---|---|---|---|---|---|---|---|
+| **Maestro** (runmaestro.ai) | Desktop (Electron) | Win, macOS, Linux | ✓ worktree "sub-agents" | Claude Code, Codex, OpenCode, Factory Droid, Copilot CLI, Qwen, more. CLIs, multiple accounts | ✓ Group Chat with a moderator AI; @mentions | ✓ "Cue": interval, scheduled, file changed, agent completed (chaining), GitHub PR/issue | AGPL-3.0 |
+| **Agent Deck** | TUI + local web dashboard | macOS, Linux (Windows via WSL) | ✓ worktree per session, Docker option | Claude Code, Gemini, Codex, OpenCode, Copilot, Cursor and more | ✓ "Conductors" (supervisor agents) | Watchers (GitHub, webhooks); Telegram/Slack bridges; budgets | MIT |
+| **Superset** | Desktop "agentic IDE" | macOS (Linux experimental; no Windows) | ✓ | 25+ CLI agents, your own subscriptions | Shared coordination (vague) | ✓ scheduled agents that open PRs | Elastic 2.0; paid Pro |
+| **Conductor** | Desktop | macOS only | ✓ | Claude Code, Codex, Cursor, OpenCode | — | API (Pro) | Proprietary; free + paid |
+| **Nimbalyst** (formerly Crystal) | Desktop + iOS | Win, macOS, Linux | ✓ | Claude Code, Codex; others via ACP (alpha) | Kanban of sessions | — | MIT |
+| **Vibe Kanban** | Local web UI | via Node | ✓ | Claude Code, Codex, Gemini, Copilot, Amp, Cursor, OpenCode, Qwen | Kanban tasks, MCP | — | Apache-2.0 (repo says it's sunsetting) |
+| **Parallel Code** | Desktop | macOS, Linux | ✓ | Claude Code, Codex, Gemini, Copilot | Head-to-head comparison only | — | MIT |
+| **Jean** (coolLabs) | Desktop (Tauri) | macOS (Win/Linux partial) | ✓ | Claude, Codex, Cursor, OpenCode, more | AI review / merge-conflict helpers | — | Apache-2.0 |
+| **T3 Code** | Desktop + web + mobile | Win, macOS, Linux | Multi-agent control (worktrees not confirmed) | Codex, Claude Code, Cursor, OpenCode, more. Your subscriptions, multiple accounts | — | — | MIT |
+| **Claude Squad** / **CCManager** | TUI | Unix (CCManager also Windows) | ✓ | Claude Code, Codex, Gemini, more | — | hooks / auto-approve | AGPL-3.0 / MIT |
+| **Zed** (parallel agents + ACP) | IDE | Win, macOS, Linux | ✓ thread per worktree (optional) | Its own agent + ACP agents (Claude, Codex, Gemini, OpenCode, Copilot…) | — | worktree hooks | open source |
+| **Toad** | TUI (ACP client) | Linux, macOS (Windows via WSL) | several agents; no worktrees | any ACP agent | — | — | AGPL-3.0 |
+| **OpenHands Agent Canvas** | Local web UI + SDK | anywhere | multiple sessions | Claude Code, Codex, Gemini via ACP; subscriptions or keys | SDK orchestration | ✓ automations | MIT (cloud paid) |
+| **Cursor 3** | IDE + cloud | Win, macOS, Linux | ✓ local, worktree, cloud agents; best-of-n | Cursor's models (not vendor CLIs) | async subagents (third-party sources only) | ✓ cron, GitHub, Slack, Linear, webhooks (cloud) | proprietary, paid |
+| **Claude Code itself** | CLI | Win, macOS, Linux | ✓ agent view, background sessions in worktrees | Claude only | ✓ agent teams, cross-session messaging with hold/approve | ✓ /loop; channels (Telegram/Discord/iMessage) | proprietary |
+| **OpenAI Codex app** | Desktop | Win, macOS, Linux | ✓ worktrees, parallel threads | OpenAI only | — | ✓ automations | proprietary |
+
+Also checked: herdr (agent-aware terminal multiplexer), cmux (macOS terminal), Sculptor (containers, no Windows yet), Xum (formerly coder/mux, API models), Warp Oz (enterprise cloud), Happy (phone remote for Claude/Codex), container-use, Uzi, Goose (recipes + scheduler), Kiro, Amp, Google Antigravity, VS Code agent harnesses / GitHub Agent HQ. Terragon has shut down; Omnara pivoted.
+
+## Closest matches and what they do better
+
+- **Maestro** is the closest overall: a desktop app on Windows and Linux with multiple vendors, worktrees, a group chat with a moderator, and rich triggers (agent-completed chaining, GitHub events). It also offers phone control through a built-in web server and tunnel, SSH remotes, and playbooks. It has no Gemini CLI support and doesn't run API models through one protocol.
+- **Agent Deck**: supervisor "conductors", two-way Telegram/Slack, an MCP attach manager, session forking, sparse worktrees, budgets. Windows only through WSL.
+- **Zed** is the closest on protocol: ACP agents from every vendor side by side, plus a full editor and MCP forwarding. It has no agent-to-agent messaging and no scheduling.
+- **Claude Code itself** now has agent teams, cross-session messaging with approval, /loop and chat channels. That covers much of hive's teamwork, but for Claude only.
+
+## What still looks distinctive about hive
+
+- Mail, groups and a shared blackboard **across vendors** (Claude Code + Codex + Gemini + API models talking to each other). Others have this only within one vendor (Claude teams) or through a moderator/supervisor (Maestro, Agent Deck).
+- **Drag panes together** to form a group, with an owner **review-each-message** layer. Only Claude Code's cross-session messaging has a similar approve step, and only for Claude.
+- **No network listener at all.** Maestro, Agent Deck, Jean, Vibe Kanban, OpenHands, Xum and T3 Code all open a local or remote server for their UI or phone access.
+- Vertical 9:16 layout, an outbound WhatsApp bridge, blackboard triggers, YouTube/creator skills.
+- Not unique: worktrees, multiple vendors, budgets (Agent Deck), recipes/playbooks (Goose, Maestro), using subscriptions instead of keys (T3 Code, OpenHands, Superset).
+
+## Ideas worth borrowing from the field
+
+| Idea | Seen in | Fit |
+|---|---|---|
+| Chain on "agent finished" (fan-out / fan-in) | Maestro Cue | High: a natural extension of watch jobs (e.g. coder done → tester → reviewer) |
+| GitHub triggers (PR opened, label, issue) | Maestro, Cursor, Warp | Medium: needs polling the GitHub API (no webhooks, since there's no listener) |
+| Copy `.env` and other untracked files into new worktrees | CCManager `.worktreeinclude` | High: worktrees often fail without `.env` |
+| Best-of-n / head-to-head on one task | Cursor, Parallel Code, Odysseus Compare | High for titles and prompts |
+| Supervisor agent that keeps asking until a question is answered | Maestro moderator, Agent Deck conductors | Medium: the review layer and recipes cover part of it |
+| Session fork with inherited context | Agent Deck | Medium |
+| Phone control | Maestro, T3 Code, Happy | Covered by the outbound Discord/WhatsApp bridges, without opening a port |
