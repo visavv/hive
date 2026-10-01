@@ -37,7 +37,7 @@ jobs:
         shell: bash
         run: |
           if [ "$RUNNER_OS" = Windows ]; then powershell -ExecutionPolicy Bypass -File scripts/setup-remote-windows.ps1 -DryRun -TailscaleOnly
-          else bash scripts/setup-remote.sh --dry-run --discord --ssh-only-tailscale; fi
+          else bash scripts/setup-remote.sh --dry-run --discord --daemon --ssh-only-tailscale; fi
       - name: UI e2e (Windows)
         if: runner.os == 'Windows'
         run: npm run test:ui
@@ -74,7 +74,7 @@ jobs:
       - name: desktop entry
         run: node dist/cli/index.js desktop --cwd "$PWD" && cat ~/.local/share/applications/hive-*.desktop
       - name: remote-access setup (dry run, Fedora)
-        run: bash scripts/setup-remote.sh --dry-run --discord --ssh-only-tailscale
+        run: bash scripts/setup-remote.sh --dry-run --discord --daemon --ssh-only-tailscale
       - name: UI e2e (Xvfb)
         run: |
           Xvfb :99 -screen 0 1920x1080x24 &

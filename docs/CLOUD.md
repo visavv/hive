@@ -1,6 +1,5 @@
 # hive in the cloud: one hive, every device
 
-> Status (2026-10-01): the daemon, `attach` and the desktop app's `--remote` mode are in the code; the `hive daemon` / `hive attach` / `hive ui --remote` CLI commands and `setup-remote.sh --daemon` are being wired up next.
 
 Run hive on one always-on machine and connect to the **same agents, sessions, board and stats** from your desktop, laptop and phone. Close the app on one machine, open it on another, and carry on where you left off. Agents keep working while nobody is connected.
 
