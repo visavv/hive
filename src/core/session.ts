@@ -30,6 +30,7 @@ import * as ledger from "./ledger.js";
 import { projectRoot } from "./home.js";
 import { BUDGET_RECHECK_MS, budgetRev } from "./budget.js";
 import { resolveMcpServers } from "./mcp-extra.js";
+import { memoryBriefing } from "./memory.js";
 
 export type PermissionPolicy = "ask" | "allow-reads" | "allow-all" | "reject-all";
 export const POLICIES: PermissionPolicy[] = ["ask", "allow-reads", "allow-all", "reject-all"];
@@ -559,6 +560,10 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
   private costLogged = 0;
   /** The turn in progress was started automatically (job, mail), not by a person. */
   private automatic = false;
+  /** Is the current (or last) turn automatic work rather than something the owner typed? */
+  get isAutomatic(): boolean {
+    return this.automatic;
+  }
 
   private onUpdate(n: schema.SessionNotification) {
     const replay = n.sessionId === this.replayingId && !this.busy;
@@ -683,7 +688,7 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
     this.lastActivity = Date.now();
     this.dbStatus(this.name, "working", text.slice(0, 120));
     this.emitEv({ type: "status", status: "working", note: text.slice(0, 120) });
-    this.dbLog(this.name, "prompt", { text });
+    this.dbLog(this.name, "prompt", automatic ? { text, automatic: true } : { text });
     this.emitEv({ type: "prompt", text });
     this.replyText = "";
 
@@ -781,10 +786,11 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
       `You are agent "${this.name}"${this.role ? ` with role: ${this.role}` : ""} in a local multi-agent hive.`,
       `Other agents:\n${others || "- (none yet)"}`,
       groups.length ? `Your groups (mail "@name" reaches all members): ${groups.join("; ")}` : "",
-      `You have MCP tools prefixed hive_: use hive_inbox at the start of each turn, hive_send to hand work or findings to another agent (or "@group" for a group you share), hive_bb_* for shared project facts and task claims (key "claim/<task>"), hive_status to publish what you're doing, hive_diff/hive_log to read another agent's branch.`,
+      `You have MCP tools prefixed hive_: use hive_inbox at the start of each turn, hive_send to hand work or findings to another agent (or "@group" for a group you share), hive_bb_* for shared project facts and task claims (key "claim/<task>"), hive_status to publish what you're doing, hive_diff/hive_log to read another agent's branch, hive_remember when the owner tells you something lasting ("always…", "never…", "remember that…").`,
       `Never wait or poll for replies inside a turn; send, finish your own work, and the hub will wake you when mail arrives.`,
       `To reach the human, hive_send to "owner" — only for decisions you need, finished work worth their attention, or blockers.`,
       TRUST_POLICY,
+      memoryBriefing(this.cwd),
       this.opts.briefing ?? "",
     ]
       .filter(Boolean)
@@ -993,7 +999,7 @@ export function isHiveTool(req: schema.RequestPermissionRequest): boolean {
   // command itself ("rm -rf ~ && echo hive_status"), so a substring match would let it skip the prompt.
   if (req.toolCall.kind === "execute") return false;
   const ri = (req.toolCall as any).rawInput ?? {};
-  const re = /^(mcp__hive__|hive[.:/]\s?)?hive_(agents|send|inbox|thread|bb_get|bb_set|bb_list|bb_delete|status|diff|log|group|followup|card_add|card_move|card_list)(\s*\(MCP\))?$/;
+  const re = /^(mcp__hive__|hive[.:/]\s?)?hive_(agents|send|inbox|thread|bb_get|bb_set|bb_list|bb_delete|status|diff|log|group|followup|card_add|card_move|card_list|remember)(\s*\(MCP\))?$/;
   // rawInput is written by the agent, so it only counts together with the server name (codex-style calls)
   const fromRaw = typeof ri.server === "string" && ri.server === "hive" && typeof ri.tool === "string" && re.test(ri.tool.trim());
   return (typeof req.toolCall.title === "string" && re.test(req.toolCall.title.trim())) || fromRaw;

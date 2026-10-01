@@ -54,6 +54,8 @@ class Store {
   presets: PresetView[] = [];
   /** Unread mail agents sent to the owner. */
   ownerUnread = 0;
+  /** Memory lines and skills hive learned, waiting for your OK (Learning tab). */
+  learnPending = 0;
   cwd = "";
   db = "";
   layout: Layout = { panes: [], columns: 2, hoverFocus: true, sidebar: true, maximized: null };
@@ -256,6 +258,10 @@ class Store {
         }
         break;
       }
+      case "learn":
+        if (ev.pending > this.learnPending) this.toast(`hive learned something — review it in Hive → Learning`);
+        this.learnPending = ev.pending;
+        break;
       case "owner_mail":
         this.ownerUnread = ev.unread;
         if (ev.latest) {
