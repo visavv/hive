@@ -43,7 +43,7 @@
  */
 import { parseArgs } from "node:util";
 import readline from "node:readline";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
 import { nodeEntry } from "../core/paths.js";
 import { existsSync } from "node:fs";
@@ -66,6 +66,7 @@ import { runSkill, writeSkill } from "../core/skill-run.js";
 import { createBridges } from "../bridges/index.js";
 import { mcpConfigPath, mcpServerList, parseMcpNames, readMcpConfig, storeMcp } from "../core/mcp-extra.js";
 import { TWITCH_EVERY_KEY, TWITCH_MIN_EVERY, pollTwitch, twitchMissing } from "../hive/twitch.js";
+import { motionTemplates, newMotion, renderMotion } from "../core/motion.js";
 import { BUDGET_KEYS, setBudget, usageSummary } from "../core/budget.js";
 import { runMedia } from "../hive/media.js";
 import { applyVerdict, runVerdict, type VerdictState } from "../core/verdict.js";
@@ -138,6 +139,11 @@ const OPTIONS = {
   mcp: { type: "string", multiple: true },
   every: { type: "string" },
   channel: { type: "string" },
+  fps: { type: "string" },
+  alpha: { type: "boolean", default: false },
+  frames: { type: "boolean", default: false },
+  seconds: { type: "string" },
+  template: { type: "string" },
   help: { type: "boolean", short: "h", default: false },
   version: { type: "boolean", short: "v", default: false },
 } as const;
@@ -228,6 +234,9 @@ const USAGE = `hive — local multi-agent harness
   hive report [--since 12h]               what happened: job runs + summaries, commits, mail to you
   hive tts "text" [--voice ID] [--out name]           ElevenLabs voice-over → out/media/*.mp3  (hive tts --voices lists voices)
   hive image "prompt" [--size 1536x1024] [--edit img.png [--mask m.png]]   generate / edit an image → out/media/*.png
+  hive motion new <name> [--template title-card]   start a motion graphic in out/motion/<name>/ (skill: motion)
+  hive render <dir|index.html> [--fps 60] [--size 1920x1080] [--alpha] [--out file] [--frames]
+                                          HTML animation → MP4 (H.264) or, with --alpha, ProRes 4444 .mov (docs/CREATOR.md)
   hive twitch poll|watch [--every 10m] [--detach] [--channel login] [--in-project P] · hive twitch off
                                           new VODs/clips → board cards (TWITCH_CLIENT_ID/SECRET/CHANNEL; docs/CREATOR.md)
   hive mcp                                extra MCP servers (<HIVE_HOME>/mcp.json) · attach with --mcp NAME (docs/MCP.md)
@@ -588,6 +597,54 @@ async function main() {
     return;
   }
   switch (cmd) {
+    case "motion": {
+      const sub = rest[0] ?? "templates";
+      if (sub === "templates") {
+        for (const t of motionTemplates()) console.log(t);
+        return;
+      }
+      if (sub !== "new") die(`unknown subcommand "${sub}" (new|templates)`);
+      const name = rest[1] ?? die("usage: hive motion new <name> [--template title-card]");
+      try {
+        const d = newMotion(values.cwd ?? process.cwd(), name, values.template);
+        console.log(`${green("created")} ${d}\n${dim(`edit index.html (or ask an agent: hive skill run motion name=${name} brief="…"), then: hive render ${relative(values.cwd ?? process.cwd(), d) || "."}`)}`);
+      } catch (e: any) {
+        die(e.message);
+      }
+      return;
+    }
+
+    case "render": {
+      const target = rest[0] ?? die("usage: hive render <dir|index.html> [--fps 60] [--size 1920x1080] [--alpha] [--out file] [--frames]");
+      let last = 0;
+      try {
+        const r = await renderMotion({
+          target: resolve(values.cwd ?? process.cwd(), target),
+          out: values.out ? resolve(values.out) : undefined,
+          fps: values.fps ? positiveInt(values.fps, "--fps") : undefined,
+          size: values.size,
+          alpha: values.alpha,
+          frames: values.frames,
+          maxSeconds: values.seconds ? Number(values.seconds) : undefined,
+          onProgress: (f, n) => {
+            if (!tty || (Date.now() - last < 200 && f < n)) return;
+            last = Date.now();
+            process.stdout.write(`\r${dim(`frame ${f}/${n}`)}  `);
+          },
+        });
+        if (tty) process.stdout.write("\r");
+        console.log(`${green("rendered")} ${r.out} ${dim(`(${r.frames} frames, ${r.info.width}x${r.info.height} @ ${r.info.fps} fps, ${(r.ms / 1000).toFixed(1)} s)`)}`);
+        // Logged in the project's hive (no tokens: nothing goes to the token ledger).
+        const db = new HiveDb(values.db!);
+        db.log("owner", "render", { target, out: r.out, frames: r.frames, ...r.info, alpha: values.alpha, ms: r.ms });
+        db.close();
+      } catch (e: any) {
+        if (tty) process.stdout.write("\n");
+        die(e?.message ?? String(e));
+      }
+      return;
+    }
+
     case "twitch": {
       const sub = rest[0] ?? "poll";
       const db = new HiveDb(values.db!);
