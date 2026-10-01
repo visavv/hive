@@ -118,6 +118,11 @@ const { values, positionals } = parseArgs({
     voices: { type: "boolean", default: false },
     review: { type: "boolean", default: false },
     agents: { type: "string" },
+    by: { type: "string" },
+    days: { type: "string" },
+    vendor: { type: "string" },
+    category: { type: "string" },
+    "in-project": { type: "string" },
     judge: { type: "string" },
     text: { type: "boolean", default: false },
     body: { type: "string" },
@@ -181,6 +186,8 @@ const USAGE = `hive — local multi-agent harness
   hive tts "text" [--voice ID] [--out name]           ElevenLabs voice-over → out/media/*.mp3  (hive tts --voices lists voices)
   hive image "prompt" [--size 1536x1024] [--edit img.png [--mask m.png]]   generate / edit an image → out/media/*.png
   hive usage · hive budget [set k=v …]    tokens per provider, limit windows + resets · spending guards
+  hive stats [--by vendor|model|category|project|day|agent] [--days 30] [--vendor X] [--model M] [--category review] [--in-project NAME]
+                                          where your tokens went, across all projects (kept for good)
   hive inbox [--all]                      mail agents sent to you ("owner")
   hive send <agent|*> "text"              message an agent as the owner (it's woken to read it)
   hive bb [prefix] · hive bb rm <key>     the shared blackboard (ideas/, security/, claim/…)
@@ -1054,6 +1061,34 @@ async function main() {
       console.log(dim(`\nbudget: ${Object.entries(u.budget).map(([a, b]) => `${a}=${b}`).join("  ")}   (hive budget set key=value)`));
       console.log(dim(`limits: Claude reports its 5-hour/weekly windows while it runs; other providers show tokens and any limit they hit.`));
       db.close();
+      return;
+    }
+
+    case "stats": {
+      const { stats, facets } = await import("../core/ledger.js");
+      const by = (values.by ?? "vendor") as import("../core/ledger.js").LedgerDim;
+      if (!["vendor", "model", "category", "project", "day", "agent", "kind"].includes(by)) die("--by vendor|model|category|project|day|agent");
+      const days = values.days === "all" ? 0 : Number(values.days ?? 30);
+      const f = {
+        since: days ? Date.now() - days * 86_400_000 : undefined,
+        vendor: values.vendor,
+        model: values.model,
+        category: values.category,
+        project: values["in-project"],
+      };
+      const r = stats(by, f);
+      const k = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(2)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
+      const scope = [days ? `last ${days} days` : "all time", f.vendor, f.model, f.category, f.project].filter(Boolean).join(" · ");
+      console.log(`${k(r.total.tokens)} tokens · ${r.total.turns} turns${r.total.cost ? ` · $${r.total.cost.toFixed(2)} (API-equivalent where reported)` : ""}  ${dim(scope)}`);
+      if (!r.rows.length) console.log(dim("nothing recorded yet for this filter"));
+      const w = Math.max(8, ...r.rows.map((x) => x.key.length));
+      for (const x of r.rows) {
+        const pct = Math.round(x.share * 1000) / 10;
+        const bar = "█".repeat(Math.round(x.share * 30)).padEnd(30, "·");
+        console.log(`${x.key.padEnd(w)}  ${k(x.tokens).padStart(7)}  ${String(pct).padStart(5)}%  ${dim(bar)}  ${dim(`${x.turns} turns${x.cost ? ` · $${x.cost.toFixed(2)}` : ""}`)}`);
+      }
+      const fc = facets(f);
+      console.log(dim(`\nfilters: --vendor ${fc.vendor.join("|") || "-"}  --category ${fc.category.join("|") || "-"}\n         --in-project ${fc.project.join("|") || "-"}`));
       return;
     }
 

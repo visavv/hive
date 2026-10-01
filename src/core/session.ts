@@ -25,6 +25,8 @@ import { nodeEntry } from "./paths.js";
 import { AUTH_STATUS_UPDATE, authLabel, type AuthStatus } from "./doctor.js";
 import { HiveDb } from "../hive/db.js";
 import { TRUST_POLICY } from "./trust.js";
+import * as ledger from "./ledger.js";
+import { projectRoot } from "./home.js";
 
 export type PermissionPolicy = "ask" | "allow-reads" | "allow-all" | "reject-all";
 export const POLICIES: PermissionPolicy[] = ["ask", "allow-reads", "allow-all", "reject-all"];
@@ -390,6 +392,18 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
     await this.ctx.notify(acp.methods.agent.session.cancel, { sessionId: this.sessionIdValue });
   }
 
+  private projectPath?: string;
+  /** The model this agent is running, for the usage ledger (API agents: their configured model). */
+  modelName(): string | undefined {
+    const o = this.configOptions.find((c: any) => c.category === "model" || c.id === "model") as any;
+    const v = o?.currentValue;
+    if (v != null) {
+      const label = o.options?.find?.((x: any) => x.value === v)?.name;
+      return String(v === "default" && label ? label : v);
+    }
+    return this.def.env?.HIVE_API_MODEL || undefined;
+  }
+
   /** Change a model/effort/mode selector the agent advertised via configOptions. */
   async setConfigOption(configId: string, value: string | boolean) {
     if (!this.ctx || !this.sessionIdValue) throw new Error("session not started");
@@ -680,6 +694,22 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
         if (tokens || cost)
           try {
             this.db.recordUsage(this.name, this.def.id, tokens, cost, this.automatic);
+          } catch {}
+        if (tokens || cost)
+          try {
+            const u = result.usage as any;
+            ledger.record({
+              project: (this.projectPath ??= projectRoot(this.opts.cwd)),
+              agent: this.name,
+              kind: this.def.id,
+              model: this.modelName(),
+              role: this.opts.role,
+              automatic: this.automatic,
+              tokens,
+              inputTokens: u?.inputTokens,
+              outputTokens: u?.outputTokens,
+              costUsd: cost,
+            });
           } catch {}
         if (this.replyText) this.dbLog(this.name, "reply", { text: this.replyText });
         this.dbLog(this.name, "turn_end", { stopReason: result.stopReason, usage: result.usage, error: result.error });

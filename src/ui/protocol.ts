@@ -281,6 +281,9 @@ export interface Methods {
   heldMail: (p: Record<string, never>) => MailView[];
   saveSkill: (p: { name: string; description?: string; body: string; overwrite?: boolean }) => { path: string; params: string[] };
   usage: (p: Record<string, never>) => import("../core/budget.js").UsageSummary;
+  stats: (p: { by: import("../core/ledger.js").LedgerDim; filter: import("../core/ledger.js").LedgerFilter }) => ReturnType<typeof import("../core/ledger.js").stats> & {
+    facets: ReturnType<typeof import("../core/ledger.js").facets>;
+  };
   setBudget: (p: { key: string; value: string }) => import("../core/budget.js").UsageSummary;
 }
 
