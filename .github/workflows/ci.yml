@@ -106,6 +106,8 @@ jobs:
         run: node dist/cli/index.js desktop --cwd "$PWD" && cat ~/.local/share/applications/hive-*.desktop
       - name: remote-access setup (dry run, Fedora)
         run: bash scripts/setup-remote.sh --dry-run --discord --daemon --web --ssh-only-tailscale
+      - name: Chromium for the sandboxed browser pane
+        run: npx playwright-core install chromium || echo "no Chromium for this distro; the browser pane test will skip"
       - name: UI e2e (Xvfb)
         run: |
           Xvfb :99 -screen 0 1920x1080x24 &
