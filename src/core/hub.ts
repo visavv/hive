@@ -199,6 +199,8 @@ export class Hub {
         rest.cwd = (await ensureWorktree(o.cwd, o.name, join(dirname(this.hiveDb), "worktrees"))).path;
       } catch (e: any) {
         if (!/not inside a git repository|has no commits yet/.test(String(e?.message))) throw e;
+        // the preset's briefing may talk about "your own worktree": correct it so the agent doesn't claim a branch it lacks
+        rest.briefing = `${rest.briefing ? rest.briefing + "\n\n" : ""}Note: there is no separate worktree for you here (${o.cwd} isn't set up for it). You work directly in ${o.cwd}; don't create branches or worktrees, and ignore anything above about "your own worktree" or a hive/ branch.`;
         worktreeNote = `${o.name} works directly in ${o.cwd}: ${/no commits/.test(e.message) ? "the git project has no commits yet" : "it isn't a git project yet"}, so there's no separate branch. For one, run "git init" there and commit once (Ctrl+K → "Make this folder a git project").`;
       }
     let resumeSessionId = rest.resumeSessionId;

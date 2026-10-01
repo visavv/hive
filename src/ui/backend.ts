@@ -203,7 +203,7 @@ const hub = new Hub({
   defaults: { askPermission, elicit },
   onEvent: (agent: string, e: SessionEvent) => {
     send({ event: "agent", agent, e });
-    if (e.type === "status" || e.type === "context" || e.type === "config" || e.type === "exit" || e.type === "auth" || e.type === "session")
+    if (e.type === "status" || e.type === "context" || e.type === "config" || e.type === "commands" || e.type === "exit" || e.type === "auth" || e.type === "session")
       schedulePush();
     if (e.type === "exit") dropPending(agent);
     learnEvent(agent, e);
@@ -290,6 +290,7 @@ function view(s: AgentSession): AgentView {
     jobs: hub.db.listJobs(false).filter((j) => j.agent === s.name).length,
     branch: branchOf(s.cwd),
     mcp: s.extraMcp,
+    commands: s.commands,
   };
 }
 

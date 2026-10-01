@@ -159,6 +159,22 @@ try {
   await pane(page, "alpha").locator(".ctx").waitFor({ timeout: 5000 });
   assert(/\d+%/.test(await pane(page, "alpha").locator(".ctx").innerText()), "ctx % meter shown in pane header");
   assert(await pane(page, "alpha").locator(".cfg select").count(), "model selector from configOptions shown");
+  assert((await pane(page, "alpha").locator(".composer-bar .cfg select").count()) > 0 && (await pane(page, "alpha").locator(".pane-head .cfg").count()) === 0, "model settings sit under the message box, not in the pane header");
+  // "/" opens a menu of hive's and the agent's commands
+  {
+    const ta = pane(page, "alpha").locator("textarea");
+    await ta.fill("/");
+    await pane(page, "alpha").locator(".slash-menu").waitFor({ timeout: 5000 });
+    const names = await pane(page, "alpha").locator(".slash-menu .slash-name").allInnerTexts();
+    assert(names.includes("/improve") && names.includes("/compact"), `"/" lists hive's and the agent's commands (${names.join(" ")})`);
+    await ta.fill("/rev");
+    await ta.press("Enter");
+    assert((await ta.inputValue()) === "/review " && (await pane(page, "alpha").locator(".slash-menu").count()) === 0, "typing filters the menu; Enter picks the command");
+    await ta.fill("/");
+    await ta.press("Escape");
+    assert((await pane(page, "alpha").locator(".slash-menu").count()) === 0, "Esc closes the menu");
+    await ta.fill("");
+  }
 
   // phase 4: hover focus, Ctrl+N jump, Ctrl+Tab
   // hover focus starts on mouseenter: begin outside beta (an earlier step can leave the mouse inside it).
@@ -516,6 +532,8 @@ try {
   writeFileSync(join(dir, "src", "hello.ts"), "// greet someone by name\nexport function greet(name: string): string {\n  const message = `Hello, ${name}!`;\n  return message;\n}\n");
   await command(page, "open file");
   await page.locator(".code-view").waitFor({ timeout: 5000 });
+  // focus lands once the view has mounted: allow it a moment
+  await until(() => page.evaluate(() => document.activeElement?.closest(".code-find") != null), 2000).catch(() => {});
   assert(await page.evaluate(() => document.activeElement?.closest(".code-find") != null), "Open file… opens the code view with the find box focused");
   await page.locator(".code-find input").fill("hello");
   await page.locator(".code-tree .code-node", { hasText: "src/hello.ts" }).waitFor({ timeout: 5000 });

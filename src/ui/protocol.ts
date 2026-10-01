@@ -135,6 +135,8 @@ export interface AgentView {
   unread: number;
   sessionId?: string;
   ctx?: { used: number; size: number };
+  /** Slash commands the agent offers ("/" menu in the composer). */
+  commands?: { name: string; description?: string; hint?: string }[];
   config: ConfigOptionView[];
   auth?: string;
   jobs: number;

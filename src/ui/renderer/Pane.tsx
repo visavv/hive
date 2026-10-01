@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { AgentView, ElicitationAsk, PermissionAsk } from "../protocol.js";
 import { rpc } from "./bridge.js";
 import { renderMarkdown } from "./markdown.js";
@@ -83,7 +83,6 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
         </strong>
         <span className="kind">{agent?.kind ?? starting?.kind}</span>
         <GroupChips agent={name} />
-        {agent && <ConfigSelectors agent={agent} />}
         <span className="spacer" />
         {agent?.ctx && <CtxMeter used={agent.ctx.used} size={agent.ctx.size} />}
         <StatePill state={state} />
@@ -222,6 +221,9 @@ function CtxMeter({ used, size }: { used: number; size: number }) {
     </span>
   );
 }
+
+/** Commands hive itself handles in the composer ("/" menu). */
+const HIVE_SLASH: { name: string; description: string; hint?: string }[] = [{ name: "improve", description: "turn a rough idea into a full prompt for this agent (✦)", hint: "rough idea" }];
 
 function ConfigSelectors({ agent }: { agent: AgentView }) {
   const opts = agent.config.filter((o) => o.type === "select" && o.options?.length);
@@ -627,6 +629,22 @@ function Composer({ name, agent }: { name: string; agent?: AgentView }) {
     void rpc("prompt", { name, text: t }).catch((e) => store.toast(e.message, "error"));
   };
   useVoiceTarget(name, { el: () => ref.current, setText, send });
+  // "/" menu: hive's own commands plus the ones the agent advertised (ACP available commands)
+  const [slashSel, setSlashSel] = useState(0);
+  const [slashOff, setSlashOff] = useState<string | null>(null);
+  const slashQ = text.startsWith("/") && !/\s/.test(text) && slashOff !== text ? text.slice(1).toLowerCase() : null;
+  const slashItems = useMemo(() => {
+    if (slashQ == null) return [];
+    const all = [...HIVE_SLASH, ...(agent?.commands ?? []).filter((c) => !HIVE_SLASH.some((h) => h.name === c.name))];
+    const starts = all.filter((c) => c.name.toLowerCase().startsWith(slashQ));
+    const has = all.filter((c) => !c.name.toLowerCase().startsWith(slashQ) && c.name.toLowerCase().includes(slashQ));
+    return [...starts, ...has].slice(0, 12);
+  }, [slashQ, agent?.commands]);
+  const pickSlash = (c: { name: string }) => {
+    setText(`/${c.name} `);
+    setSlashSel(0);
+    setTimeout(() => ref.current?.focus(), 0);
+  };
   return (
     <div className="composer">
       {editing && (
@@ -644,6 +662,24 @@ function Composer({ name, agent }: { name: string; agent?: AgentView }) {
           }}
         />
       )}
+      {slashItems.length > 0 && (
+        <div className="slash-menu" role="listbox" aria-label="commands">
+          {slashItems.map((c, i) => (
+            <button
+              key={c.name}
+              role="option"
+              aria-selected={i === Math.min(slashSel, slashItems.length - 1)}
+              className={i === Math.min(slashSel, slashItems.length - 1) ? "on" : ""}
+              onMouseDown={(e) => (e.preventDefault(), pickSlash(c))}
+            >
+              <span className="slash-name">/{c.name}</span>
+              {c.hint && <span className="slash-hint">{c.hint}</span>}
+              <span className="slash-desc">{c.description}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="composer-box">
       <textarea
         ref={ref}
         value={text}
@@ -656,6 +692,15 @@ function Composer({ name, agent }: { name: string; agent?: AgentView }) {
           if (undo != null && e.target.value === "") setUndo(null);
         }}
         onKeyDown={(e) => {
+          if (slashItems.length && ["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(e.key) && !e.shiftKey) {
+            e.preventDefault();
+            const cur = Math.min(slashSel, slashItems.length - 1);
+            if (e.key === "ArrowDown") setSlashSel((cur + 1) % slashItems.length);
+            else if (e.key === "ArrowUp") setSlashSel((cur - 1 + slashItems.length) % slashItems.length);
+            else if (e.key === "Escape") setSlashOff(text);
+            else pickSlash(slashItems[cur]);
+            return;
+          }
           if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "e") {
             e.preventDefault();
             setEditing(true);
@@ -689,6 +734,9 @@ function Composer({ name, agent }: { name: string; agent?: AgentView }) {
           }
         }}
       />
+      <div className="composer-bar">
+      {agent && <ConfigSelectors agent={agent} />}
+      <span className="spacer" />
       {undo != null && (
         <button className="ghost improve-undo" onClick={() => (setText(undo), setUndo(null))} title="back to your draft (Ctrl+Z)">
           undo
@@ -710,6 +758,8 @@ function Composer({ name, agent }: { name: string; agent?: AgentView }) {
       <button className="send" onClick={() => send()} disabled={!agent || !text.trim()} title="send (Enter)">
         <IconSend />
       </button>
+      </div>
+      </div>
     </div>
   );
 }

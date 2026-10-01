@@ -58,4 +58,15 @@ assert(
   ico.readUInt16LE(2) === 1 && ico.readUInt16LE(4) === 7 && entries.every((e, i) => e.readUInt32BE(16) === sizes[i] && Buffer.compare(pixels(e), pixels(iconPng(sizes[i]))) === 0) && iconIco().readUInt16LE(4) === 7,
   "assets/hive.ico holds 7 sizes and matches the generator",
 );
+// the stylesheet must balance its braces: one missing "}" silently scopes everything after it to a media query
+{
+  const css = readFileSync(join(repo, "src", "ui", "renderer", "styles.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  let depth = 0;
+  let min = 0;
+  for (const ch of css) {
+    if (ch === "{") depth++;
+    else if (ch === "}") min = Math.min(min, --depth);
+  }
+  assert(depth === 0 && min === 0, `styles.css braces balance (depth ${depth})`);
+}
 finish("launch");
