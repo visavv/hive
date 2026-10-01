@@ -119,6 +119,12 @@ export async function runMux(o: MuxOptions): Promise<{ close: () => Promise<void
       } catch {
         return;
       }
+      // control lines from `hive attach --status / --stop`
+      if (msg.mux === "status") return void sock.write(JSON.stringify({ mux: "status", clients: clients.size - 1, backend: !!backend, pid: process.pid }) + "\n");
+      if (msg.mux === "stop") {
+        sock.write(JSON.stringify({ mux: "stopping" }) + "\n");
+        return void close().then(() => o.onExit?.(0));
+      }
       if (typeof msg.id !== "number" || !backend?.stdin?.writable) {
         if (typeof msg.id === "number") sock.write(JSON.stringify({ id: msg.id, error: "hive backend is restarting" }) + "\n");
         return;
@@ -183,6 +189,24 @@ export function attachStdio(path: string): Promise<void> {
       s.pipe(process.stdout);
       process.stdin.once("end", () => s.end());
       s.once("close", () => res());
+    });
+  });
+}
+
+/** Send one control line to a running mux and return its first answer. */
+export function control(path: string, cmd: "status" | "stop"): Promise<any> {
+  return new Promise((res, rej) => {
+    const s = createConnection(path);
+    s.once("error", rej);
+    s.once("connect", () => s.write(JSON.stringify({ mux: cmd }) + "\n"));
+    createInterface({ input: s }).on("line", (l) => {
+      try {
+        const m = JSON.parse(l);
+        if (m.mux) {
+          s.destroy();
+          res(m);
+        }
+      } catch {}
     });
   });
 }
