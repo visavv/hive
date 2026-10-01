@@ -46,3 +46,7 @@ Next time, `hive tui` reopens the same panes and resumes their sessions.
 ```
 
 The status bar shows how many agents are working, which are ready (✓, finished while you were elsewhere), and what's waiting for you (permission questions and held messages).
+
+## On a phone
+
+Over SSH from a phone (see [REMOTE.md](REMOTE.md)): below 90 columns hive shows one agent at a time with the others as tabs (`!` needs you, `…` working, `✓` done). `/1` … `/9` switch agents when there's no Alt key.
