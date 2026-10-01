@@ -9,6 +9,7 @@ import { GroupChat, GroupsSection, LinkDialog, PauseIcon } from "./Links.js";
 import { VerdictWindow } from "./Verdict.js";
 import { StatsDialog } from "./Stats.js";
 import { KanbanView } from "./Kanban.js";
+import { DeviceDock, openDevice } from "./Devices.js";
 
 export const THEMES: { id: NonNullable<Layout["theme"]>; label: string; hint: string; tone: "dark" | "light" }[] = [
   { id: "dark", label: "Dark", hint: "neutral grays, periwinkle accent", tone: "dark" },
@@ -228,6 +229,8 @@ export function App() {
     { id: "max", label: "Maximize / restore the focused agent", keys: "Ctrl+M", run: () => toggleMaximize(focus.active) },
     { id: "layout", label: `Layout: ${layout.orientation === "vertical" ? "horizontal" : layout.orientation === "horizontal" ? "auto" : "vertical"} (now ${layout.orientation ?? "auto"})`, run: () => saveLayout({ orientation: layout.orientation === "vertical" ? "horizontal" : layout.orientation === "horizontal" ? "auto" : "vertical" }) },
     { id: "board", label: "Board (Kanban): Draft, In progress, Done", keys: "Ctrl+J", run: () => setDialog("board") },
+    { id: "browser", label: "Open browser…", hint: "sandboxed: its own profile, never your logins", run: () => openDevice("browser") },
+    { id: "android", label: "Android device…", hint: "emulator or phone over adb", run: () => openDevice("android") },
     ...THEMES.filter((t) => t.id !== (layout.theme ?? "dark")).map((t) => ({ id: "theme-" + t.id, label: `Theme: ${t.label}`, hint: t.hint, run: () => saveLayout({ theme: t.id }) })),
     ...(["compact", "comfortable", "spacious"] as const)
       .filter((d) => d !== (layout.density ?? "comfortable"))
@@ -331,6 +334,7 @@ export function App() {
           }}
         />
       )}
+      <DeviceDock />
       <div className="toasts" role="status" aria-live="polite">
         {toasts.map((t) => (
           <div key={t.id} className={`toast ${t.level}`} role={t.level === "error" ? "alert" : undefined}>

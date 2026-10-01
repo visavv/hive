@@ -202,10 +202,53 @@ export type BackendEvent =
   | { event: "verdict"; state: import("../core/verdict.js").VerdictState }
   | { event: "owner_mail"; unread: number; latest?: { from: string; subject: string } }
   /** Sent by Electron main, not the backend. */
-  | { event: "backend_down"; text: string };
+  | { event: "backend_down"; text: string }
+  | DeviceEvent;
+
+// ---- device panes: sandboxed browser and Android (src/hive/devices.ts) ----
+export type DeviceKind = "browser" | "android";
+export type BrowserState = import("../hive/browser.js").BrowserState;
+export type AndroidState = import("../hive/android.js").AndroidState;
+export interface DeviceFrame {
+  mime: string;
+  /** base64 image */
+  data: string;
+  /** Size of the page / screen the frame shows (input coordinates map onto this). */
+  w: number;
+  h: number;
+}
+/** Frames go out only while a pane watches that device (deviceWatch). */
+export type DeviceEvent =
+  | { event: "device_frame"; device: DeviceKind; frame: DeviceFrame }
+  | { event: "device_state"; device: "browser"; state: BrowserState }
+  | { event: "device_state"; device: "android"; state: AndroidState }
+  /** An agent used a device: the UI opens its pane. */
+  | { event: "device_activity"; device: DeviceKind; agent: string; action: string }
+  | { event: "device_problem"; device: DeviceKind; text: string };
+export interface DeviceMethods {
+  /** Start / stop the frame stream for a pane (stops when nobody watches). */
+  deviceWatch: (p: { device: DeviceKind; on: boolean }) => void;
+  browserState: (p: Record<string, never>) => BrowserState;
+  browserOpen: (p: { url: string }) => BrowserState;
+  browserNav: (p: { action: "back" | "forward" | "reload" | "stop" }) => BrowserState;
+  browserInput: (p: import("../hive/browser.js").BrowserInput) => void;
+  /** persistent: keep logins for this project (a profile folder in the project's state dir). */
+  browserSettings: (p: { persistent: boolean }) => BrowserState;
+  browserClose: (p: Record<string, never>) => void;
+  androidState: (p: Record<string, never>) => AndroidState;
+  androidSelect: (p: { serial: string | null }) => AndroidState;
+  androidInput: (
+    p:
+      | { type: "tap"; x: number; y: number }
+      | { type: "swipe"; x1: number; y1: number; x2: number; y2: number; ms?: number }
+      | { type: "text"; text: string }
+      | { type: "key"; key: string },
+  ) => void;
+  androidAction: (p: { action: "rotate" | "install" | "launch" | "startAvd"; value?: string }) => string;
+}
 
 /** UI → backend requests; each gets `{id, result}` or `{id, error}`. */
-export interface Methods {
+export interface Methods extends DeviceMethods {
   addAgent: (p: PaneSpec & { resume?: boolean; startJob?: boolean }) => AgentView;
   worktrees: (p: Record<string, never>) => { repo: string; base: string; worktrees: WorktreeView[] }[];
   mergeWorktree: (p: { name: string; repo: string }) => { ok: boolean; message: string };

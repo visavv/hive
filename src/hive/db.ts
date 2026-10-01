@@ -237,6 +237,17 @@ export class HiveDb {
         result TEXT,
         error TEXT
       );
+      -- Browser / Android device actions requested by agents, run by the hub that owns the devices.
+      CREATE TABLE IF NOT EXISTS device_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER NOT NULL,
+        agent TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        params TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        result TEXT,
+        error TEXT
+      );
       -- Groups: mail to "@<group>" reaches every member (agents or "owner").
       CREATE TABLE IF NOT EXISTS group_members (
         grp TEXT NOT NULL,
@@ -644,6 +655,31 @@ export class HiveDb {
   }
   getMedia(id: number): { status: string; result: string | null; error: string | null } | undefined {
     return this.db.prepare(`SELECT status, result, error FROM media_jobs WHERE id=?`).get(id) as any;
+  }
+  // ---- device jobs (browser / Android; see src/hive/devices.ts) ----
+  addDeviceJob(agent: string, kind: string, params: unknown): number {
+    return Number(this.db.prepare(`INSERT INTO device_jobs (ts, agent, kind, params) VALUES (?,?,?,?)`).run(Date.now(), agent, kind, JSON.stringify(params)).lastInsertRowid);
+  }
+  /** Atomically take the oldest pending device job. */
+  claimDeviceJob(): { id: number; agent: string; kind: string; params: string } | undefined {
+    return this.db.transaction(() => {
+      const row = this.db.prepare(`SELECT id, agent, kind, params FROM device_jobs WHERE status='pending' ORDER BY id LIMIT 1`).get() as
+        | { id: number; agent: string; kind: string; params: string }
+        | undefined;
+      if (row) this.db.prepare(`UPDATE device_jobs SET status='running' WHERE id=?`).run(row.id);
+      return row;
+    })();
+  }
+  finishDeviceJob(id: number, result: string | null, error: string | null) {
+    this.db.prepare(`UPDATE device_jobs SET status=?, result=?, error=? WHERE id=?`).run(error ? "failed" : "done", result, error, id);
+  }
+  getDeviceJob(id: number): { status: string; result: string | null; error: string | null } | undefined {
+    return this.db.prepare(`SELECT status, result, error FROM device_jobs WHERE id=?`).get(id) as any;
+  }
+  /** Drop finished device jobs older than a day and fail ones a dead hub left running. */
+  pruneDeviceJobs() {
+    this.db.prepare(`DELETE FROM device_jobs WHERE ts < ?`).run(Date.now() - 86_400_000);
+    this.db.prepare(`UPDATE device_jobs SET status='failed', error='the hive process running it stopped' WHERE status='running' AND ts < ?`).run(Date.now() - 10 * 60_000);
   }
   getSetting(key: string): string | undefined {
     return (this.db.prepare(`SELECT value FROM settings WHERE key=?`).get(key) as { value: string } | undefined)?.value;
