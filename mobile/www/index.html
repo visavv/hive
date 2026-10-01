@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>hive</title>
+    <link rel="stylesheet" href="shell.css" />
+  </head>
+  <body>
+    <!-- First launch (or "Change server"): ask for the address `hive web` printed, keep it, open it. -->
+    <main id="setup" hidden>
+      <svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><path d="M32 4 56 18v28L32 60 8 46V18z" /></svg>
+      <h1>hive</h1>
+      <p>Paste the address <code>hive web</code> printed on your computer. It looks like<br /><code>https://my-pc.tail1234.ts.net/#t=…</code></p>
+      <form id="form">
+        <textarea id="url" rows="3" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://…ts.net/#t=…"></textarea>
+        <div id="err" class="err" role="alert"></div>
+        <button type="submit">Open hive</button>
+      </form>
+      <p class="hint">Your phone needs the Tailscale app, signed in to the same account as the computer. The address stays on this phone.</p>
+    </main>
+    <script src="shell.js"></script>
+  </body>
+</html>

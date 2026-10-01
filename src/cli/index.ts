@@ -122,6 +122,8 @@ const OPTIONS = {
   attach: { type: "boolean", default: false },
   stop: { type: "boolean", default: false },
   status: { type: "boolean", default: false },
+  port: { type: "string" },
+  "new-token": { type: "boolean", default: false },
   days: { type: "string" },
   vendor: { type: "string" },
   category: { type: "string" },
@@ -216,6 +218,7 @@ const USAGE = `hive — local multi-agent harness
   hive ui --remote you@server --remote-cwd ~/code/app   the app with its agents on another machine (docs/CLOUD.md)
   hive board [--all] [--in-project P] · add "title" · mv <id> draft|doing|done · rm <id>   the Kanban board
   hive daemon · hive attach [--status|--stop]   keep a project's hive running; connect to it (the app does this over SSH)
+  hive web [--port 7777] [--new-token]    the app in your phone's browser / the Android app (127.0.0.1 only; docs/MOBILE.md)
   hive stats [--by vendor|model|category|project|day|agent] [--days 30] [--vendor X] [--model M] [--category review] [--in-project NAME]
                                           where your tokens went, across all projects (kept for good)
   hive inbox [--all]                      mail agents sent to you ("owner")
@@ -1149,6 +1152,16 @@ async function main() {
       const { runDaemon } = await import("../ui/attach.js");
       await runDaemon(resolve(values.cwd ?? process.cwd()));
       await new Promise(() => {}); // until SIGTERM
+      return;
+    }
+
+    case "web": {
+      // The pane UI over HTTP + WebSocket on 127.0.0.1, published to your tailnet with `tailscale serve` (docs/MOBILE.md).
+      const { runWeb } = await import("../ui/web.js");
+      const port = values.port ? Number(values.port) : undefined;
+      if (port !== undefined && !(Number.isInteger(port) && port > 0 && port < 65536)) die("--port takes a number, e.g. --port 7777");
+      await runWeb(resolve(values.cwd ?? process.cwd()), { port, rotate: values["new-token"] });
+      await new Promise(() => {}); // until Ctrl+C
       return;
     }
 

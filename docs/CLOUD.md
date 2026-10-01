@@ -58,7 +58,7 @@ Make it a desktop shortcut: `hive desktop --remote you@hive-server --remote-cwd 
 
 Today: Tailscale + an SSH app (Termius, Blink, Termux) and `hive-tui` — see [REMOTE.md](REMOTE.md). It talks to the same daemon, board and stats.
 
-Coming next: the same app in the phone's browser (installable as an app), served only inside your tailnet.
+The same app in your phone's browser, or as an Android app, served only inside your tailnet: `hive web` ([MOBILE.md](MOBILE.md)).
 
 ## 4. Your code
 
