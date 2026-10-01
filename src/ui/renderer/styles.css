@@ -710,3 +710,32 @@ kbd + kbd { margin-left: 3px; }
 .topbar .cols button { width: 22px; height: 22px; padding: 0; justify-content: center; }
 .hive-btn .count { margin-left: 2px; }
 .group-item .badge.alert { height: 18px; min-width: 18px; border-radius: 9px; }
+
+/* ---- fixes from the showcase run ---- */
+/* the agent's name never truncates before the model picker does */
+.pane-head .pname { flex-shrink: 0; }
+.pane-head .cfg { flex: 0 1 auto; min-width: 60px; }
+.cfg select { min-width: 0; max-width: 170px; text-overflow: ellipsis; }
+/* sidebar meta: one line with an ellipsis, not ragged wraps */
+.agent-item .row2 { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* markdown tables read left to right */
+.md th { text-align: left; }
+.md table { border-collapse: collapse; }
+.md th, .md td { padding: 4px 10px; border-color: var(--border); }
+/* permission / question cards: theme colors, amber like every "needs you" */
+.ask { border: 1px solid color-mix(in srgb, var(--st-blocked) 55%, var(--border)); background: color-mix(in srgb, var(--st-blocked) 6%, var(--bg-2)); border-radius: var(--r-3); padding: 10px 12px; }
+.ask.done { border-color: var(--border); background: var(--bg-1); }
+.ask-title { display: flex; align-items: center; gap: 6px; color: var(--text); }
+.ask-title .icon { color: var(--st-blocked); }
+.ask-detail { background: var(--bg-0); color: var(--text); border: 1px solid var(--border); }
+.ask-options .allow { border-color: color-mix(in srgb, var(--st-done) 50%, var(--border)); }
+.ask-options .allow:hover { background: color-mix(in srgb, var(--st-done) 12%, transparent); }
+.ask-options .reject { border-color: color-mix(in srgb, var(--st-error) 45%, var(--border)); }
+.ask-options .reject:hover { background: color-mix(in srgb, var(--st-error) 10%, transparent); }
+/* narrow windows (9:16 monitors, half-screen): broadcast gets its own row */
+@media (max-width: 1100px) {
+  .topbar { height: auto; flex-wrap: wrap; padding: 6px 10px; row-gap: 6px; }
+  .topbar .broadcast { order: 20; flex: 1 0 100%; }
+  .topbar .bl, .topbar .cmd-btn kbd { display: none; }
+}
+.app { grid-template-rows: auto 1fr; }

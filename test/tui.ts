@@ -4,7 +4,8 @@ import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { Hub } from "../src/core/hub.js";
 import { TuiController } from "../src/tui/controller.js";
-import { fit, gridShape, render, strWidth, wrap, type TuiView } from "../src/tui/render.js";
+import { fit, gridShape, mdPlain, render, strWidth, wrap, type TuiView } from "../src/tui/render.js";
+import { promptPart } from "../src/tui/controller.js";
 import { assert, finish, freshDir, sleep, until } from "./util.js";
 
 const plain = (s: string) => s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
@@ -13,6 +14,17 @@ const plain = (s: string) => s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
 assert(strWidth("abc") === 3 && strWidth("日本") === 4 && strWidth("✓") === 1 && strWidth("é") === 1, "display width handles wide and combining characters");
 assert(fit("hello world", 8) === "hello w…" && fit("hi", 5) === "hi   ", "fit cuts with … and pads to the exact width");
 assert(JSON.stringify(wrap("the quick brown fox", 9)) === JSON.stringify(["the quick", "brown fox"]) && wrap("x".repeat(25), 10).length === 3, "word wrap + hard break of long words");
+{
+  const t = mdPlain("## Review\n\n| | Finding | Where |\n|---|---|---|\n| **High** | `take()` busy-waits | `limiter.ts:27` |\n| Low | magic numbers | x.ts:3 |\n\n```ts\nconst a = 1;\n```\nSee [docs](https://example.com) and ~~old~~ **new**.");
+  const ls = t.split("\n");
+  assert(ls[0] === "Review" && !t.includes("**") && !t.includes("`") && !t.includes("```") && !t.includes("|"), "terminal markdown: no raw markers, fences or pipes");
+  const hi = ls.find((l) => l.startsWith("High"))!;
+  const lo = ls.find((l) => l.startsWith("Low"))!;
+  assert(hi.indexOf("take()") === lo.indexOf("magic") && ls.some((l) => /^─+  ─+/.test(l)), "terminal markdown: table columns line up under a rule");
+  assert(ls.includes("  const a = 1;") && t.includes("docs (https://example.com)") && t.includes("old new"), "terminal markdown: code indented, links keep their target");
+  assert(mdPlain("| a | b |\n|---|---|\n| " + "x".repeat(50) + " | y |", 30).split("\n")[1] === "x".repeat(50) + " · y", "terminal markdown: a table wider than the pane becomes one line per row");
+  assert(promptPart('You are agent "x"\n\n---\n\nfix the --- parser') === "fix the --- parser" && promptPart("a --- b") === "a --- b", "a prompt containing --- is shown whole; only a briefing in front is dropped");
+}
 assert(gridShape(4, 200).gcols === 2 && gridShape(6, 200).gcols === 3 && gridShape(10, 250).gcols === 4 && gridShape(6, 120).gcols === 2 && gridShape(4, 80).gcols === 1 && gridShape(1, 200).gcols === 1, "grid is as square as fits (4 → 2×2, 6 → 3×2), capped by terminal width");
 const view: TuiView = {
   title: "proj",

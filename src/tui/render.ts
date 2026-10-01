@@ -147,6 +147,70 @@ export function wrap(text: string, width: number): string[] {
   return out;
 }
 
+/**
+ * Markdown to plain terminal text: tables as aligned columns, code fences dropped
+ * (code indented), emphasis / inline-code markers and link targets removed.
+ */
+export function mdPlain(md: string, width = Infinity): string {
+  const out: string[] = [];
+  const lines = md.split("\n");
+  const inline = (t: string) =>
+    t
+      .replace(/\*\*(.+?)\*\*|__(.+?)__/g, "$1$2")
+      .replace(/~~(.+?)~~/g, "$1")
+      .replace(/`([^`]+)`/g, "$1")
+      .replace(/!?\[([^\]]*)\]\(([^)]*)\)/g, (_m, txt, url) => (txt && txt !== url ? `${txt} (${url})` : url));
+  let fence = false;
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (/^\s*```/.test(l)) {
+      fence = !fence;
+      continue;
+    }
+    if (fence) {
+      out.push("  " + l);
+      continue;
+    }
+    if (/^\s*\|.*\|\s*$/.test(l)) {
+      // a table: collect its rows, then pad columns
+      const rows: string[][] = [];
+      let j = i;
+      for (; j < lines.length && /^\s*\|.*\|\s*$/.test(lines[j]); j++) {
+        const cells = lines[j].trim().slice(1, -1).split("|").map((c) => inline(c.trim()));
+        rows.push(cells);
+      }
+      i = j - 1;
+      const isRule = (r: string[]) => r.every((c) => /^:?-{2,}:?$/.test(c) || c === "");
+      const body = rows.filter((r) => !isRule(r));
+      const w: number[] = [];
+      for (const r of body) r.forEach((c, k) => (w[k] = Math.max(w[k] ?? 0, strWidth(c))));
+      const total = w.reduce((a, n) => a + n, 0) + 2 * Math.max(0, w.length - 1);
+      if (total > width) {
+        // too wide for the pane: one line per row, header first
+        for (const r of body) out.push(r.filter(Boolean).join(" · "));
+        continue;
+      }
+      body.forEach((r, k) => {
+        out.push(r.map((c, n) => c + " ".repeat(Math.max(0, w[n] - strWidth(c)))).join("  ").trimEnd());
+        if (k === 0 && rows.length > 1 && isRule(rows[1])) out.push(w.map((n) => "─".repeat(n)).join("  "));
+      });
+      continue;
+    }
+    out.push(inline(l.replace(/^#{1,6}\s+/, "")));
+  }
+  return out.join("\n");
+}
+
+// agent text is re-rendered every frame; convert each message once per change
+const plainCache = new WeakMap<Line, { src: string; width: number; out: string }>();
+function plainOf(l: Line, width: number): string {
+  const c = plainCache.get(l);
+  if (c && c.src === l.text && c.width === width) return c.out;
+  const out = mdPlain(l.text, width);
+  plainCache.set(l, { src: l.text, width, out });
+  return out;
+}
+
 const DOT: Record<PaneStatus, [string, string]> = {
   starting: ["◌", c.blue],
   idle: ["●", c.green],
@@ -182,7 +246,7 @@ function paneBox(p: PaneView, idx: number, focused: boolean, w: number, h: numbe
     `${c.dim}${metaFit}${reset}${border}${"─".repeat(fill)}${reset}${dotColor}${dot}${reset}${c.dim}${statusText}${reset}${border}─┐${reset}`;
   const bodyH = Math.max(0, h - 2);
   const wrapped: { text: string; style: LineStyle }[] = [];
-  for (const l of p.lines) for (const t of wrap(l.text, inner - 1)) wrapped.push({ text: t, style: l.style });
+  for (const l of p.lines) for (const t of wrap(l.style === "agent" ? plainOf(l, inner - 1) : l.text, inner - 1)) wrapped.push({ text: t, style: l.style });
   if (p.pending) {
     wrapped.push({ text: "", style: "dim" });
     for (const t of wrap(`needs you: ${p.pending}`, inner - 1)) wrapped.push({ text: t, style: "warn" });

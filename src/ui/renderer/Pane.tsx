@@ -8,7 +8,7 @@ import { ctxPct, fmtIdle, statusLabel, noteLabel } from "./format.js";
 import { PromptEditor } from "./Extras.js";
 import { GroupChips, groupColor } from "./Links.js";
 import { agentState, StatePill } from "./state.js";
-import { IconClock, IconClose, IconExpand, IconLink, IconMaximize, IconRefresh, IconSend, IconStop } from "./Icons.js";
+import { IconClock, IconClose, IconExpand, IconLink, IconLock, IconMaximize, IconRefresh, IconSend, IconStop } from "./Icons.js";
 
 export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
   name: string;
@@ -436,8 +436,8 @@ function ToolCard({ item }: { item: Item & { k: "tool" } }) {
 }
 
 function diffRows(a: string, b: string): { t: " " | "+" | "-"; l: string }[] {
-  const A = a.split("\n");
-  const B = b.split("\n");
+  const A = a ? a.split("\n") : [];
+  const B = b ? b.split("\n") : [];
   let i = 0;
   while (i < A.length && i < B.length && A[i] === B[i]) i++;
   let j = 0;
@@ -488,7 +488,7 @@ function PermissionCard({ ask, decided, onDecide }: { ask: PermissionAsk; decide
   };
   return (
     <div className={`ask perm${done ? " done" : ""}`}>
-      <div className="ask-title">🔐 {ask.title}{ask.kind ? <span className="tkind"> {ask.kind}</span> : null}</div>
+      <div className="ask-title"><IconLock size={14} /> {ask.title}{ask.kind ? <span className="tkind"> {ask.kind}</span> : null}</div>
       {ask.detail && <pre className="ask-detail">{ask.detail}</pre>}
       {done ? (
         <div className="ask-done">→ {done}</div>

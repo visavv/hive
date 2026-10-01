@@ -96,8 +96,9 @@ function toolDetail(req: schema.RequestPermissionRequest): string | undefined {
 
 /** Tiny line diff for previews (prefix-based; the renderer does the same for tool cards). */
 function diffLines(a: string, b: string): string {
-  const A = a.split("\n");
-  const B = b.split("\n");
+  // a new or deleted file has no lines on that side, not one empty line
+  const A = a ? a.split("\n") : [];
+  const B = b ? b.split("\n") : [];
   let i = 0;
   while (i < A.length && i < B.length && A[i] === B[i]) i++;
   let j = 0;
@@ -706,7 +707,8 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
 function readyEvent(): Extract<BackendEvent, { event: "ready" }> {
   return {
     event: "ready",
-    kinds: Object.values(AGENTS).map((a) => ({
+    // the mock agent is for tests (HIVE_SHOW_MOCK=1); users never pick it
+    kinds: Object.values(AGENTS).filter((a) => a.id !== "mock" || process.env.HIVE_SHOW_MOCK === "1").map((a) => ({
       id: a.id,
       label: a.api ? `${a.label} · API` : a.label,
       api: a.api,
