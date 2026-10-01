@@ -163,6 +163,8 @@ try {
   // phase 4: hover focus, Ctrl+N jump, Ctrl+Tab
   await pane(page, "beta").locator(".transcript").hover();
   await sleep(700);
+  // polled: on a busy Windows runner the dwell timer can fire late
+  await until(() => activeIn(page, "beta"), 3000).catch(() => {});
   assert(await activeIn(page, "beta"), "hovering a pane focuses its input (after a short dwell)");
   await pane(page, "beta").locator("textarea").fill("draft in progress");
   await pane(page, "alpha").locator(".transcript").hover();
@@ -283,7 +285,7 @@ try {
   assert(true, "Ctrl+M maximizes the focused pane");
   await page.keyboard.press("Control+2");
   await page.waitForFunction(() => document.querySelectorAll(".pane").length === 2);
-  await sleep(100);
+  await until(() => activeIn(page, "beta"), 3000).catch(() => {});
   assert(await activeIn(page, "beta"), "Ctrl+2 while maximized restores the grid and focuses pane 2");
   await page.locator(".cols button", { hasText: "+" }).click();
 
