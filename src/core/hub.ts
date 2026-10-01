@@ -14,6 +14,7 @@ import { agentNameProblem } from "./names.js";
 import { hiveHome } from "./home.js";
 import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { mediaKinds, runMedia } from "../hive/media.js";
+import { Devices, type DeviceKind } from "../hive/devices.js";
 
 export interface HubOptions {
   hiveDb: string;
@@ -30,6 +31,8 @@ export interface HubOptions {
   id?: string;
   /** Defaults applied to every add() (e.g. the CLI's permission/elicitation prompts). */
   defaults?: Partial<Pick<SessionOptions, "askPermission" | "elicit" | "briefing" | "startTimeoutMs">>;
+  /** Run agents' browser / Android requests in this process (default true). */
+  devices?: boolean;
 }
 
 export type AddOptions = Omit<SessionOptions, "hiveDb"> & {
@@ -78,6 +81,38 @@ export class Hub {
     if (mediaKinds().length) {
       this.mediaTimer = setInterval(() => void this.mediaTick(), 300);
       this.mediaTimer.unref?.();
+    }
+    if (opts.devices !== false) {
+      this.devices = new Devices({ projectDir: dirname(this.hiveDb), db: this.db });
+      this.deviceTimer = setInterval(() => void this.deviceTick(), 250);
+      this.deviceTimer.unref?.();
+    }
+  }
+
+  // ---- device panes: the sandboxed browser and Android, driven by agents through the db ----
+  /** The browser and adb client this hub owns (undefined with devices: false). */
+  readonly devices?: Devices;
+  private deviceTimer?: NodeJS.Timeout;
+  private deviceBusy = false;
+  private deviceKindsCache?: DeviceKind[];
+  private deviceKinds(): DeviceKind[] {
+    return this.devices ? (this.deviceKindsCache ??= Devices.kinds()) : [];
+  }
+  private async deviceTick() {
+    if (!this.devices || !this.db.db.open || this.deviceBusy) return;
+    const job = this.db.claimDeviceJob();
+    if (!job) return;
+    this.deviceBusy = true;
+    try {
+      // The folder is the one this hub knows for the agent, never one from the request.
+      const cwd = this.sessions.get(job.agent)?.cwd ?? this.db.getAgent(job.agent)?.cwd;
+      if (!cwd) throw new Error(`unknown agent ${job.agent}`);
+      const out = await this.devices.run(job.agent, cwd, job.kind, JSON.parse(job.params));
+      if (this.db.db.open) this.db.finishDeviceJob(job.id, JSON.stringify(out), null);
+    } catch (e: any) {
+      if (this.db.db.open) this.db.finishDeviceJob(job.id, null, String(e?.message ?? e).slice(0, 1000));
+    } finally {
+      this.deviceBusy = false;
     }
   }
 
@@ -160,6 +195,7 @@ export class Hub {
     const s = new AgentSession({
       ...this.opts.defaults,
       mediaKinds: mediaKinds(),
+      deviceKinds: this.deviceKinds(),
       autoGuard: () => {
         const g = checkAutomatic(this.db, provider);
         if (!g.ok) notifyOnce(this.db, g);
@@ -259,6 +295,7 @@ export class Hub {
     try {
       this.db.prune();
       this.db.failStaleMedia();
+      this.db.pruneDeviceJobs();
       pruneFiles([join(hiveHome(), "api-sessions"), join(hiveHome(), "cache", "youtube")], 30);
     } catch {}
     const ms = this.opts.pollMs ?? 1500;
@@ -286,6 +323,8 @@ export class Hub {
     if (this.timer) clearInterval(this.timer);
     clearInterval(this.leaseTimer);
     if (this.mediaTimer) clearInterval(this.mediaTimer);
+    if (this.deviceTimer) clearInterval(this.deviceTimer);
+    await this.devices?.dispose().catch(() => {});
     this.timer = undefined;
     await Promise.all([...this.sessions.values()].map((s) => s.close()));
     if (this.db.db.open) for (const n of this.sessions.keys()) this.db.releaseAgent(n, this.id);

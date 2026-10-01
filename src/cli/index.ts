@@ -658,6 +658,15 @@ async function main() {
           }
         }),
       );
+      // device panes (docs/DEVICES.md): optional, so only reported when no agent was named
+      if (!rest.length) {
+        const { findChromium, NO_CHROMIUM } = await import("../hive/browser.js");
+        const { findAdb, NO_ADB } = await import("../hive/android.js");
+        const chrome = findChromium();
+        const adb = findAdb();
+        console.log(`${chrome ? green("✓") : yellow("!")} ${"browser".padEnd(9)} ${chrome ? dim(chrome) : dim(NO_CHROMIUM)}`);
+        console.log(`${adb ? green("✓") : yellow("!")} ${"adb".padEnd(9)} ${adb ? dim(adb) : dim(NO_ADB)}`);
+      }
       return;
     }
 

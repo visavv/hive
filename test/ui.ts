@@ -11,6 +11,8 @@ import { join, resolve } from "node:path";
 import { assert, finish, freshDir, sleep } from "./util.js";
 import { projectDir } from "../src/core/home.js";
 import { AGENTS } from "../src/core/agents.js";
+import { findChromium } from "../src/hive/browser.js";
+import { createServer } from "node:http";
 
 const dir = freshDir(".hive-test-ui");
 process.env.HIVE_HOME = freshDir(".hive-test-ui-home"); // fresh default db + ui.json per run
@@ -608,6 +610,23 @@ try {
     (await page.locator(".pane").count()) === 2 && !after.maximized && (await page.locator(".grid").evaluate((g) => getComputedStyle(g).gridTemplateColumns.split(" ").length)) === 2,
     "Ctrl+M after closing the focused pane doesn't save a stale maximized pane",
   );
+  // device panes: the sandboxed browser opens from the palette and streams the page as pictures
+  if (!findChromium()) console.log("⏭  no Chromium: skipping the browser pane test");
+  else {
+    const site = createServer((_req, res) => res.writeHead(200, { "content-type": "text/html" }).end("<title>Pane test</title><h1 style='font-size:80px'>Hello pane</h1>"));
+    await new Promise<void>((r) => site.listen(0, "127.0.0.1", r));
+    await command(page, "Open browser");
+    await page.locator(".device-dock .browser-pane").waitFor({ timeout: 5000 });
+    assert((await page.locator(".dv-badge").innerText()).includes("sandboxed"), "browser pane opens from the palette with the sandbox badge");
+    await page.locator(".dv-url").fill(`127.0.0.1:${(site.address() as any).port}`);
+    await page.locator(".dv-url").press("Enter");
+    await page.waitForFunction(() => (document.querySelector(".browser-pane .dv-view img") as HTMLImageElement | null)?.src.startsWith("data:image/jpeg"), null, { timeout: 30_000 });
+    assert(await page.locator(".dv-title", { hasText: "Pane test" }).count(), "the page loads in the sandboxed browser and frames reach the pane");
+    await page.screenshot({ path: join(shots, "hive-ui-browser.png") });
+    await page.locator(".dv-tab button[aria-label='close Browser pane']").click();
+    await page.locator(".device-dock").waitFor({ state: "detached", timeout: 5000 });
+    site.close();
+  }
 } catch (e) {
   await page.screenshot({ path: join(shots, "hive-ui-failure.png") }).catch(() => {});
   throw e;
