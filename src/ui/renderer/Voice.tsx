@@ -311,6 +311,9 @@ export async function stopDictation() {
   const my = token;
   const l = live;
   const { target, startedAt, heard, mode } = rec;
+  // Releasing Space then Shift calls this twice; mark it finished now so the second call is a no-op.
+  rec = { ...rec, phase: "transcribing", level: 0 };
+  emit();
   if (l.recorder.state === "recording") l.recorder.stop();
   await l.stopped;
   release();
