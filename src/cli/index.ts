@@ -214,6 +214,7 @@ const USAGE = `hive — local multi-agent harness
   hive image "prompt" [--size 1536x1024] [--edit img.png [--mask m.png]]   generate / edit an image → out/media/*.png
   hive usage · hive budget [set k=v …]    tokens per provider, limit windows + resets · spending guards
   hive ui --remote you@server --remote-cwd ~/code/app   the app with its agents on another machine (docs/CLOUD.md)
+  hive board [--all] [--in-project P] · add "title" · mv <id> draft|doing|done · rm <id>   the Kanban board
   hive daemon · hive attach [--status|--stop]   keep a project's hive running; connect to it (the app does this over SSH)
   hive stats [--by vendor|model|category|project|day|agent] [--days 30] [--vendor X] [--model M] [--category review] [--in-project NAME]
                                           where your tokens went, across all projects (kept for good)
@@ -1093,6 +1094,44 @@ async function main() {
       console.log(dim(`\nbudget: ${Object.entries(u.budget).map(([a, b]) => `${a}=${b}`).join("  ")}   (hive budget set key=value)`));
       console.log(dim(`limits: Claude reports its 5-hour/weekly windows while it runs; other providers show tokens and any limit they hit.`));
       db.close();
+      return;
+    }
+
+    case "board": {
+      // the Kanban board: hive board [ls] [--all] [--project P] · add "title" · mv <id> draft|doing|done · rm <id>
+      const { board, COLUMN_LABEL } = await import("../hive/kanban.js");
+      const b = board();
+      const sub = rest[0] ?? "ls";
+      if (sub === "add") {
+        const title = rest.slice(1).join(" ");
+        if (!title) die('usage: hive board add "title" [--project P] [--body text]');
+        const c = b.add({ title, body: values.body, project: values["in-project"] ?? "", source: "owner" });
+        return void console.log(`#${c.id} added to ${COLUMN_LABEL[c.col]}`);
+      }
+      if (sub === "mv" || sub === "move") {
+        const id = Number(rest[1]);
+        const col = rest[2] as "draft" | "doing" | "done";
+        if (!id || !["draft", "doing", "done"].includes(col)) die("usage: hive board mv <id> draft|doing|done");
+        const c = b.move(id, col);
+        return void console.log(`#${c.id} → ${COLUMN_LABEL[c.col]}`);
+      }
+      if (sub === "rm") {
+        const id = Number(rest[1]);
+        if (!id) die("usage: hive board rm <id>");
+        return void console.log(b.remove(id) ? `#${id} deleted` : `no card #${id}`);
+      }
+      if (sub !== "ls") die("usage: hive board [ls|add|mv|rm]");
+      const cards = b.list({ done: values.all, project: values["in-project"] });
+      for (const col of ["draft", "doing", "done"] as const) {
+        const cs = cards.filter((c) => c.col === col);
+        if (col === "done" && !values.all) {
+          console.log(dim(`\nDone: ${b.counts().done} hidden (--all shows them)`));
+          continue;
+        }
+        console.log(`\n${cyan(COLUMN_LABEL[col])} ${dim(String(cs.length))}`);
+        for (const c of cs) console.log(`  #${String(c.id).padEnd(4)} ${c.title}${c.project ? dim(`  ${c.project}`) : ""}${c.labels.length ? dim(`  ${c.labels.map((l) => "#" + l).join(" ")}`) : ""}${c.source !== "owner" ? dim(`  by ${c.source}`) : ""}`);
+        if (!cs.length) console.log(dim("  (empty)"));
+      }
       return;
     }
 

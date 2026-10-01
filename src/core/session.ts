@@ -952,7 +952,7 @@ export function isHiveTool(req: schema.RequestPermissionRequest): boolean {
   // command itself ("rm -rf ~ && echo hive_status"), so a substring match would let it skip the prompt.
   if (req.toolCall.kind === "execute") return false;
   const ri = (req.toolCall as any).rawInput ?? {};
-  const re = /^(mcp__hive__|hive[.:/]\s?)?hive_(agents|send|inbox|thread|bb_get|bb_set|bb_list|bb_delete|status|diff|log|group|followup)(\s*\(MCP\))?$/;
+  const re = /^(mcp__hive__|hive[.:/]\s?)?hive_(agents|send|inbox|thread|bb_get|bb_set|bb_list|bb_delete|status|diff|log|group|followup|card_add|card_move|card_list)(\s*\(MCP\))?$/;
   // rawInput is written by the agent, so it only counts together with the server name (codex-style calls)
   const fromRaw = typeof ri.server === "string" && ri.server === "hive" && typeof ri.tool === "string" && re.test(ri.tool.trim());
   return (typeof req.toolCall.title === "string" && re.test(req.toolCall.title.trim())) || fromRaw;
