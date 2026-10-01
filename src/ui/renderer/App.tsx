@@ -9,6 +9,7 @@ import { GroupChat, GroupsSection, LinkDialog, PauseIcon } from "./Links.js";
 import { VerdictWindow } from "./Verdict.js";
 import { StatsDialog } from "./Stats.js";
 import { KanbanView } from "./Kanban.js";
+import { MobileNav, useMobile, useMobileAgent } from "./Mobile.js";
 
 export const THEMES: { id: NonNullable<Layout["theme"]>; label: string; hint: string; tone: "dark" | "light" }[] = [
   { id: "dark", label: "Dark", hint: "neutral grays, periwinkle accent", tone: "dark" },
@@ -121,7 +122,10 @@ export function App() {
 
   const names = layout.panes.map((p) => p.name);
   const maximized = maxedName(layout);
-  const visible = maximized ? [maximized] : names;
+  // phones: one agent at a time, picked in the bottom bar (Mobile.tsx)
+  const mobile = useMobile();
+  const mobileAgent = useMobileAgent(names);
+  const visible = mobile ? (mobileAgent ? [mobileAgent] : []) : maximized ? [maximized] : names;
   useEffect(() => focus.setOrder(names), [names.join("|")]);
 
   // Title shows how many agents need you, so it's visible from the taskbar.
@@ -135,7 +139,7 @@ export function App() {
   const portrait = useMedia("(max-aspect-ratio: 4/5), (max-width: 820px)");
   const orientation = layout.orientation ?? "auto";
   const vertical = orientation === "vertical" || (orientation === "auto" && portrait);
-  const sidebar = vertical ? !!layout.vsidebar : layout.sidebar;
+  const sidebar = !mobile && (vertical ? !!layout.vsidebar : layout.sidebar);
   const columns = vertical ? (layout.vcolumns ?? 1) : layout.columns;
 
   useEffect(() => {
@@ -240,8 +244,8 @@ export function App() {
   if (!ready) return <div className="boot">starting hive…</div>;
 
   return (
-    <div className={`app${sidebar ? "" : " nosidebar"}${vertical ? " vertical" : ""}`}>
-      <TopBar
+    <div className={`app${sidebar ? "" : " nosidebar"}${vertical ? " vertical" : ""}${mobile ? " mobile" : ""}`}>
+      {!mobile && <TopBar
         names={names}
         selected={selected}
         setSelected={setSelected}
@@ -252,7 +256,7 @@ export function App() {
         onBoard={() => setDialog((d) => (d === "board" ? "" : "board"))}
         vertical={vertical}
         columns={columns}
-      />
+      />}
       {sidebar && <Sidebar names={names} onAdd={() => setAdding(true)} onSearch={() => setPalette(true)} />}
       <main className="grid-wrap">
         {names.length === 0 ? (
@@ -303,6 +307,16 @@ export function App() {
         )}
         {dialog === "board" && <KanbanView onClose={() => setDialog("")} />}
       </main>
+      {mobile && (
+        <MobileNav
+          names={names}
+          actions={actions}
+          board={dialog === "board"}
+          onBoard={() => setDialog((d) => (d === "board" ? "" : "board"))}
+          onInbox={() => setDrawer("default")}
+          onPalette={() => setPalette(true)}
+        />
+      )}
       {adding && <AddAgentDialog onClose={() => setAdding(false)} />}
       {jobFor && <JobDialog agent={jobFor} onClose={() => setJobFor(null)} />}
       {drawer && <Drawer key={drawer} initialTab={drawer === "usage" ? "usage" : undefined} onClose={() => setDrawer(false)} />}
