@@ -161,10 +161,15 @@ try {
   assert(await pane(page, "alpha").locator(".cfg select").count(), "model selector from configOptions shown");
 
   // phase 4: hover focus, Ctrl+N jump, Ctrl+Tab
+  // hover focus starts on mouseenter: begin outside beta (an earlier step can leave the mouse inside it).
+  // A key just pressed in alpha holds focus there for the typing lock (1.5 s); resting on beta then moves it.
+  await pane(page, "alpha").locator("textarea").press("Shift");
+  await page.mouse.move(2, 2);
   await pane(page, "beta").locator(".transcript").hover();
   await sleep(700);
-  // polled: on a busy Windows runner the dwell timer can fire late
+  const heldWhileTyping = await activeIn(page, "alpha");
   await until(() => activeIn(page, "beta"), 3000).catch(() => {});
+  assert(heldWhileTyping, "hover waits while you're typing in another pane (typing lock)");
   assert(await activeIn(page, "beta"), "hovering a pane focuses its input (after a short dwell)");
   await pane(page, "beta").locator("textarea").fill("draft in progress");
   await pane(page, "alpha").locator(".transcript").hover();

@@ -28,10 +28,15 @@ const TYPING_LOCK_MS = 1500;
 document.addEventListener(
   "keydown",
   (e) => {
-    if ([...inputs.values()].includes(e.target as HTMLTextAreaElement)) lastKeyAt = Date.now();
+    if (isPaneInputEl(e.target)) lastKeyAt = Date.now();
   },
   true,
 );
+
+/** A pane's message box, judged by the DOM (a registered element can go stale when React replaces it). */
+function isPaneInputEl(el: EventTarget | null): boolean {
+  return el instanceof HTMLTextAreaElement && (el.matches(".composer textarea") || [...inputs.values()].includes(el)) && !!el.closest("[data-pane]");
+}
 
 /**
  * Don't steal focus from: any field that isn't a pane input (dialogs, the
@@ -42,7 +47,7 @@ document.addEventListener(
 function focusIsProtected(): boolean {
   const el = document.activeElement as HTMLElement | null;
   if (!el || el === document.body) return false;
-  const isPaneInput = [...inputs.values()].includes(el as HTMLTextAreaElement);
+  const isPaneInput = isPaneInputEl(el);
   // A draft (e.g. mid-dictation, Handy types when you stop talking) stays put
   // until you click elsewhere or send it.
   if (isPaneInput) return Date.now() - lastKeyAt < TYPING_LOCK_MS || (el as HTMLTextAreaElement).value.trim() !== "";
@@ -108,7 +113,16 @@ export const focus = {
     clearTimeout(dwell);
   },
   hover(name: string) {
-    if (overlays.top || focusIsProtected() || window.getSelection()?.toString()) return;
+    if (overlays.top || window.getSelection()?.toString()) return;
+    // Just typed into an empty pane input: wait out the typing lock, then try again if the mouse is still here.
+    const el = document.activeElement;
+    const left = TYPING_LOCK_MS - (Date.now() - lastKeyAt);
+    if (left > 0 && isPaneInputEl(el) && (el as HTMLTextAreaElement).value.trim() === "" && el !== inputs.get(name)) {
+      clearTimeout(dwell);
+      dwell = setTimeout(() => this.hover(name), left + 20);
+      return;
+    }
+    if (focusIsProtected()) return;
     if (document.activeElement === inputs.get(name)) return;
     this.to(name);
   },
