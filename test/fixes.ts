@@ -9,6 +9,7 @@ import { HiveDb } from "../src/hive/db.js";
 import { checkAutomatic } from "../src/core/budget.js";
 import { agentNameProblem } from "../src/core/names.js";
 import { customAgentDef } from "../src/core/agents.js";
+import { isHiveTool } from "../src/core/session.js";
 import { TRUST_POLICY, senderTrust, untrusted } from "../src/core/trust.js";
 
 const dir = freshDir(".hive-test-fixes");
@@ -127,5 +128,12 @@ db2.db.prepare("UPDATE media_jobs SET ts=? WHERE id=?").run(Date.now() - 3_600_0
 db2.failStaleMedia();
 assert(db2.getMedia(mid)?.status === "failed", "BUG-004: stale running media jobs are failed on start");
 db2.close();
+
+// SEC-005: only hive's own tools skip the permission prompt, matched on the whole name
+{
+  const t = (title: string, kind = "other", rawInput?: unknown) => isHiveTool({ sessionId: "s", toolCall: { toolCallId: "1", title, kind, rawInput }, options: [] } as any);
+  assert(t("mcp__hive__hive_send") && t("hive_status") && t("hive.hive_inbox") && t("x", "other", { server: "hive", tool: "hive_send" }), "SEC-005: hive's own tool calls are still recognised");
+  assert(!t("rm -rf ~ && echo hive_status", "execute") && !t("rm -rf ~ && echo hive_status") && !t("mcp__evil__hive_send") && !t("x", "other", { name: "hive_send" }) && !t("hive_status", "execute"), "SEC-005: a shell command or another server's tool naming a hive tool still asks");
+}
 
 finish("fixes");

@@ -944,8 +944,12 @@ export function errorText(e: unknown): string {
 
 /** Calls to hive's own MCP tools (mail, blackboard, status, read-only git). */
 export function isHiveTool(req: schema.RequestPermissionRequest): boolean {
-  const title = String(req.toolCall.title ?? "");
+  // Only the hive MCP server's own tools, matched on the WHOLE name: a shell command's title is the
+  // command itself ("rm -rf ~ && echo hive_status"), so a substring match would let it skip the prompt.
+  if (req.toolCall.kind === "execute") return false;
   const ri = (req.toolCall as any).rawInput ?? {};
-  const name = `${title} ${typeof ri.tool === "string" ? ri.tool : ""} ${typeof ri.name === "string" ? ri.name : ""}`;
-  return /(^|[\s_:.])(mcp__hive__)?hive_(agents|send|inbox|thread|bb_get|bb_set|bb_list|bb_delete|status|diff|log|group|followup)\b/.test(name);
+  const re = /^(mcp__hive__|hive[.:/]\s?)?hive_(agents|send|inbox|thread|bb_get|bb_set|bb_list|bb_delete|status|diff|log|group|followup)(\s*\(MCP\))?$/;
+  // rawInput is written by the agent, so it only counts together with the server name (codex-style calls)
+  const fromRaw = typeof ri.server === "string" && ri.server === "hive" && typeof ri.tool === "string" && re.test(ri.tool.trim());
+  return (typeof req.toolCall.title === "string" && re.test(req.toolCall.title.trim())) || fromRaw;
 }
