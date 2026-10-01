@@ -220,6 +220,22 @@ server.registerTool(
   },
 );
 
+// ---- creator ----
+server.registerTool(
+  "hive_card_comment",
+  {
+    description: "Add a comment to a board card (appended to its body with your name and the time): what you did, files you made, what failed.",
+    inputSchema: { id: z.number().int(), text: z.string().min(1).max(4000) },
+  },
+  async ({ id, text: note }) => {
+    const b = board();
+    const c = b.get(id);
+    if (!c) return text(`no card #${id}`);
+    b.update(id, { body: `${c.body}\n\n— ${me}, ${new Date().toISOString().slice(0, 16).replace("T", " ")}: ${note}`.trimStart() });
+    return text(`commented on card #${id}`);
+  },
+);
+
 server.registerTool(
   "hive_bb_get",
   { description: "Read one blackboard key.", inputSchema: { key: z.string() } },

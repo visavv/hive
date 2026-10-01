@@ -65,6 +65,7 @@ import { findSkill, listSkills, parseSkill, projectSkillsDir, skillPolicy, skill
 import { runSkill, writeSkill } from "../core/skill-run.js";
 import { createBridges } from "../bridges/index.js";
 import { mcpConfigPath, mcpServerList, parseMcpNames, readMcpConfig, storeMcp } from "../core/mcp-extra.js";
+import { TWITCH_EVERY_KEY, TWITCH_MIN_EVERY, pollTwitch, twitchMissing } from "../hive/twitch.js";
 import { BUDGET_KEYS, setBudget, usageSummary } from "../core/budget.js";
 import { runMedia } from "../hive/media.js";
 import { applyVerdict, runVerdict, type VerdictState } from "../core/verdict.js";
@@ -135,6 +136,8 @@ const OPTIONS = {
   mask: { type: "string" },
   // ---- creator ----
   mcp: { type: "string", multiple: true },
+  every: { type: "string" },
+  channel: { type: "string" },
   help: { type: "boolean", short: "h", default: false },
   version: { type: "boolean", short: "v", default: false },
 } as const;
@@ -225,6 +228,8 @@ const USAGE = `hive — local multi-agent harness
   hive report [--since 12h]               what happened: job runs + summaries, commits, mail to you
   hive tts "text" [--voice ID] [--out name]           ElevenLabs voice-over → out/media/*.mp3  (hive tts --voices lists voices)
   hive image "prompt" [--size 1536x1024] [--edit img.png [--mask m.png]]   generate / edit an image → out/media/*.png
+  hive twitch poll|watch [--every 10m] [--detach] [--channel login] [--in-project P] · hive twitch off
+                                          new VODs/clips → board cards (TWITCH_CLIENT_ID/SECRET/CHANNEL; docs/CREATOR.md)
   hive mcp                                extra MCP servers (<HIVE_HOME>/mcp.json) · attach with --mcp NAME (docs/MCP.md)
   hive usage · hive budget [set k=v …]    tokens per provider, limit windows + resets · spending guards
   hive ui --remote you@server --remote-cwd ~/code/app   the app with its agents on another machine (docs/CLOUD.md)
@@ -583,6 +588,54 @@ async function main() {
     return;
   }
   switch (cmd) {
+    case "twitch": {
+      const sub = rest[0] ?? "poll";
+      const db = new HiveDb(values.db!);
+      if (sub === "off") {
+        db.setSetting(TWITCH_EVERY_KEY, null);
+        db.close();
+        console.log("Twitch polling off for this project");
+        return;
+      }
+      if (sub !== "poll" && sub !== "watch") die(`unknown subcommand "${sub}" (poll|watch|off)`);
+      const missing = twitchMissing();
+      if (missing) die(missing);
+      const channel = values.channel ?? process.env.TWITCH_CHANNEL;
+      if (!channel) die("set TWITCH_CHANNEL (your channel login) or pass --channel");
+      const project = values["in-project"];
+      const every = Math.max(TWITCH_MIN_EVERY, values.every ? duration(values.every, "--every") : 10 * 60_000);
+      if (sub === "watch" && values.detach) {
+        db.setSetting(TWITCH_EVERY_KEY, String(every));
+        db.setSetting("twitch.channel", values.channel ?? null);
+        db.setSetting("twitch.project", project ?? null);
+        db.close();
+        console.log(`hive serve and the app will poll ${channel} every ${formatDuration(every)} (hive twitch off to stop)`);
+        return;
+      }
+      const once = async () => {
+        try {
+          const r = await pollTwitch({ db, channel, project });
+          for (const c of r.created) console.log(`${green(`card #${c.id}`)} ${c.title}`);
+          console.log(dim(`${new Date().toLocaleTimeString()}: ${r.created.length} new, ${r.known} known${r.skipped ? `, ${r.skipped} older ones skipped on the first poll` : ""}`));
+        } catch (e: any) {
+          console.error(red(e?.message ?? String(e)));
+          if (sub === "poll") process.exitCode = 1;
+        }
+      };
+      await once();
+      if (sub === "poll") return db.close();
+      console.log(dim(`polling every ${formatDuration(every)}; Ctrl-C to stop`));
+      await new Promise<void>((done) => {
+        const t = setInterval(() => void once(), every);
+        process.once("SIGINT", () => {
+          clearInterval(t);
+          done();
+        });
+      });
+      db.close();
+      return;
+    }
+
     case "mcp": {
       const servers = mcpServerList();
       if (!servers.length) console.log(dim(`no extra MCP servers yet: add them to ${mcpConfigPath()} (docs/MCP.md)`));

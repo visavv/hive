@@ -9,6 +9,7 @@ import type { HiveDb, JobKind } from "../hive/db.js";
 import type { PermissionPolicy } from "./session.js";
 import { ROLES } from "./roles.js";
 import { BB_PREFIX, BRANCHES } from "./watch.js";
+import { CREATOR_RECIPES } from "./creator-recipes.js";
 
 export interface RecipeAgent {
   name: string;
@@ -42,6 +43,8 @@ export interface Recipe {
   groups: { name: string; members: string[] }[];
   jobs: RecipeJob[];
   next: string;
+  /** Extra project settings the recipe needs (e.g. twitch-clips turns on Twitch polling). */
+  setup?: (db: HiveDb) => void;
 }
 
 const MIN = 60_000;
@@ -227,6 +230,8 @@ export const RECIPES: Record<string, Recipe> = {
     jobs: [],
     next: "Talk to studio (its pane, or hive chat <agent> --name studio). Run skills: hive skill list.",
   },
+  // ---- creator ----
+  ...CREATOR_RECIPES,
 };
 
 export interface ApplyResult {
@@ -283,6 +288,7 @@ export function applyRecipe(db: HiveDb, r: Recipe, o: { cwd: string; kind: strin
       }),
     );
   }
+  r.setup?.(db);
   return out;
 }
 
