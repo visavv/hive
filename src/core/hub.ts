@@ -197,6 +197,8 @@ export class Hub {
   /** Agents this hub started only to deliver their mail. */
   private woken = new Set<string>();
   private lastWakeScan = 0;
+  /** Agents whose wake-up failed to start (CLI missing or broken): wait before trying again. */
+  private wakeFails = new Map<string, { delay: number; until: number }>();
 
   private async wakeSleeping() {
     const now = Date.now();
@@ -206,6 +208,10 @@ export class Hub {
       if (this.sessions.has(a.name) || this.starting.has(a.name) || !a.kind || !AGENTS[a.kind]) continue;
       if (a.owner && (a.lease_until ?? 0) > now) continue; // running elsewhere
       if (!a.cwd || !existsSync(a.cwd) || this.db.unreadCount(a.name) === 0) continue;
+      const fail = this.wakeFails.get(a.name);
+      if (fail && fail.until > now) continue;
+      // The budget holds automatic work: the woken agent couldn't deliver anyway.
+      if (!checkAutomatic(this.db, a.kind, now).ok) continue;
       const preset = a.preset ? ROLES[a.preset] : undefined;
       this.woken.add(a.name);
       this.opts.onEvent?.(a.name, { type: "notice", text: `waking ${a.name} to deliver its mail` });
@@ -219,7 +225,16 @@ export class Hub {
         briefing: a.briefing ?? preset?.briefing,
         resume: true,
         askTimeoutMs: 15 * 60_000,
-      }).catch(() => this.woken.delete(a.name));
+      }).then(
+        () => this.wakeFails.delete(a.name),
+        (e) => {
+          this.woken.delete(a.name);
+          // 30s, doubling up to 30 min, so a missing CLI isn't respawned every few seconds.
+          const delay = Math.min(30 * 60_000, fail ? fail.delay * 2 : 30_000);
+          this.wakeFails.set(a.name, { delay, until: Date.now() + delay });
+          this.opts.onEvent?.(a.name, { type: "notice", text: `couldn't wake ${a.name} (${String(e?.message ?? e).slice(0, 200)}); trying again in ${Math.round(delay / 1000)}s` });
+        },
+      );
     }
     // Put them back to sleep once their mail is handled.
     for (const name of this.woken) {
@@ -228,7 +243,9 @@ export class Hub {
         this.woken.delete(name);
         continue;
       }
-      if (!s.busyNow && s.queued === 0 && s.idleMs > 60_000 && this.db.unreadCount(name) === 0 && !this.db.listJobs(false).some((j) => j.agent === name)) {
+      // Mail the budget holds back doesn't keep it awake.
+      const done = this.db.unreadCount(name) === 0 || !checkAutomatic(this.db, this.db.getAgent(name)?.kind ?? "").ok;
+      if (!s.busyNow && s.queued === 0 && s.idleMs > 60_000 && done && !this.db.listJobs(false).some((j) => j.agent === name)) {
         this.woken.delete(name);
         await this.remove(name, false);
       }
