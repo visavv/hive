@@ -81,6 +81,32 @@ async function command(page: Page, text: string) {
 const activeIn = (page: Page, name: string) =>
   page.evaluate((n) => !!document.activeElement?.closest(`[data-pane="${n}"]`), name);
 
+/** Rows whose visible children are not centered on the row (more than 1px off). */
+async function alignment(page: Page): Promise<{ row: string; el: string; dy: number }[]> {
+  return page.evaluate(`(() => {
+    const rows = [".topbar", ".pane-head", ".group-chip", ".agent-item .row1", ".side-head", ".side-search", ".pane-sub", ".welcome-actions", ".pane-actions", ".cols", ".broadcast"];
+    const out = [];
+    const name = (e) => e.tagName.toLowerCase() + (e.className && typeof e.className === "string" ? "." + e.className.trim().split(/\\s+/).join(".") : "");
+    for (const sel of rows)
+      for (const row of document.querySelectorAll(sel)) {
+        const r = row.getBoundingClientRect();
+        if (!r.width || !r.height) continue;
+        const cs = getComputedStyle(row);
+        const top = r.top + parseFloat(cs.borderTopWidth) + parseFloat(cs.paddingTop);
+        const bottom = r.bottom - parseFloat(cs.borderBottomWidth) - parseFloat(cs.paddingBottom);
+        const mid = (top + bottom) / 2;
+        for (const el of row.children) {
+          const b = el.getBoundingClientRect();
+          if (!b.width || !b.height || getComputedStyle(el).position === "absolute") continue;
+          if (el.classList.contains("spacer")) continue;
+          const dy = Math.round(((b.top + b.bottom) / 2 - mid) * 10) / 10;
+          if (Math.abs(dy) > 1) out.push({ row: sel, el: name(el), dy, h: Math.round(b.height), rowH: Math.round(bottom - top) });
+        }
+      }
+    return out;
+  })()`);
+}
+
 let { app, page } = await launch();
 try {
   await page.locator(".welcome").waitFor({ timeout: 20_000 });
@@ -338,6 +364,21 @@ try {
   await page.locator(".drawer .held-list .gmsg", { hasText: "please check the login flow" }).waitFor({ timeout: 5000 });
   assert(true, "everything waiting for review is also listed in the Inbox");
   await page.keyboard.press("Escape");
+  // alignment: every visible item in a row shares the row's vertical center (±1px)
+  const misaligned = await alignment(page);
+  writeFileSync(join(shots, "alignment.json"), JSON.stringify(misaligned, null, 2));
+  // close-ups at 3x for checking spacing by eye
+  const vp = page.viewportSize() ?? { width: 1600, height: 950 };
+  await page.setViewportSize({ width: vp.width * 3, height: vp.height * 3 }).catch(() => {});
+  await page.evaluate(`document.documentElement.style.zoom = "3"; document.body.classList.add("no-toasts")`);
+  await page.addStyleTag({ content: ".no-toasts .toasts { display: none !important; }" });
+  await page.waitForTimeout(300);
+  for (const [file, sel] of [["head", '[data-pane="alpha"] .pane-head'], ["side", ".agent-list"], ["groups", ".group-item"]] as const)
+    await page.locator(sel).first().screenshot({ path: join(shots, `align-${file}.png`) }).catch(() => {});
+  await page.locator(".topbar").screenshot({ path: join(shots, "align-top.png"), clip: undefined }).catch(() => {});
+  await page.evaluate(`document.documentElement.style.zoom = "1"; document.body.classList.remove("no-toasts")`);
+  await page.setViewportSize(vp).catch(() => {});
+  assert(misaligned.length === 0, `rows are vertically aligned${misaligned.length ? ": " + misaligned.slice(0, 6).map((m) => `${m.row} > ${m.el} off by ${m.dy}px`).join("; ") : ""}`);
   await pane(page, "beta").locator(".group-chip").click();
   const gc = page.locator(".modal.wide", { hasText: "@alpha-beta" });
   await gc.locator(".gmsg.held", { hasText: "please check the login flow" }).waitFor({ timeout: 5000 });
