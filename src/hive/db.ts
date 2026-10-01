@@ -626,6 +626,10 @@ export class HiveDb {
       return row;
     })();
   }
+  /** Media jobs claimed before `id` that are still running (they hold a slot of the daily cap). */
+  runningMedia(id: number): { id: number; kind: string; params: string }[] {
+    return this.db.prepare(`SELECT id, kind, params FROM media_jobs WHERE status='running' AND id<? AND ts>=?`).all(id, Date.now() - 86_400_000) as any;
+  }
   finishMedia(id: number, result: string | null, error: string | null) {
     this.db.prepare(`UPDATE media_jobs SET status=?, result=?, error=? WHERE id=?`).run(error ? "failed" : "done", result, error, id);
   }
