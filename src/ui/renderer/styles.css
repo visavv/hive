@@ -891,3 +891,9 @@ button.danger { color: var(--st-error); }
   .kb-cols.n2, .kb-cols.n3 { grid-template-columns: 1fr; overflow-y: auto; }
   .kb-search input { width: 120px; }
 }
+
+/* ---- creator ---- */
+.form .creator-mcp { display: grid; grid-template-columns: 100px 1fr; gap: 8px; align-items: start; margin: 8px 0; }
+.form .creator-mcp > span { color: var(--dim); }
+.form .creator-mcp-list { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.form .creator-mcp-list label.check { display: flex; margin: 0; grid-template-columns: none; }

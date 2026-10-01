@@ -22,6 +22,8 @@ export interface PaneSpec {
   preset?: string;
   /** Run in its own git worktree (.hive/worktrees/<name>). */
   worktree?: boolean;
+  /** Extra MCP servers by name from <HIVE_HOME>/mcp.json (creator: docs/MCP.md). */
+  mcp?: string[];
 }
 
 export interface KindView {
@@ -104,6 +106,8 @@ export interface AgentView {
   jobs: number;
   /** Current git branch of the agent's folder, if any. */
   branch?: string;
+  /** Extra MCP servers attached (type's + its own), shown in the pane header tooltip. */
+  mcp?: string[];
 }
 
 /** An agent in this hive that isn't running in this window. */
@@ -294,6 +298,9 @@ export interface Methods {
   cardMove: (p: { id: number; col: import("../hive/kanban.js").Column; before?: number | null }) => import("../hive/kanban.js").Card;
   cardUpdate: (p: { id: number; title?: string; body?: string; project?: string; labels?: string[] }) => import("../hive/kanban.js").Card;
   cardRemove: (p: { id: number }) => boolean;
+  // ---- creator ----
+  /** Extra MCP servers configured in <HIVE_HOME>/mcp.json (Add-agent dialog checkboxes). */
+  mcpServers: (p: Record<string, never>) => { name: string; command: string }[];
 }
 
 export type MethodName = keyof Methods;

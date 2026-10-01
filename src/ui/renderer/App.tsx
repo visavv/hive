@@ -846,6 +846,12 @@ function AddAgentDialog({ onClose }: { onClose: () => void }) {
   const [worktree, setWorktree] = useState(false);
   const [startJob, setStartJob] = useState(true);
   const [err, setErr] = useState("");
+  // ---- creator: extra MCP servers from <HIVE_HOME>/mcp.json ----
+  const [mcpList, setMcpList] = useState<{ name: string; command: string }[]>([]);
+  const [mcp, setMcp] = useState<string[]>([]);
+  useEffect(() => {
+    rpc("mcpServers", {}).then(setMcpList, () => setMcpList([]));
+  }, []);
   const preset = presets.find((p) => p.id === presetId);
   const pickPreset = (id: string) => {
     setPresetId(id);
@@ -862,7 +868,7 @@ function AddAgentDialog({ onClose }: { onClose: () => void }) {
     if (taken.has(n)) return setErr(`"${n}" is already open`);
     onClose();
     void openPane(
-      { name: n, kind, cwd: cwd.trim() || store.cwd, role: role.trim(), policy, worktree, preset: presetId || undefined },
+      { name: n, kind, cwd: cwd.trim() || store.cwd, role: role.trim(), policy, worktree, preset: presetId || undefined, ...(mcp.length ? { mcp } : {}) },
       true,
       !!preset?.job && startJob,
     );
@@ -944,6 +950,23 @@ function AddAgentDialog({ onClose }: { onClose: () => void }) {
           <div className="hint small warn" role="note">
             Allow all outside a worktree: this agent runs commands as you and can change any file you can, including your checkout and hive's own settings. Prefer
             a worktree, or "ask".
+          </div>
+        )}
+        {mcpList.length > 0 && (
+          <div className="creator-mcp">
+            <span>MCP</span>
+            <div className="creator-mcp-list">
+              {mcpList.map((m) => (
+                <label key={m.name} className="check" title={m.command}>
+                  <input
+                    type="checkbox"
+                    checked={mcp.includes(m.name)}
+                    onChange={(e) => setMcp(e.target.checked ? [...mcp, m.name] : mcp.filter((x) => x !== m.name))}
+                  />
+                  {m.name}
+                </label>
+              ))}
+            </div>
           </div>
         )}
         {preset?.job && (

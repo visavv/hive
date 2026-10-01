@@ -13,6 +13,7 @@ import { createRequire } from "node:module";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { hiveHome } from "./home.js";
+import { validateMcpRefs, type McpRef } from "./mcp-extra.js";
 
 export interface AgentDef {
   /** Short id used in config and hive addressing, e.g. "claude". */
@@ -34,6 +35,8 @@ export interface AgentDef {
   api?: boolean;
   /** Came from <HIVE_HOME>/agents.json. */
   custom?: boolean;
+  /** Extra MCP servers every agent of this type gets (agents.json "mcp"; see mcp-extra.ts). */
+  mcp?: McpRef[];
 }
 
 const npx = process.platform === "win32" ? "npx.cmd" : "npx";
@@ -204,7 +207,7 @@ export function resolveEnv(def: AgentDef, e: NodeJS.ProcessEnv = process.env): R
 
 // ---- secrets an agent process must not see ----
 /** Bridge tokens and media keys: only the hive process uses them. */
-const SECRET_PREFIXES = ["HIVE_DISCORD_", "HIVE_WHATSAPP_", "HIVE_IMAGE_", "ELEVENLABS_"];
+const SECRET_PREFIXES = ["HIVE_DISCORD_", "HIVE_WHATSAPP_", "HIVE_IMAGE_", "ELEVENLABS_", "TWITCH_CLIENT_SECRET", "HIVE_VISION_KEY"];
 /** Provider keys (plus every API agent's keyEnv, added at call time). */
 const PROVIDER_KEYS = [
   "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY", "AZURE_OPENAI_API_KEY",
@@ -264,6 +267,8 @@ export interface CustomAgent {
   command?: string;
   args?: string[];
   env?: Record<string, string>;
+  /** Extra MCP servers: inline {name, command, args, env?} or names from mcp.json (mcp-extra.ts). */
+  mcp?: McpRef[];
 }
 
 export function customAgentsPath(): string {
@@ -282,6 +287,12 @@ export function readCustomAgents(path = customAgentsPath()): Record<string, Cust
 }
 
 export function customAgentDef(id: string, c: CustomAgent): AgentDef {
+  const mcp = validateMcpRefs(c.mcp, `agent ${id}`);
+  const def = customAgentBase(id, c);
+  return mcp.length ? { ...def, mcp } : def;
+}
+
+function customAgentBase(id: string, c: CustomAgent): AgentDef {
   if (!/^[\w.-]{1,40}$/.test(id)) throw new Error(`agent id "${id}": letters, digits, _ . - only`);
   if (c.type === "acp") {
     if (!c.command) throw new Error(`agent ${id}: "command" is required for type acp`);
@@ -313,7 +324,17 @@ export function saveCustomAgent(id: string, c: CustomAgent | null, path = custom
 export function loadCustomAgents(path = customAgentsPath()): string[] {
   const added: string[] = [];
   for (const [id, c] of Object.entries(readCustomAgents(path))) {
-    if (AGENTS[id] && !AGENTS[id].custom) continue;
+    if (AGENTS[id] && !AGENTS[id].custom) {
+      // { "claude": { "mcp": [...] } } attaches MCP servers to a built-in type.
+      if (c?.mcp !== undefined)
+        try {
+          const mcp = validateMcpRefs(c.mcp, `agent ${id}`);
+          if (mcp.length) AGENTS[id] = { ...AGENTS[id], mcp };
+        } catch (e: any) {
+          process.stderr.write(`hive: agents.json: ${e.message}\n`);
+        }
+      continue;
+    }
     try {
       AGENTS[id] = customAgentDef(id, c);
       added.push(id);

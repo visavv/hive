@@ -29,6 +29,7 @@ import { runSkill, skillAgentName } from "../core/skill-run.js";
 import { BB_PREFIX, BRANCHES } from "../core/watch.js";
 import { setBudget, usageSummary } from "../core/budget.js";
 import { applyVerdict, runVerdict } from "../core/verdict.js";
+import { mcpServerList, parseMcpNames } from "../core/mcp-extra.js";
 import type { AccountView, AgentView, BackendEvent, ElicitationAsk, GroupView, JobView, Layout, Methods, PermissionAsk, Request } from "./protocol.js";
 
 // stdout is the protocol channel: keep stray logging off it.
@@ -274,6 +275,7 @@ function view(s: AgentSession): AgentView {
     auth: s.authStatus ? (s.authStatus.kind === "none" ? `not logged in${s.authStatus.detail ? ` · ${s.authStatus.detail}` : ""}` : (s.authStatus.label ?? s.authStatus.kind)) : undefined,
     jobs: hub.db.listJobs(false).filter((j) => j.agent === s.name).length,
     branch: branchOf(s.cwd),
+    mcp: s.extraMcp,
   };
 }
 
@@ -410,6 +412,8 @@ async function checkAccounts(): Promise<AccountView[]> {
 }
 const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promise<ReturnType<Methods[K]>> | ReturnType<Methods[K]> } = {
   getState: () => handlersExtra.getState(),
+  // ---- creator ----
+  mcpServers: () => mcpServerList(),
   async addAgent(p) {
     const name = need(p.name, "name").trim();
     if (!/^[\w.-]{1,40}$/.test(name)) throw new Error(`name must be letters, digits, _ . - (got "${name}")`);
@@ -431,6 +435,7 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
       briefing: r?.briefing,
       worktree: p.worktree ?? r?.worktree ?? false,
       resume: p.resume ?? true,
+      mcp: p.mcp ? parseMcpNames(p.mcp) : undefined,
     });
     if (p.startJob && r?.job) {
       const j = r.job;

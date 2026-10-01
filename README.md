@@ -27,6 +27,7 @@ Design goals, in order:
 | Cloud | run hive on a server or VPS and open the same agents, sessions, board and stats from any machine: `hive ui --remote you@server --remote-cwd ~/code/app` ([docs/CLOUD.md](docs/CLOUD.md)) |
 | Phone | Tailscale + SSH + tmux: `hive tui` from anywhere, one-command setup for Ubuntu/Fedora/Windows; Discord pushes ([docs/REMOTE.md](docs/REMOTE.md)) |
 | Platforms | Windows ([docs/WINDOWS.md](docs/WINDOWS.md), one-script install), Linux/Fedora ([docs/LINUX.md](docs/LINUX.md)), Ubuntu server + chat bridges ([docs/BRIDGES.md](docs/BRIDGES.md)) |
+| Extra MCP servers | attach DaVinci Resolve or any MCP server to an agent type (`agents.json`) or one agent (`--mcp NAME`, Add-agent checkboxes) ([docs/MCP.md](docs/MCP.md)) |
 
 How it compares with Maestro, Agent Deck, Zed, Claude Code teams and others: [docs/COMPARISON.md](docs/COMPARISON.md). Audit records: [audit/](audit/).
 

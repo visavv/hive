@@ -64,6 +64,7 @@ import { RECIPES, applyRecipe } from "../core/recipes.js";
 import { findSkill, listSkills, parseSkill, projectSkillsDir, skillPolicy, skillTemplate, userSkillsDir } from "../core/skills.js";
 import { runSkill, writeSkill } from "../core/skill-run.js";
 import { createBridges } from "../bridges/index.js";
+import { mcpConfigPath, mcpServerList, parseMcpNames, readMcpConfig, storeMcp } from "../core/mcp-extra.js";
 import { BUDGET_KEYS, setBudget, usageSummary } from "../core/budget.js";
 import { runMedia } from "../hive/media.js";
 import { applyVerdict, runVerdict, type VerdictState } from "../core/verdict.js";
@@ -132,6 +133,8 @@ const OPTIONS = {
   size: { type: "string" },
   edit: { type: "string" },
   mask: { type: "string" },
+  // ---- creator ----
+  mcp: { type: "string", multiple: true },
   help: { type: "boolean", short: "h", default: false },
   version: { type: "boolean", short: "v", default: false },
 } as const;
@@ -165,6 +168,16 @@ if (values.policy === "allow-all" && !values.worktree && ["run", "chat", "loop",
   process.stderr.write(
     "\x1b[33mnote: --policy allow-all without --worktree lets the agent run any command as you and change any file you can (your checkout, hive's settings). Prefer --worktree or --as coder.\x1b[0m\n",
   );
+// --mcp davinci[,other]: extra MCP servers from <HIVE_HOME>/mcp.json (core/mcp-extra.ts).
+let mcpNames: string[] | undefined;
+try {
+  mcpNames = values.mcp ? parseMcpNames(values.mcp) : undefined;
+  const known = readMcpConfig();
+  for (const n of mcpNames ?? []) if (!known[n]) throw new Error(`MCP server "${n}" is not defined in ${mcpConfigPath()} (hive mcp lists them)`);
+} catch (e: any) {
+  process.stderr.write(`hive: ${e.message}\n`);
+  process.exit(2);
+}
 // One hive per repo, kept outside the workspace (see core/home.ts).
 values.db = resolve(values.db ?? defaultDb(values.cwd ?? process.cwd()));
 
@@ -212,6 +225,7 @@ const USAGE = `hive — local multi-agent harness
   hive report [--since 12h]               what happened: job runs + summaries, commits, mail to you
   hive tts "text" [--voice ID] [--out name]           ElevenLabs voice-over → out/media/*.mp3  (hive tts --voices lists voices)
   hive image "prompt" [--size 1536x1024] [--edit img.png [--mask m.png]]   generate / edit an image → out/media/*.png
+  hive mcp                                extra MCP servers (<HIVE_HOME>/mcp.json) · attach with --mcp NAME (docs/MCP.md)
   hive usage · hive budget [set k=v …]    tokens per provider, limit windows + resets · spending guards
   hive ui --remote you@server --remote-cwd ~/code/app   the app with its agents on another machine (docs/CLOUD.md)
   hive board [--all] [--in-project P] · add "title" · mv <id> draft|doing|done · rm <id>   the Kanban board
@@ -545,6 +559,7 @@ async function submitJob(j: Omit<NewJob, "agent" | "cwd" | "policy" | "role" | "
     db.updateJob(id, { agent: name });
   }
   const job = db.getJob(id)!;
+  if (mcpNames) storeMcp(db, job.agent, mcpNames);
   // Visible in the hive (hive agents, hive send) before its first run.
   if (!db.getAgent(job.agent)) {
     db.upsertAgent({ name: job.agent, kind: job.agent_kind, cwd, role: job.role, status: "asleep", status_note: `waiting for job ${id}`, session_id: null });
@@ -568,6 +583,16 @@ async function main() {
     return;
   }
   switch (cmd) {
+    case "mcp": {
+      const servers = mcpServerList();
+      if (!servers.length) console.log(dim(`no extra MCP servers yet: add them to ${mcpConfigPath()} (docs/MCP.md)`));
+      for (const sv of servers) console.log(`${cyan(sv.name.padEnd(14))} ${dim(sv.command)}`);
+      const typed = Object.values(AGENTS).filter((d) => d.mcp?.length);
+      for (const d of typed) console.log(`${dim("type")} ${d.id}: ${d.mcp!.map((m) => (typeof m === "string" ? m : m.name)).join(", ")}`);
+      console.log(dim(`\nattach to one agent: hive chat claude --mcp ${servers[0]?.name ?? "davinci"}  ·  to a type: "mcp" in ${customAgentsPath()}`));
+      return;
+    }
+
     case "agents": {
       const db = new HiveDb(values.db!);
       const rows = db.listAgents();
@@ -695,6 +720,7 @@ async function main() {
           // ensureWorktree finds the agent's existing worktree, so this is safe on reopen too.
           worktree: values.worktree || r?.worktree,
           resume: !values.fresh,
+          mcp: mcpNames,
         });
       } catch (e: any) {
         await hub.close();
