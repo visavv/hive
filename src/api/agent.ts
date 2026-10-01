@@ -20,14 +20,15 @@
  */
 import * as acp from "@agentclientprotocol/sdk";
 import { Readable, Writable } from "node:stream";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { hiveHome } from "../core/home.js";
 import { confine } from "../core/confine.js";
 import { withoutApiKey } from "../core/agents.js";
+import { fitContext, listTree, type Msg, type ToolCall } from "./helpers.js";
 import { TRUST_POLICY, untrusted } from "../core/trust.js";
 
 const env = process.env;
@@ -40,11 +41,6 @@ const TOOLS = env.HIVE_API_TOOLS !== "0";
 const MAX_STEPS = Number(env.HIVE_API_MAX_STEPS) || 25;
 const MAX_READ = 200_000;
 
-type Msg =
-  | { role: "system" | "user"; content: string }
-  | { role: "assistant"; content: string | null; tool_calls?: ToolCall[] }
-  | { role: "tool"; tool_call_id: string; content: string };
-type ToolCall = { id: string; type: "function"; function: { name: string; arguments: string } };
 type ToolDef = { type: "function"; function: { name: string; description?: string; parameters: unknown } };
 
 interface Sess {
@@ -195,30 +191,13 @@ function inside(cwd: string, p: string): string {
   return confine(cwd, p || ".", p || ".");
 }
 
-function listTree(root: string, max = 400): string {
-  const out: string[] = [];
-  const walk = (dir: string, depth: number) => {
-    if (out.length >= max || depth > 3) return;
-    for (const n of readdirSync(dir).sort()) {
-      if (n === ".git" || n === "node_modules" || n === ".hive") continue;
-      const p = join(dir, n);
-      const isDir = statSync(p).isDirectory();
-      out.push(relative(root, p).split(sep).join("/") + (isDir ? "/" : ""));
-      if (out.length >= max) return;
-      if (isDir) walk(p, depth + 1);
-    }
-  };
-  walk(root, 0);
-  return out.join("\n") + (out.length >= max ? "\n… (truncated)" : "");
-}
-
 // ---- the model call ----
 
 class ApiError extends Error {}
 
 async function* stream(s: Sess, signal: AbortSignal): AsyncGenerator<any> {
   if (!BASE) throw new ApiError(`${LABEL}: no API base URL configured`);
-  const body: any = { model: s.model, messages: fitContext(s.history), stream: true, stream_options: { include_usage: true } };
+  const body: any = { model: s.model, messages: fitContext(s.history, CONTEXT * 3 /* ~chars per token, conservative */), stream: true, stream_options: { include_usage: true } };
   if (s.tools.length) body.tools = s.tools;
   let r = await fetch(`${BASE}/chat/completions`, { method: "POST", headers: headers(), body: JSON.stringify(body), signal });
   if (r.status === 400) {
@@ -253,22 +232,6 @@ async function* stream(s: Sess, signal: AbortSignal): AsyncGenerator<any> {
       } catch {}
     }
   }
-}
-
-/** Keep the request under the context window: drop the oldest turns (never the system prompt). */
-function fitContext(h: Msg[]): Msg[] {
-  const budget = CONTEXT * 3; // ~chars per token, conservative
-  const size = (m: Msg) => JSON.stringify(m).length;
-  let total = h.reduce((n, m) => n + size(m), 0);
-  if (total <= budget) return h;
-  const sys = h[0]?.role === "system" ? [h[0]] : [];
-  const rest = h.slice(sys.length);
-  while (rest.length > 1 && total > budget) {
-    total -= size(rest.shift()!);
-    // Don't start on a tool result or an assistant message whose tool results were dropped.
-    while (rest.length > 1 && rest[0].role !== "user") total -= size(rest.shift()!);
-  }
-  return [...sys, { role: "user", content: "(earlier conversation trimmed to fit the context window)" }, ...rest];
 }
 
 function systemPrompt(cwd: string): string {
