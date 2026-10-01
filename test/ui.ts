@@ -5,6 +5,7 @@
 import { _electron as electron, type ElectronApplication, type Page } from "playwright-core";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
@@ -24,6 +25,20 @@ if (!existsSync(electronBin)) {
   execFileSync(process.execPath, [require.resolve("electron/install.js")], { stdio: "inherit" });
   electronBin = require("electron") as unknown as string;
 }
+
+// Voice: a fake local Whisper server (OpenAI-compatible) for dictation.
+const sttSeen: { type: string; bytes: number }[] = [];
+const stt = createServer(async (req, res) => {
+  const chunks: Buffer[] = [];
+  for await (const c of req) chunks.push(c as Buffer);
+  const form = await new Request("http://x/", { method: "POST", headers: { "content-type": String(req.headers["content-type"]) }, body: Buffer.concat(chunks) }).formData();
+  const f = form.get("file") as File | null;
+  sttSeen.push({ type: f?.type ?? "", bytes: f?.size ?? 0 });
+  res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ text: "hello from the fake whisper" }));
+});
+await new Promise<void>((r) => stt.listen(0, "127.0.0.1", r));
+stt.unref();
+const sttUrl = `http://127.0.0.1:${(stt.address() as any).port}`;
 
 /** PID of the UI backend (node running src/ui/backend.ts). */
 function findBackendPid(): number | undefined {
@@ -46,8 +61,9 @@ function findBackendPid(): number | undefined {
 async function launch(): Promise<{ app: ElectronApplication; page: Page }> {
   const app = await electron.launch({
     executablePath: electronBin,
-    args: [resolve("dist-ui/main.cjs"), "--cwd", dir, ...(process.platform === "linux" ? ["--no-sandbox"] : [])],
-    env: { ...process.env, HIVE_NODE: process.execPath, HIVE_HOTKEY: "CommandOrControl+Alt+F12", HIVE_SHOW_MOCK: "1" } as Record<string, string>,
+    // Chromium's fake microphone (a beep) and no permission prompt: dictation can be tested end to end.
+    args: [resolve("dist-ui/main.cjs"), "--cwd", dir, "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", ...(process.platform === "linux" ? ["--no-sandbox"] : [])],
+    env: { ...process.env, HIVE_NODE: process.execPath, HIVE_HOTKEY: "CommandOrControl+Alt+F12", HIVE_SHOW_MOCK: "1", HIVE_STT: "local", HIVE_STT_URL: sttUrl, ELEVENLABS_API_KEY: "" } as Record<string, string>,
   });
   const page = await app.firstWindow();
   page.on("pageerror", (e) => console.error("[renderer error]", e.message));
@@ -180,6 +196,43 @@ try {
   await pane(page, "alpha").locator(".msg.user", { hasText: "roll call" }).waitFor({ timeout: 10_000 });
   await pane(page, "beta").locator(".msg.user", { hasText: "roll call" }).waitFor({ timeout: 10_000 });
   assert(true, "broadcast reaches every pane");
+
+  // voice: mic button -> fake microphone -> fake Whisper server -> text at the cursor (not sent)
+  const ta = pane(page, "alpha").locator("textarea");
+  await ta.fill("note: ");
+  await ta.press("End");
+  await pane(page, "alpha").locator(".mic-btn").click();
+  await pane(page, "alpha").locator(".mic.recording .mic-live").waitFor({ timeout: 10_000 });
+  assert(/\d:\d\d/.test(await pane(page, "alpha").locator(".mic-time").innerText()), "recording shows a level meter and elapsed time");
+  await sleep(1200);
+  await pane(page, "alpha").locator(".mic-btn").click();
+  await page.waitForFunction(() => (document.querySelector('[data-pane="alpha"] textarea') as HTMLTextAreaElement).value.includes("fake whisper"), null, { timeout: 15_000 });
+  assert((await ta.inputValue()) === "note: hello from the fake whisper", `dictated text inserted at the cursor (${await ta.inputValue()})`);
+  assert(sttSeen.length === 1 && sttSeen[0].type.startsWith("audio/") && sttSeen[0].bytes > 500, `the recording went to the STT server (${JSON.stringify(sttSeen)})`);
+  assert((await pane(page, "alpha").locator(".msg.user", { hasText: "fake whisper" }).count()) === 0, "dictation doesn't send unless 'send after dictation' is on");
+  // push-to-talk: hold Ctrl+Shift+Space
+  await ta.fill("");
+  await ta.focus();
+  await page.keyboard.down("Control");
+  await page.keyboard.down("Shift");
+  await page.keyboard.down("Space");
+  await pane(page, "alpha").locator(".mic.recording").waitFor({ timeout: 10_000 });
+  await sleep(1000);
+  await page.keyboard.up("Space");
+  await page.keyboard.up("Shift");
+  await page.keyboard.up("Control");
+  await page.waitForFunction(() => (document.querySelector('[data-pane="alpha"] textarea') as HTMLTextAreaElement).value === "hello from the fake whisper", null, { timeout: 15_000 });
+  assert(sttSeen.length === 2, "holding Ctrl+Shift+Space records and types into the focused pane");
+  await ta.fill("");
+  // voice menu + palette entries
+  await pane(page, "alpha").locator('.voice-ctl button[aria-label="voice settings"]').click();
+  await page.locator(".voice-menu", { hasText: "Spoken replies need ELEVENLABS_API_KEY" }).waitFor({ timeout: 5000 });
+  await page.keyboard.press("Escape");
+  await page.locator(".voice-menu").waitFor({ state: "detached", timeout: 2000 });
+  assert(true, "pane voice menu opens and explains the missing ElevenLabs key; Esc closes it");
+  await command(page, "Send after dictation");
+  assert(JSON.parse(readFileSync(join(projectDir(dir), "ui.json"), "utf8")).voice?.sendAfter === true, "palette: send after dictation saved in the layout");
+  await command(page, "Send after dictation");
 
   // hostile markdown: images from agent output never load
   await pane(page, "beta").locator("textarea").fill("hostile-img");

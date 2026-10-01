@@ -9,6 +9,7 @@ import { PromptEditor } from "./Extras.js";
 import { GroupChips, groupColor } from "./Links.js";
 import { agentState, StatePill } from "./state.js";
 import { IconClock, IconClose, IconExpand, IconLink, IconLock, IconMaximize, IconRefresh, IconSend, IconStop } from "./Icons.js";
+import { MicButton, PaneVoiceControls, stopSpeech, useVoiceTarget } from "./Voice.js";
 
 export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
   name: string;
@@ -35,9 +36,10 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
       data-pane={name}
       onMouseEnter={() => hoverFocus && focus.hoverStart(name)}
       onMouseLeave={() => focus.hoverEnd()}
-      onMouseDown={() => {
+      onMouseDown={(e) => {
         focus.setActive(name);
         store.clearReady(name);
+        if (!(e.target as HTMLElement).closest(".voice-ctl")) stopSpeech(name); // a click stops its spoken reply
       }}
       onFocusCapture={() => store.clearReady(name)}
       onDragOver={(e) => {
@@ -88,6 +90,7 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
         {agent && agent.queued > 0 && <span className="badge" title="prompts queued">{agent.queued} queued</span>}
         {agent && agent.jobs > 0 && <span className="badge job" title="scheduled jobs on this agent"><IconClock size={12} /> {agent.jobs}</span>}
         <div className="pane-actions" onDoubleClick={(e) => e.stopPropagation()}>
+          <PaneVoiceControls name={name} />
           {agent && status === "working" && (
             <button onClick={() => void rpc("cancel", { name })} title="cancel turn (Esc)" aria-label="cancel turn"><IconStop /></button>
           )}
@@ -601,6 +604,7 @@ function Composer({ name, agent }: { name: string; agent?: AgentView }) {
     setText("");
     void rpc("prompt", { name, text: t }).catch((e) => store.toast(e.message, "error"));
   };
+  useVoiceTarget(name, { el: () => ref.current, setText, send });
   return (
     <div className="composer">
       {editing && (
@@ -652,6 +656,7 @@ function Composer({ name, agent }: { name: string; agent?: AgentView }) {
           }
         }}
       />
+      <MicButton target={name} disabled={!agent} />
       <button className="ghost expand" onClick={() => setEditing(true)} disabled={!agent} title="open the big editor for long prompts (Ctrl+E)" aria-label="open prompt editor">
         <IconExpand />
       </button>
