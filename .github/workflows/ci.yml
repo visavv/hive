@@ -37,7 +37,7 @@ jobs:
         shell: bash
         run: |
           if [ "$RUNNER_OS" = Windows ]; then powershell -ExecutionPolicy Bypass -File scripts/setup-remote-windows.ps1 -DryRun -TailscaleOnly
-          else bash scripts/setup-remote.sh --dry-run --discord --daemon --ssh-only-tailscale; fi
+          else bash scripts/setup-remote.sh --dry-run --discord --daemon --web --ssh-only-tailscale; fi
       - name: UI e2e (Windows)
         if: runner.os == 'Windows'
         run: npm run test:ui
@@ -54,6 +54,35 @@ jobs:
           name: screenshots-${{ matrix.os }}
           path: shots/
           if-no-files-found: ignore
+
+  android:
+    # The Android app (mobile/, a Capacitor shell around hive web): a debug APK to install, see docs/MOBILE.md
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+        working-directory: mobile
+      - name: copy the app's pages and Capacitor config into android/
+        run: npx cap sync android
+        working-directory: mobile
+      - name: build the debug APK (ubuntu-latest has the Android SDK)
+        run: ./gradlew assembleDebug --no-daemon
+        working-directory: mobile/android
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hive-android-apk
+          path: mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
 
   fedora:
     # The Fedora laptop: full suite + the Electron UI test in a Fedora container.
@@ -74,7 +103,7 @@ jobs:
       - name: desktop entry
         run: node dist/cli/index.js desktop --cwd "$PWD" && cat ~/.local/share/applications/hive-*.desktop
       - name: remote-access setup (dry run, Fedora)
-        run: bash scripts/setup-remote.sh --dry-run --discord --daemon --ssh-only-tailscale
+        run: bash scripts/setup-remote.sh --dry-run --discord --daemon --web --ssh-only-tailscale
       - name: UI e2e (Xvfb)
         run: |
           Xvfb :99 -screen 0 1920x1080x24 &

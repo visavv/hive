@@ -7,6 +7,7 @@
 #   bash scripts/setup-remote.sh --ssh-only-tailscale  # also: SSH reachable only over Tailscale
 #   bash scripts/setup-remote.sh --discord             # also: systemd service for the Discord bridge
 #   bash scripts/setup-remote.sh --daemon              # also: keep the project's hive running (docs/CLOUD.md)
+#   bash scripts/setup-remote.sh --web                 # also: hive web as a service + tailscale serve (docs/MOBILE.md)
 #   bash scripts/setup-remote.sh --dry-run             # print what it would do
 #
 # Nothing here opens a port on your router. hive itself still listens on nothing.
@@ -17,6 +18,7 @@ ME="${USER:-$(id -un)}"
 LOCK=0
 DISCORD=0
 DAEMON=0
+WEB=0
 DRY=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -26,8 +28,9 @@ while [ $# -gt 0 ]; do
     --ssh-only-tailscale) LOCK=1; shift ;;
     --discord) DISCORD=1; shift ;;
     --daemon) DAEMON=1; shift ;;
+    --web) WEB=1; shift ;;
     --dry-run) DRY=1; shift ;;
-    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -162,6 +165,38 @@ EOF
   run sudo systemctl daemon-reload
   run sudo systemctl enable --now "hive-daemon-${SLUG}"
   echo "Connect from the desktop: hive ui --remote $ME@<this machine> --remote-cwd $PROJECT"
+fi
+
+if [ "$WEB" = 1 ]; then
+  say "hive web service for $PROJECT (phone browser / Android app)"
+  # listens on 127.0.0.1:7777 only; tailscale serve publishes it over HTTPS to your tailnet (nobody else)
+  SLUG="$(basename "$PROJECT" | tr -c 'A-Za-z0-9_.-' '_' | sed 's/_*$//')"
+  WUNIT="/etc/systemd/system/hive-web-${SLUG}.service"
+  HIVE_CMD="$(command -v hive || echo "$(command -v node) $HOME/hive/dist/cli/index.js")"
+  if [ "$DRY" = 1 ]; then echo "+ write $WUNIT"; else
+    sudo tee "$WUNIT" >/dev/null <<EOF
+[Unit]
+Description=hive web for $PROJECT
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=$ME
+WorkingDirectory=$PROJECT
+EnvironmentFile=-$HOME/hive.env
+ExecStart=$HIVE_CMD web --cwd $PROJECT --port 7777
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  fi
+  run sudo systemctl daemon-reload
+  run sudo systemctl enable --now "hive-web-${SLUG}"
+  run sudo tailscale serve --bg 7777
+  echo "The address with its key: sudo journalctl -u hive-web-${SLUG} | grep 'on your phone'"
+  echo "Open it in Chrome on the phone, or paste it into the hive Android app. docs/MOBILE.md"
 fi
 
 if [ "$DISCORD" = 1 ]; then
