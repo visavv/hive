@@ -9,6 +9,8 @@ import { join } from "node:path";
 import { Hub } from "../core/hub.js";
 import { Scheduler } from "../core/scheduler.js";
 import { projectDir } from "../core/home.js";
+import { AGENTS } from "../core/agents.js";
+import { RECIPES } from "../core/recipes.js";
 import { TuiController } from "./controller.js";
 import { cursorColumn, render } from "./render.js";
 
@@ -25,6 +27,9 @@ export async function runTui(o: TuiOptions): Promise<void> {
   const out = process.stdout;
   const inp = process.stdin;
   if (!inp.isTTY || !out.isTTY) throw new Error("hive tui needs an interactive terminal");
+  // Check what we can before taking over the screen, so mistakes print normally.
+  if (o.team && !RECIPES[o.team]) throw new Error(`unknown team "${o.team}" (${Object.keys(RECIPES).join(", ")})`);
+  for (const k of [o.kind, o.alt]) if (k && !AGENTS[k]) throw new Error(`unknown agent "${k}" (${Object.keys(AGENTS).join(", ")})`);
   let ctl!: TuiController;
   const hub = new Hub({
     hiveDb: o.db,
@@ -38,7 +43,9 @@ export async function runTui(o: TuiOptions): Promise<void> {
   // ---- screen ----
   let pending = false;
   let lastFrame: string[] = [];
+  let restored = false;
   const draw = () => {
+    if (restored) return; // the terminal is back to normal (quitting)
     pending = false;
     const cols = out.columns || 100;
     const rows = out.rows || 30;
@@ -61,25 +68,49 @@ export async function runTui(o: TuiOptions): Promise<void> {
     out.write("\x1b[2J");
     schedule();
   });
-  out.write("\x1b[?1049h\x1b[2J"); // alternate screen
-  const restore = () => out.write("\x1b[0m\x1b[?25h\x1b[?1049l");
+  // alternate screen + bracketed paste (pasted text arrives between \x1b[200~ and \x1b[201~)
+  out.write("\x1b[?1049h\x1b[?2004h\x1b[2J");
+  // Idempotent and synchronous: runs on quit, on errors, and on any process exit.
+  const restore = () => {
+    if (restored) return;
+    restored = true;
+    try {
+      if (inp.isRaw) inp.setRawMode(false);
+    } catch {}
+    out.write("\x1b[0m\x1b[?25h\x1b[?2004l\x1b[?1049l");
+  };
+  process.on("exit", restore);
 
   // ---- keys ----
   readline.emitKeypressEvents(inp);
   inp.setRawMode(true);
   let quitArmed = 0;
   const quit = async () => {
-    inp.setRawMode(false);
-    inp.pause();
     restore();
+    inp.pause();
     out.write("closing agents…\n");
     await scheduler.stop();
     await hub.close();
     process.exit(0);
   };
   ctl.on("quit", () => void quit());
+  let paste: string | null = null;
   inp.on("keypress", (str: string | undefined, key: readline.Key) => {
     const name = key?.name;
+    // A paste goes into the prompt as one block: Enter / Tab inside it are text, not keys.
+    if (name === "paste-start") {
+      paste = "";
+      return;
+    }
+    if (name === "paste-end") {
+      const text = (paste ?? "").replace(/\r\n?/g, "\n");
+      paste = null;
+      return ctl.insert(text);
+    }
+    if (paste !== null) {
+      paste += name === "return" || name === "enter" ? "\n" : name === "tab" ? "\t" : (str ?? key?.sequence ?? "");
+      return;
+    }
     if (key?.ctrl && name === "c") {
       if (Date.now() - quitArmed < 1500) return void quit();
       quitArmed = Date.now();
@@ -101,22 +132,15 @@ export async function runTui(o: TuiOptions): Promise<void> {
           ctl.cursor = 0;
           return schedule();
         }
-        return void ctl.submit("/stop");
+        return void ctl.stopFocused().catch((e) => ctl.say(`✗ ${e?.message ?? e}`));
       case "backspace":
-        if (ctl.cursor > 0) {
-          ctl.input = ctl.input.slice(0, ctl.cursor - 1) + ctl.input.slice(ctl.cursor);
-          ctl.cursor--;
-        }
-        return schedule();
+        return ctl.backspace();
       case "delete":
-        ctl.input = ctl.input.slice(0, ctl.cursor) + ctl.input.slice(ctl.cursor + 1);
-        return schedule();
+        return ctl.deleteForward();
       case "left":
-        ctl.cursor = Math.max(0, ctl.cursor - 1);
-        return schedule();
+        return ctl.left();
       case "right":
-        ctl.cursor = Math.min(ctl.input.length, ctl.cursor + 1);
-        return schedule();
+        return ctl.right();
       case "home":
         ctl.cursor = 0;
         return schedule();
@@ -130,6 +154,7 @@ export async function runTui(o: TuiOptions): Promise<void> {
       case "pageup":
       case "pagedown": {
         const p = ctl.panes[ctl.focus];
+        // (render clamps scroll to the pane's wrapped line count)
         if (p) p.scroll = Math.max(0, p.scroll + (name === "pageup" ? 10 : -10));
         return schedule();
       }
@@ -137,22 +162,26 @@ export async function runTui(o: TuiOptions): Promise<void> {
     if (!str || key?.ctrl || key?.meta) return;
     // y / n answer a permission question when nothing is typed
     if (!ctl.input && (str === "y" || str === "n") && ctl.panes[ctl.focus]?.pending) return void ctl.answer(str === "y");
-    ctl.input = ctl.input.slice(0, ctl.cursor) + str + ctl.input.slice(ctl.cursor);
-    ctl.cursor += str.length;
-    schedule();
+    ctl.insert(str);
   });
   process.on("SIGTERM", () => void quit());
 
   // ---- start ----
-  hub.run();
-  scheduler.start();
-  setInterval(schedule, 1000).unref(); // status, unread counts
-  draw();
-  const saved = o.fresh ? [] : ctl.saved();
-  if (saved.length) {
-    ctl.say(`reopening ${saved.map((s) => s.name).join(", ")} (resuming their sessions) · /help`, 8000);
-    await Promise.all(saved.map((s) => ctl.open(s)));
-  } else {
-    await ctl.team(o.team ?? "squad");
+  try {
+    hub.run();
+    scheduler.start();
+    setInterval(schedule, 1000).unref(); // status, unread counts
+    draw();
+    const saved = o.fresh ? [] : ctl.saved();
+    if (saved.length) {
+      ctl.say(`reopening ${saved.map((s) => s.name).join(", ")} (resuming their sessions) · /help`, 8000);
+      await ctl.restore(saved);
+    } else {
+      await ctl.team(o.team ?? "squad").catch((e) => ctl.say(`✗ ${e?.message ?? e}`, 15000));
+    }
+  } catch (e) {
+    // put the terminal back before the caller prints the error
+    restore();
+    throw e;
   }
 }
