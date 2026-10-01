@@ -69,6 +69,9 @@ How it compares with Maestro, Agent Deck, Zed, Claude Code teams and others: [do
 
 ## Quick start
 
+**New here? Read [docs/START-HERE.md](docs/START-HERE.md)**: desktop, server and phone in one page.
+
+
 **On Windows, follow [docs/WINDOWS.md](docs/WINDOWS.md)** (PowerShell, step by step).
 
 ```
