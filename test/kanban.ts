@@ -1,5 +1,6 @@
 /** Kanban board: add, order, drag (move before), done hides, labels, filters. */
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 import { assert, finish, freshDir } from "./util.js";
 import { Board } from "../src/hive/kanban.js";
 
@@ -37,4 +38,25 @@ try {
 assert(threw, "a card needs a title");
 assert(b.remove(d.id) && !b.get(d.id), "delete a card");
 b.close();
+
+// agents add and move cards through hive tools; their words come back marked untrusted
+{
+  process.env.HIVE_HOME = join(dir, "home");
+  const work = join(dir, "work");
+  freshDir(".hive-test-kanban/work");
+  execFileSync("git", ["init", "-q"], { cwd: work });
+  const { Hub } = await import("../src/core/hub.js");
+  const { board } = await import("../src/hive/kanban.js");
+  const hub = new Hub({ hiveDb: join(dir, "hive.db"), pollMs: 200 });
+  const a = await hub.add({ name: "scout", agent: "mock", cwd: work, policy: "ask" });
+  await a.runOnce('calltool hive_card_add {"title":"New clip from the stream","labels":["clips"]}', { automatic: false });
+  const card = board().list().find((c) => c.title === "New clip from the stream");
+  assert(card && card.source === "scout" && card.project === "work" && card.labels.join() === "clips", `hive_card_add puts the agent's card on the board (${a.lastReply.trim().slice(-80)})`);
+  await a.runOnce(`calltool hive_card_move {"id":${card!.id},"col":"doing"}`, { automatic: false });
+  assert(board().get(card!.id)!.col === "doing", "hive_card_move moves it");
+  await a.runOnce('calltool hive_card_list {"project":"work"}', { automatic: false });
+  assert(a.lastReply.includes("<<untrusted card by scout"), "cards written by agents are listed as untrusted");
+  assert(!/needs you|permission/i.test(a.lastReply) && hub.db.listAgents().length > 0, "the card tools run without a permission prompt on an ask agent");
+  await hub.close();
+}
 finish("kanban");

@@ -18,6 +18,7 @@
  *   hive_followup    schedule a one-off turn later for me or another agent
  *   hive_diff        another agent's changes (its hive/<name> branch vs base, plus uncommitted)
  *   hive_log         commits on an agent's branch that aren't on the base branch
+ *   hive_card_add / hive_card_move / hive_card_list   the owner's Kanban board (Draft, In progress, Done)
  *   hive_tts / hive_voices / hive_image / hive_image_edit   media APIs, only when their keys are set (media.ts)
  *
  * hive_diff / hive_log run git read-only inside this server, so reviewers
@@ -29,6 +30,8 @@ import { z } from "zod";
 import { HiveDb } from "./db.js";
 import { senderTrust, untrusted } from "../core/trust.js";
 import { baseBranch, git, repoRoot } from "../core/worktree.js";
+import { board, COLUMNS, type Card } from "./kanban.js";
+import { basename } from "node:path";
 
 const dbPath = process.env.HIVE_DB;
 const me = process.env.HIVE_AGENT;
@@ -170,6 +173,50 @@ server.registerTool(
     db.bbSet(key, value, me);
     db.log(me, "bb_set", { key });
     return text(`ok ${key}`);
+  },
+);
+
+// ---- the owner's Kanban board (shared across projects) ----
+const thisProject = async () => basename(await repoRoot(process.cwd()).catch(() => ""));
+const cardView = (c: Card) => (c.source === "owner" ? c : { ...c, title: untrusted(`card by ${c.source}`, c.title), body: c.body ? untrusted(`card by ${c.source}`, c.body) : "" });
+
+server.registerTool(
+  "hive_card_add",
+  {
+    description:
+      "Add a card to the owner's Kanban board (columns: draft, doing, done). Use it for work the owner should see or pick up: a follow-up you found, a task you're starting, a review item. The project defaults to this repo.",
+    inputSchema: {
+      title: z.string().min(1).max(300),
+      body: z.string().max(20_000).optional(),
+      col: z.enum(COLUMNS).optional(),
+      project: z.string().max(80).optional(),
+      labels: z.array(z.string()).max(8).optional(),
+    },
+  },
+  async ({ title, body, col, project, labels }) => {
+    const c = board().add({ title, body, col, project: project ?? (await thisProject()), labels, source: me });
+    return text(`card #${c.id} added to ${c.col}`);
+  },
+);
+
+server.registerTool(
+  "hive_card_move",
+  { description: "Move a board card: draft → doing when you start it, doing → done when it's finished (done cards are hidden from the board).", inputSchema: { id: z.number().int(), col: z.enum(COLUMNS) } },
+  async ({ id, col }) => {
+    const c = board().move(id, col);
+    return text(`card #${c.id} is now in ${c.col}`);
+  },
+);
+
+server.registerTool(
+  "hive_card_list",
+  {
+    description: "List board cards (not done ones unless done=true), optionally for one project or label.",
+    inputSchema: { project: z.string().optional(), label: z.string().optional(), done: z.boolean().optional() },
+  },
+  async ({ project, label, done }) => {
+    const rows = board().list({ project, label, done }).map(cardView);
+    return text(rows.some((r) => typeof r.title !== "string" || r.source !== "owner") ? `${TRUST_NOTE}\n${JSON.stringify(rows, null, 2)}` : JSON.stringify(rows, null, 2));
   },
 );
 
