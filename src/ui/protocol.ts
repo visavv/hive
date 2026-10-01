@@ -118,6 +118,19 @@ export interface OtherAgent {
   where?: string;
 }
 
+export interface AccountView {
+  id: string;
+  label: string;
+  api: boolean;
+  /** true signed in / key works, false not signed in, null can't tell until it starts. */
+  signedIn: boolean | null;
+  installed: "ok" | "missing" | "npx";
+  status: string;
+  login?: string;
+  install?: string;
+  checkedAt: number;
+}
+
 export interface GroupView {
   name: string;
   members: string[];
@@ -251,6 +264,7 @@ export interface Methods {
   }[];
   runSkill: (p: { name: string; params: Record<string, string>; kind?: string }) => { agent: string; kind: string; policy: Policy };
   groups: (p: Record<string, never>) => { name: string; members: string[] }[];
+  accounts: (p: { refresh?: boolean }) => AccountView[];
   link: (p: { members: string[]; name?: string; mode?: "direct" | "review"; maxPerHour?: number | null; includeOwner?: boolean }) => GroupView;
   groupChat: (p: { name: string }) => { group: GroupView; messages: MailView[] };
   setGroup: (p: { name: string; mode?: "direct" | "review"; maxPerHour?: number | null; remove?: string; add?: string; delete?: boolean }) => GroupView | null;
