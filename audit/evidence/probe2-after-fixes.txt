@@ -1,0 +1,17 @@
+UX-001 owner in dialog: name: "owner" is reserved for you (the human)
+UX-002 unicode in dialog: name: only letters a-z, digits, _ . - (not "ä")
+panes after invalid names: 0
+link via 🔗 button (no drag); group chip text: @coder-reviewer
+layout 1920x1080: {"topbarOverflow":0,"topbarClipped":[],"topbarH":40,"heads":[{"w":817,"overflow":0,"clipped":0},{"w":817,"overflow":0,"clipped":0},{"w":819,"overflow":0,"clipped":0},{"w":819,"overflow":0,"clipped":0}],"vertical":false}
+layout 1366x768: {"topbarOverflow":0,"topbarClipped":[],"topbarH":40,"heads":[{"w":540,"overflow":0,"clipped":2},{"w":540,"overflow":0,"clipped":2},{"w":542,"overflow":0,"clipped":2},{"w":542,"overflow":0,"clipped":2}],"vertical":false}
+layout 1280x720: {"topbarOverflow":0,"topbarClipped":[],"topbarH":40,"heads":[{"w":497,"overflow":0,"clipped":2},{"w":497,"overflow":0,"clipped":2},{"w":499,"overflow":0,"clipped":2},{"w":499,"overflow":0,"clipped":2}],"vertical":false}
+layout 1440x1280: {"topbarOverflow":0,"topbarClipped":[],"topbarH":40,"heads":[{"w":577,"overflow":0,"clipped":0},{"w":577,"overflow":0,"clipped":0},{"w":579,"overflow":0,"clipped":0},{"w":579,"overflow":0,"clipped":0}],"vertical":false}
+layout 720x1280: {"topbarOverflow":0,"topbarClipped":[],"topbarH":100,"heads":[{"w":689,"overflow":0,"clipped":0},{"w":689,"overflow":0,"clipped":0},{"w":691,"overflow":0,"clipped":0},{"w":691,"overflow":0,"clipped":0}],"vertical":true}
+layout 1920 3 cols: [{"w":404,"overflow":0,"clipped":3},{"w":404,"overflow":0,"clipped":3},{"w":406,"overflow":0,"clipped":3},{"w":406,"overflow":0,"clipped":3}]
+layout 1920 4 cols: [{"w":404,"overflow":0,"clipped":3},{"w":404,"overflow":0,"clipped":3},{"w":406,"overflow":0,"clipped":3},{"w":406,"overflow":0,"clipped":3}]
+modal focus escapes (Tab ×25): []
+toasts container has aria-live: 1
+after trying to delete a group with a held message: chips: 2
+toast: ["Waiting for you: a message in @coder-reviewer needs your review","@coder-reviewer has 1 message waiting for your review; release or drop it first"]
+prompt editor Esc keeps the draft: true
+renderer errors: []

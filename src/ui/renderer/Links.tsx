@@ -11,6 +11,16 @@ import { store, useStore } from "./store.js";
 import { Modal } from "./App.js";
 import { fmtIdle } from "./format.js";
 
+/** Pause icon drawn in SVG (the ⏸ glyph is missing from common Linux fonts). */
+export function PauseIcon({ title }: { title?: string }) {
+  return (
+    <svg className="ico" width="9" height="10" viewBox="0 0 9 10" role={title ? "img" : undefined} aria-label={title} aria-hidden={title ? undefined : true}>
+      <rect x="1" y="1" width="2.5" height="8" rx="0.5" fill="currentColor" />
+      <rect x="5.5" y="1" width="2.5" height="8" rx="0.5" fill="currentColor" />
+    </svg>
+  );
+}
+
 /** Stable color per group name (also used for the pane stripe). */
 export function groupColor(name: string): string {
   let h = 0;
@@ -35,8 +45,8 @@ export function GroupChips({ agent }: { agent: string }) {
           onDoubleClick={(e) => e.stopPropagation()}
           title={`@${g.name}: ${g.members.join(", ")} · ${g.mode === "review" ? "you review each message" : "direct"}${g.maxPerHour ? ` · max ${g.maxPerHour}/h` : ""} — open the group chat`}
         >
-          @{g.name}
-          {g.mode === "review" ? " ⏸" : ""}
+          <span className="gname">@{g.name}</span>
+          {g.mode === "review" && <PauseIcon title="you review each message" />}
           {g.held > 0 && <span className="badge alert">{g.held}</span>}
         </button>
       ))}
@@ -51,7 +61,10 @@ export function LinkDialog({ members: initial, onClose }: { members: string[]; o
   const [members, setMembers] = useState(initial.filter(Boolean));
   const candidates = groups.filter((g) => members.some((m) => g.members.includes(m)));
   const [target, setTarget] = useState<string>(""); // "" = new group
-  const [name, setName] = useState(initial.filter(Boolean).join("-").slice(0, 40));
+  const [typedName, setTypedName] = useState<string | null>(null);
+  // The default name follows the members until you type your own.
+  const name = typedName ?? members.join("-").slice(0, 40);
+  const setName = (v: string) => setTypedName(v);
   const [mode, setMode] = useState<"direct" | "review">("direct");
   const [cap, setCap] = useState("");
   const [me, setMe] = useState(true);
@@ -246,7 +259,9 @@ export function GroupChat({ name, onClose }: { name: string; onClose: () => void
             )}
             {m.held && (
               <div className="held-bar">
-                <span className="warn small">⏸ {m.held}</span>
+                <span className="warn small">
+                  <PauseIcon /> {m.held}
+                </span>
                 <span className="spacer" />
                 {editing?.id === m.id ? (
                   <button className="primary" onClick={() => act(rpc("releaseMail", { id: m.id, body: editing.body }).then(() => setEditing(null)))}>

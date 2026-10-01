@@ -7,6 +7,7 @@ import type { Report } from "../../core/report.js";
 import { rpc } from "./bridge.js";
 import { store, useStore } from "./store.js";
 import { fmtIdle } from "./format.js";
+import { PauseIcon } from "./Links.js";
 
 type Tab = "report" | "inbox" | "board" | "mail" | "usage" | "accounts";
 type Usage = Awaited<ReturnType<typeof rpc<"usage">>>;
@@ -255,7 +256,9 @@ export function UsageView() {
   return (
     <div className="usage">
       <div className={`usage-pause${paused ? " on" : ""}`}>
-        <span>{paused ? "⏸ Automatic work is paused (jobs, mail wake-ups). Your own prompts still run." : "Automatic work is running within the limits below."}</span>
+        <span>
+          {paused && <PauseIcon />} {paused ? "Automatic work is paused (jobs, mail wake-ups). Your own prompts still run." : "Automatic work is running within the limits below."}
+        </span>
         <span className="spacer" />
         <button className={paused ? "" : "danger"} onClick={() => set("paused", paused ? "0" : "1")}>
           {paused ? "Resume" : "Pause all automatic work"}

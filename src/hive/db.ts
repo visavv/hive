@@ -571,7 +571,14 @@ export class HiveDb {
   removeFromGroup(grp: string, member: string) {
     this.db.prepare(`DELETE FROM group_members WHERE grp=? AND member=?`).run(grp, member);
   }
+  /** Messages still waiting for the owner that were routed through (or sent to) a group. */
+  heldInGroup(grp: string): number {
+    return (this.db.prepare(`SELECT COUNT(*) AS n FROM messages WHERE held IS NOT NULL AND (via=? OR to_agent=?)`).get(grp, "@" + grp) as { n: number }).n;
+  }
   deleteGroup(grp: string) {
+    // Held mail would be stranded (no group chat to release it from): decide on it first.
+    const held = this.heldInGroup(grp);
+    if (held) throw new Error(`@${grp} has ${held} message${held === 1 ? "" : "s"} waiting for your review; release or drop ${held === 1 ? "it" : "them"} first`);
     this.db.prepare(`DELETE FROM group_members WHERE grp=?`).run(grp);
     this.db.prepare(`DELETE FROM group_settings WHERE grp=?`).run(grp);
   }
@@ -718,9 +725,19 @@ export class HiveDb {
     const cutoff = Date.now() - days * 86_400_000;
     this.db.prepare(`DELETE FROM events WHERE ts < ?`).run(cutoff);
     this.db.prepare(`DELETE FROM job_runs WHERE ended IS NOT NULL AND ended < ?`).run(cutoff);
-    // message_reads are never pruned: dropping them would make old broadcasts unread again.
+    // message_reads go only with their message: dropping them alone would make old broadcasts unread again.
     this.db.prepare(`DELETE FROM usage_log WHERE ts < ?`).run(Date.now() - Math.max(days, 35) * 86_400_000);
     this.db.prepare(`DELETE FROM media_jobs WHERE ts < ?`).run(Date.now() - 86_400_000);
+    // Old mail that's been read (and group/broadcast mail) goes after 90 days; unread and held mail stays.
+    const old = Date.now() - Math.max(days, 90) * 86_400_000;
+    this.db
+      .prepare(`DELETE FROM messages WHERE ts < ? AND held IS NULL AND (read_at IS NOT NULL OR to_agent='*' OR to_agent LIKE '@%')`)
+      .run(old);
+    this.db.prepare(`DELETE FROM message_reads WHERE message_id NOT IN (SELECT id FROM messages)`).run();
+  }
+  /** Media jobs left "running" by a hive process that died: fail them so callers stop waiting. */
+  failStaleMedia(olderThanMs = 10 * 60_000) {
+    this.db.prepare(`UPDATE media_jobs SET status='failed', error='the hive process running it stopped' WHERE status='running' AND ts < ?`).run(Date.now() - olderThanMs);
   }
   messagesSince(ts: number, limit = 500): Message[] {
     return this.db.prepare(`SELECT * FROM messages WHERE ts>=? ORDER BY id DESC LIMIT ?`).all(ts, limit) as Message[];

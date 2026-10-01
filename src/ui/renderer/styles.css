@@ -340,3 +340,25 @@ label.radio { display: flex; gap: 6px; align-items: center; }
 .acct.no .acct-mark { background: color-mix(in srgb, var(--red) 70%, var(--bg3)); color: #fff; }
 .acct-main { flex: 1; min-width: 0; }
 .acct-main .row1 { flex-wrap: wrap; }
+/* ---- pane header at narrow widths (each pane adapts to its own width) ---- */
+.pane { container-type: inline-size; }
+.pane-head > * { flex-shrink: 0; }
+.pname { overflow: hidden; text-overflow: ellipsis; min-width: 3ch; flex-shrink: 1; }
+.pane-head .group-chips { flex-wrap: nowrap; overflow: hidden; flex-shrink: 1; min-width: 0; }
+.group-chip { white-space: nowrap; flex-shrink: 0; }
+.pane-head .cfg { flex-shrink: 1; }
+.pane-actions { flex-shrink: 0; }
+.ico { vertical-align: -1px; }
+@container (max-width: 560px) {
+  .pane-head .kind, .pane-head .idx { display: none; }
+  .pane-head .cfg select { max-width: 96px; }
+  .group-chip { max-width: 110px; }
+  .group-chip .gname { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+}
+@container (max-width: 430px) {
+  .pane-head .ctx { display: none; }
+  .pane-actions button { padding: 1px 4px; }
+}
+@container (max-width: 360px) {
+  .pane-head .cfg { display: none; }
+}

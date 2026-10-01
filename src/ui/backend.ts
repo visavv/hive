@@ -595,7 +595,7 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
   },
   setGroup({ name, mode, maxPerHour, remove, add, delete: del }) {
     if (!hub.db.groupMembers(name).length) throw new Error(`no group "${name}"`);
-    if (del) hub.db.deleteGroup(name);
+    if (del) hub.db.deleteGroup(name); // refuses while messages are waiting for review
     else {
       if (mode || maxPerHour !== undefined) hub.db.setGroupSettings(name, { ...(mode ? { mode } : {}), ...(maxPerHour !== undefined ? { max_per_hour: maxPerHour } : {}) });
       if (remove) hub.db.removeFromGroup(name, remove);

@@ -30,3 +30,60 @@
 - A soak test with jobs running for hours, checking memory.
 - Keyboard-only and screen-reader walk-throughs.
 - Merge conflicts from the UI.
+
+## Pass 2: 2026-10-01 (first long prompt: edge cases, recovery, persistence, state combinations, layout)
+
+**Changes before this pass (version boundary).** The audit-1 findings were fixed and untrusted-content labelling and YouTube links were added (commits e6be82d, a4f18dc). Every observation below is on the fixed code unless marked "before".
+
+**Questions chosen.**
+1. Do the pass-1 fixes hold in the real UI, not just in unit tests?
+2. What happens between states in the new linking layer (held mail when a group is deleted, a member removed, the app restarted)?
+3. How do pane headers and the top bar look at real monitor sizes and column counts?
+4. Which background work is left dangling after a crash?
+
+**What was run.**
+- `test/audit-probe2.ts` (Electron + Playwright, hands-on):
+  - invalid names in the dialog, and linking via the 🔗 button (keyboard path);
+  - layout measured at 1920×1080, 1366×768, 1280×720, 1440×1280 and 720×1280, and at 3–4 columns: overflow, clipped children, top bar height;
+  - Tab cycling in a dialog; the toast live region;
+  - deleting a group with a held message; Esc in the prompt editor.
+  - Output: evidence/probe2-output.txt (before) and probe2-after-fixes.txt (after); screenshots p2-layout-*.png.
+- CLI: `hive held` and `hive groups` against the probe's database after the group delete (stranded message confirmed).
+- Code reading: media job lifecycle, prune coverage, desktop entry quoting.
+
+**Found.** BUG-003, BUG-004, UX-004, UX-005, UX-006, PRIV-001, UX-007, UX-008. All fixed and verified except UX-008 (cosmetic).
+
+**Confirmed fixed.** UX-001 and UX-002 in the dialog ("owner" is reserved for you; not "ä"); no dead pane is created.
+
+**Not tested.** A real Windows desktop with scaling; real vendor logins; real YouTube (the network isn't reachable here, so a fake server stands in).
+
+## Pass 3: 2026-10-01 (second long prompt: accessibility, security, privacy, performance, competitive analysis)
+
+**Questions chosen.**
+1. Can a keyboard-only user complete the main flows?
+2. Is there anything an agent can still do to hive itself?
+3. How does the backend scale with message volume?
+4. Are there really no comparable apps?
+
+**What was run.**
+- Accessibility (UI probe):
+  - focus trap: 20 of 25 Tabs escaped the dialog before the fix, 0 after;
+  - live region for toasts;
+  - accessible names: pass 1 found every button had a text, aria-label or title; the new 🔗/🔔/layout buttons carry aria-labels;
+  - contrast: dim text 5.45:1, unchanged from pass 1.
+- Security: trust wrapper tests (content can't close the wrapper; owner vs peer), symlink confinement tests, review of what `allow-all` implies (SEC-004), desktop-entry quoting.
+- Performance: `audit/evidence/perf-bench.txt` (20k messages).
+- Competitive analysis: web research on 16 tools from official sources, dated 2026-10-01 (docs/COMPARISON.md). There are close competitors (Maestro, Agent Deck, Superset, Zed + ACP, Claude Code agent teams). hive's distinct points are cross-vendor mail/groups/blackboard, drag-to-link with per-message review, and no network listener.
+
+**Found.** A11Y-001, A11Y-002 (fixed), SEC-004 (open, documented), PERF-001 (mitigated), plus IDEA-005 to IDEA-007 from the competitive research.
+
+**Assumptions challenged.**
+- "Wrapping peer content makes peer mail safe." It doesn't: it lowers the odds of injection, while the hard limits remain policies, review mode and the only-linked scope.
+- "No listener means no attack surface." Local agents with shell access are the real surface (SEC-004).
+
+**Next pass should look at.**
+- Real Windows desktop: 150% scaling, vertical monitor, notifications.
+- Real-model prompt-injection exercise against the trust wrapper.
+- A screen reader run (NVDA, Orca).
+- A long soak with jobs and links.
+- IDEA-005 (chaining) and IDEA-006 (`.worktreeinclude`) as the most useful next features.
