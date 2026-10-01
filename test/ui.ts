@@ -602,6 +602,24 @@ try {
   await page.locator(".app.vertical").waitFor({ timeout: 5000 });
   assert(true, "auto layout goes vertical on a 9:16 window");
   await page.screenshot({ path: join(shots, "hive-ui-vertical.png") });
+  // the wrapped top bar (buttons + broadcast row) must not spill over the panes — at a desktop-sized tall window
+  // (like a 9:16 monitor; 720 px wide is the phone layout, which has no top bar)
+  await page.setViewportSize({ width: 1200, height: 2000 }).catch(() => {});
+  await page.locator(".app.vertical .topbar").waitFor({ timeout: 5000 });
+  const tb = (await page.locator(".topbar").boundingBox())!;
+  const firstPane = (await page.locator(".pane").first().boundingBox())!;
+  assert(tb.y + tb.height <= firstPane.y + 1, `vertical: the top bar sits above the panes (bar ends ${Math.round(tb.y + tb.height)}, pane starts ${Math.round(firstPane.y)})`);
+  // two columns in vertical: the divider resizes them (vertical has its own widths)
+  await page.locator(".cols button", { hasText: "+" }).click();
+  const handle = (await page.locator(".col-handle").first().boundingBox())!;
+  const w0 = (await page.locator(".pane").first().boundingBox())!.width;
+  await page.mouse.move(handle.x + handle.width / 2, handle.y + 100);
+  await page.mouse.down();
+  await page.mouse.move(handle.x + handle.width / 2 + 120, handle.y + 100, { steps: 8 });
+  await page.mouse.up();
+  const w1 = (await page.locator(".pane").first().boundingBox())!.width;
+  assert(w1 > w0 + 60, `vertical: dragging the column divider resizes the panes (${Math.round(w0)} → ${Math.round(w1)})`);
+  await page.locator(".cols button", { hasText: "−" }).click();
   await page.setViewportSize({ width: 1600, height: 950 }).catch(() => {});
   await page.locator(".app:not(.vertical)").waitFor({ timeout: 5000 });
 

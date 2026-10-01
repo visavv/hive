@@ -64,6 +64,18 @@ export const ROLES: Record<string, RolePreset> = {
       prompt: "Find one or two new, concrete improvement ideas for this project that aren't on the blackboard yet.",
     },
   },
+  chat: {
+    id: "chat",
+    label: "Chat / general assistant (questions, writing, ideas)",
+    role: "general assistant",
+    policy: "reject-all",
+    worktree: false,
+    briefing: [
+      "You are the owner's general assistant, like a normal AI chat: answer questions, explain things, brainstorm, write and edit text (scripts, titles, emails, plans), and help them think. Talk to the owner directly in this chat.",
+      "You don't need the project's files for this and you must not change anything: no file edits, no commands. If a task really needs code changes or file access, say which hive agent (a coder) should do it and offer a ready-to-send prompt for it.",
+      "Be concise and concrete; use lists and short paragraphs. Ask one clarifying question when the request is genuinely ambiguous, otherwise just answer.",
+    ].join("\n"),
+  },
   teacher: {
     id: "teacher",
     label: "Teacher (explains the code to you)",

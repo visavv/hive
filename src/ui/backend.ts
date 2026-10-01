@@ -23,7 +23,7 @@ import { POLICIES, type AgentSession, type SessionEvent } from "../core/session.
 import { Scheduler, describeSchedule, formatDuration } from "../core/scheduler.js";
 import { ROLES } from "../core/roles.js";
 import { defaultDb } from "../core/home.js";
-import { listWorktrees, mergeWorktree } from "../core/worktree.js";
+import { initRepo, listWorktrees, mergeWorktree } from "../core/worktree.js";
 import { buildReport } from "../core/report.js";
 import { RECIPES, applyRecipe } from "../core/recipes.js";
 import { findSkill, listSkills, prepareSkillValues, renderSkill, skillFromPrompt, skillPolicy, userSkillsDir } from "../core/skills.js";
@@ -676,6 +676,10 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
     }
     schedulePush();
     return view(s);
+  },
+  async gitInit({ cwd }) {
+    const dir = resolve(cwd || defaultCwd);
+    return { result: await initRepo(dir), cwd: dir };
   },
   async worktrees() {
     // Every repo an open agent (or the launch folder) lives in.

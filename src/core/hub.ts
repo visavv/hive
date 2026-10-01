@@ -191,7 +191,16 @@ export class Hub {
     // Extra MCP servers: given now, else the ones this agent had last time (wake-ups, restarts).
     rest.mcp = o.mcp ?? storedMcp(this.db, o.name);
     // Worktrees live next to the hive db (the per-user project dir by default).
-    if (worktree) rest.cwd = (await ensureWorktree(o.cwd, o.name, join(dirname(this.hiveDb), "worktrees"))).path;
+    // A folder that isn't a git project yet (or has no commits) can't have worktrees: start in the folder
+    // itself and say so, instead of refusing to start (a fresh folder from the picker is the common case).
+    let worktreeNote: string | undefined;
+    if (worktree)
+      try {
+        rest.cwd = (await ensureWorktree(o.cwd, o.name, join(dirname(this.hiveDb), "worktrees"))).path;
+      } catch (e: any) {
+        if (!/not inside a git repository|has no commits yet/.test(String(e?.message))) throw e;
+        worktreeNote = `${o.name} works directly in ${o.cwd}: ${/no commits/.test(e.message) ? "the git project has no commits yet" : "it isn't a git project yet"}, so there's no separate branch. For one, run "git init" there and commit once (Ctrl+K → "Make this folder a git project").`;
+      }
     let resumeSessionId = rest.resumeSessionId;
     if (resume && !resumeSessionId) {
       const prev = this.db.getAgent(o.name);
@@ -221,6 +230,7 @@ export class Hub {
       }
     });
     await s.start();
+    if (worktreeNote) s.note(worktreeNote);
     this.db.setPid(o.name, s.pid ?? null);
     this.db.setAgentConfig(o.name, rest.policy ?? "ask", preset ?? null, rest.briefing ?? null);
     storeMcp(this.db, o.name, rest.mcp);
