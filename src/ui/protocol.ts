@@ -285,6 +285,7 @@ export interface Methods {
     facets: ReturnType<typeof import("../core/ledger.js").facets>;
   };
   setBudget: (p: { key: string; value: string }) => import("../core/budget.js").UsageSummary;
+  improvePrompt: (p: { name: string; draft: string }) => { prompt: string };
   board: (p: { done?: boolean; project?: string; q?: string }) => {
     cards: import("../hive/kanban.js").Card[];
     counts: Record<import("../hive/kanban.js").Column, number>;

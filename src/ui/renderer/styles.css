@@ -891,3 +891,8 @@ button.danger { color: var(--st-error); }
   .kb-cols.n2, .kb-cols.n3 { grid-template-columns: 1fr; overflow-y: auto; }
   .kb-search input { width: 120px; }
 }
+
+/* ---- ✦ improve prompt ---- */
+.composer .improve { color: var(--accent); }
+.composer .improve.busy { animation: hive-pulse 1.2s steps(6) infinite; }
+.composer .improve-undo { font-size: 11.5px; color: var(--text-2); padding: 0 6px; }

@@ -67,6 +67,7 @@ export function vendorOf(kind: string, model?: string): string {
 /** What the turn was for, from the agent's role and name. */
 export function categoryOf(role = "", name = "", automatic = false): string {
   const t = `${role} ${name}`.toLowerCase();
+  if (/prompt engineer/.test(t)) return "prompting";
   if (/judge/.test(t)) return "verdict judge";
   if (/verdict|contender|builder/.test(t)) return "verdict";
   if (/review/.test(t)) return "review";

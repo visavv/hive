@@ -458,6 +458,19 @@ export class TuiController extends EventEmitter {
     };
     // /1 … /9: jump to an agent (phones have no Alt key)
     if (/^[1-9]$/.test(cmd)) return this.setFocus(Number(cmd) - 1);
+    if (cmd === "improve") {
+      // rough idea → full prompt for the focused agent, put back in the input line to edit and send
+      const p = this.panes[this.focus];
+      const draft = t.slice(t.indexOf(" ") + 1).trim();
+      if (!p || !draft || draft === t) throw new Error("usage: /improve <your rough prompt>");
+      this.say("writing a better prompt…", 60_000);
+      const { improvePrompt } = await import("../core/improve.js");
+      const out = await improvePrompt(this.hub, p.name, draft);
+      this.input = out; // newlines stay (drawn as ⏎) and are sent as typed
+      this.cursor = Array.from(this.input).length;
+      this.say("improved prompt is in the input line: edit it, Enter sends", 8000);
+      return;
+    }
     switch (cmd) {
       case "help":
       case "?":
