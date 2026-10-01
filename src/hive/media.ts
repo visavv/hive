@@ -16,7 +16,7 @@ import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
 import type { HiveDb } from "./db.js";
 import { confine } from "../core/confine.js";
-import { budgetSetting, startOfToday } from "../core/budget.js";
+import { budgetSetting, isMediaProvider, startOfToday } from "../core/budget.js";
 
 const env = process.env;
 const MAX_IMAGE = 20_000_000;
@@ -29,17 +29,30 @@ const imageBase = () => (env.HIVE_IMAGE_BASE || "https://api.openai.com/v1").rep
 const elBase = () => (env.ELEVENLABS_BASE || "https://api.elevenlabs.io").replace(/\/+$/, "");
 
 /** Throws when today's media budget is used up. */
-export function checkMediaCap(db: HiveDb) {
+/** API calls a media request costs against the daily cap: one per voice clip or image (hive_image n=4 is 4). */
+export function mediaUnits(kind: string, p: any): number {
+  if (kind === "voices") return 0;
+  if (kind === "image" && !p?.edit) return Math.max(1, Math.min(4, Math.floor(Number(p?.n) || 1)));
+  return 1;
+}
+/**
+ * Would `units` more calls go over the daily cap? Calls already made today count,
+ * and so do media jobs claimed before this one (`jobId`) that are still running,
+ * so two jobs at once can't both take the last slot.
+ */
+export function checkMediaCap(db: HiveDb, units = 1, jobId?: number) {
   const cap = Number(budgetSetting(db, "media_daily") ?? "40");
   const used = db
     .usageSince(startOfToday())
-    .filter((u) => u.provider.startsWith("media:"))
+    .filter((u) => isMediaProvider(u.provider))
     .reduce((n, u) => n + u.turns, 0);
-  if (cap >= 0 && used >= cap) throw new Error(`daily media budget reached (${used}/${cap}); raise it with hive budget set media_daily=N`);
+  const reserved = jobId === undefined ? 0 : db.runningMedia(jobId).reduce((n, j) => n + mediaUnits(j.kind, JSON.parse(j.params)), 0);
+  if (cap >= 0 && used + reserved + units > cap)
+    throw new Error(`daily media budget reached (${used}${reserved ? ` + ${reserved} in progress` : ""}${units > 1 ? ` + ${units} asked` : ""} / ${cap}); raise it with hive budget set media_daily=N`);
 }
-/** Count one successful media call. */
-export function recordMedia(db: HiveDb, agent: string, kind: "tts" | "image") {
-  db.recordUsage(agent, `media:${kind}`, 0);
+/** Count successful media calls (one per file made). */
+export function recordMedia(db: HiveDb, agent: string, kind: "tts" | "image", count = 1) {
+  for (let i = 0; i < count; i++) db.recordUsage(agent, `media:${kind}`, 0);
 }
 
 export function insideFolder(cwd: string, p: string): string {
@@ -68,7 +81,8 @@ async function failText(r: Response, what: string): Promise<never> {
   throw new Error(`${what} ${r.status}: ${t}`);
 }
 
-export async function tts(o: { cwd: string; text: string; voice?: string; model?: string; name?: string }): Promise<{ path: string; bytes: number }> {
+/** ElevenLabs text → speech as mp3 bytes (no file, no budget: callers check and count). */
+export async function ttsAudio(o: { text: string; voice?: string; model?: string }): Promise<Buffer> {
   if (!ttsAvailable()) throw new Error("ELEVENLABS_API_KEY is not set");
   const text = o.text.trim();
   if (!text) throw new Error("text is empty");
@@ -82,8 +96,12 @@ export async function tts(o: { cwd: string; text: string; voice?: string; model?
     signal: AbortSignal.timeout(120_000),
   });
   if (!r.ok) await failText(r, "ElevenLabs");
-  const buf = Buffer.from(await r.arrayBuffer());
-  const path = outFile(o.cwd, o.name, text.slice(0, 40), ".mp3");
+  return Buffer.from(await r.arrayBuffer());
+}
+
+export async function tts(o: { cwd: string; text: string; voice?: string; model?: string; name?: string }): Promise<{ path: string; bytes: number }> {
+  const buf = await ttsAudio(o);
+  const path = outFile(o.cwd, o.name, o.text.trim().slice(0, 40), ".mp3");
   writeFileSync(path, buf);
   return { path, bytes: buf.length };
 }
@@ -163,12 +181,12 @@ export function mediaKinds(): string[] {
 }
 
 /** Run one media request from an agent. `cwd` is the agent's folder as the hub knows it. */
-export async function runMedia(db: HiveDb, agent: string, cwd: string, kind: string, p: any): Promise<string> {
+export async function runMedia(db: HiveDb, agent: string, cwd: string, kind: string, p: any, jobId?: number): Promise<string> {
   if (kind === "voices") return JSON.stringify(await voices(), null, 1);
   if (kind === "tts" && !ttsAvailable()) throw new Error("ELEVENLABS_API_KEY is not set");
   if (kind === "image" && !imageAvailable()) throw new Error("set HIVE_IMAGE_KEY (or OPENAI_API_KEY) to generate or edit images");
   // Check the cap first, count the call only when it succeeded (failures don't eat the budget).
-  checkMediaCap(db);
+  checkMediaCap(db, mediaUnits(kind, p), jobId);
   if (kind === "tts") {
     const r = await tts({ cwd, text: String(p.text ?? ""), voice: p.voice, name: p.name });
     recordMedia(db, agent, "tts");
@@ -178,7 +196,7 @@ export async function runMedia(db: HiveDb, agent: string, cwd: string, kind: str
     const files = p.edit
       ? await imageEdit({ cwd, image: String(p.image ?? ""), prompt: String(p.prompt ?? ""), mask: p.mask, size: p.size, name: p.name })
       : await imageGenerate({ cwd, prompt: String(p.prompt ?? ""), size: p.size, n: p.n, name: p.name });
-    recordMedia(db, agent, "image");
+    recordMedia(db, agent, "image", files.length);
     return `saved:\n${files.join("\n")}`;
   }
   throw new Error(`unknown media kind ${kind}`);

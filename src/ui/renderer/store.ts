@@ -217,7 +217,7 @@ class Store {
         this.jobs = ev.jobs;
         break;
       case "job":
-        this.push(ev.agent, { k: "notice", text: ev.text });
+        if (this.hasPane(ev.agent)) this.push(ev.agent, { k: "notice", text: ev.text });
         break;
       case "error":
         this.toast(ev.text, "error");
@@ -293,8 +293,17 @@ class Store {
     this.push(name, body);
   }
 
+  /** An agent shown in a pane (or one being opened). Others — verdict contenders and judges, headless job agents, closed panes — keep no transcript here. */
+  hasPane(name: string): boolean {
+    return this.layout.panes.some((p) => p.name === name);
+  }
+
   /** Returns true when the change matters beyond this pane's transcript. */
   private applyAgent(name: string, e: any): boolean {
+    if (!this.hasPane(name)) {
+      this.turnStart.delete(name);
+      return e.type === "status" || e.type === "exit" || e.type === "turn_end";
+    }
     const p = this.pane(name);
     const last = p.items[p.items.length - 1];
     switch (e.type) {
@@ -360,6 +369,7 @@ class Store {
       case "turn_end":
         this.push(name, { k: "turn", stopReason: e.stopReason, tokens: e.usage?.totalTokens, ts: Date.now() });
         this.turnEnded(name, e.stopReason);
+        for (const f of turnEndHooks) f(name, e.stopReason);
         return true;
       case "session":
         // Tool ids restart per session in some agents.
@@ -418,6 +428,13 @@ class Store {
     this.ready = true;
     this.changed();
   }
+}
+
+/** Called after a pane's agent finishes a turn (voice: speak the reply). */
+const turnEndHooks = new Set<(name: string, stopReason: string) => void>();
+export function onTurnEnd(fn: (name: string, stopReason: string) => void) {
+  turnEndHooks.add(fn);
+  return () => void turnEndHooks.delete(fn);
 }
 
 export const store = new Store();

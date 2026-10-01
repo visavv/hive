@@ -7,10 +7,11 @@
  *   daily_tokens.<provider> e.g. daily_tokens.claude               (default: unlimited)
  *   reserve_pct             stop automatic work when a subscription window
  *                           (e.g. Claude's 5-hour limit) is this full   (default: 85)
- *   max_concurrent          automatic runs at the same time        (default: 3)
+ *   max_concurrent          automatic turns at the same time: job runs and
+ *                           mail wake-ups, across hive processes   (default: 3)
  *   daily_tokens_api        per pay-per-token API provider (gemini-api, openrouter…)
  *                           without its own daily_tokens.<provider>   (default: 2,000,000)
- *   media_daily             image/voice API calls per day          (default: 40)
+ *   media_daily             image/voice/dictation API calls per day         (default: 40)
  *   paused                  "1" stops all automatic work           (default: off)
  */
 import type { HiveDb } from "../hive/db.js";
@@ -23,6 +24,9 @@ const DEFAULTS: Record<string, string> = { reserve_pct: "85", max_concurrent: "3
 function isApiProvider(provider: string): boolean {
   return !!AGENTS[provider]?.api;
 }
+
+/** usage_log rows that are media API calls (count toward media_daily, not tokens): images, voice clips, transcriptions. */
+export const isMediaProvider = (p: string) => p.startsWith("media:") || p.startsWith("stt:");
 
 export function budgetSetting(db: HiveDb, key: string): string | undefined {
   return db.getSetting(`budget.${key}`) ?? DEFAULTS[key];
@@ -68,6 +72,19 @@ export function checkAutomatic(db: HiveDb, provider: string, now = Date.now()): 
   return { ok: true };
 }
 
+/**
+ * max_concurrent: may another automatic turn start? Counts agents in an automatic
+ * turn in any hive process on this db, plus `running` (e.g. a scheduler's jobs
+ * still starting up); `self` (the agent asking) doesn't count.
+ */
+export function concurrencyGuard(db: HiveDb, running: Iterable<string> = [], self?: string): Guard {
+  const max = Number(budgetSetting(db, "max_concurrent") ?? "3");
+  const busy = new Set([...db.autoTurns(), ...running]);
+  if (self) busy.delete(self);
+  if (max > 0 && busy.size >= max) return { ok: false, reason: `${busy.size} automatic turns already running (max_concurrent=${max})`, until: Date.now() + 30_000 };
+  return { ok: true };
+}
+
 /** Tell the owner once per reason per day (mail → UI inbox badge and chat bridges). */
 export function notifyOnce(db: HiveDb, g: Guard & { ok: false }) {
   const key = `budget.notified.${new Date().toDateString()}.${g.reason.replace(/[\d,]+/g, "#").slice(0, 80)}`;
@@ -96,8 +113,8 @@ export function usageSummary(db: HiveDb, now = Date.now()): UsageSummary {
   const d1 = db.usageSince(startOfToday(now));
   const d7 = db.usageSince(now - 7 * 86_400_000);
   const limits = db.limits();
-  const names = new Set([...d7.map((u) => u.provider), ...limits.map((l) => l.provider)].filter((p) => !p.startsWith("media:")));
-  const mediaToday = d1.filter((u) => u.provider.startsWith("media:")).reduce((n, u) => n + u.turns, 0);
+  const names = new Set([...d7.map((u) => u.provider), ...limits.map((l) => l.provider)].filter((p) => !isMediaProvider(p)));
+  const mediaToday = d1.filter((u) => isMediaProvider(u.provider)).reduce((n, u) => n + u.turns, 0);
   const budget: Record<string, string> = {};
   for (const k of BUDGET_KEYS) {
     const v = budgetSetting(db, k);
@@ -125,8 +142,25 @@ export function usageSummary(db: HiveDb, now = Date.now()): UsageSummary {
   };
 }
 
+/**
+ * Bumped by every setBudget, so automatic work held back by the budget (mail
+ * wake-ups waiting for "tomorrow") re-checks right away instead of waiting
+ * out its held-until time.
+ */
+export function budgetRev(db: HiveDb): string {
+  return db.getSetting("budget_rev") ?? "0";
+}
+
+/** Held-back mail re-checks the budget at least this often (budgets changed by hand, a new day). */
+export const BUDGET_RECHECK_MS = 60_000;
+
 /** Validate and store one budget setting ("" clears it). Accepts 2m / 500k / 1_000. */
 export function setBudget(db: HiveDb, key: string, val: string) {
+  storeBudget(db, key, val);
+  db.setSetting("budget_rev", String(Number(budgetRev(db)) + 1));
+}
+
+function storeBudget(db: HiveDb, key: string, val: string) {
   if (!(BUDGET_KEYS as readonly string[]).includes(key) && !/^daily_tokens\.[\w-]+$/.test(key))
     throw new Error(`unknown budget key "${key}" (keys: ${BUDGET_KEYS.join(", ")}, daily_tokens.<provider>)`);
   const v = val.trim();

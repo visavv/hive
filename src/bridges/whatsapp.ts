@@ -57,6 +57,8 @@ export class WhatsAppTransport implements ChatTransport {
       }
     });
     sock.ev.on("connection.update", (u: any) => {
+      // A working connection starts the retry count over (20 in a row, not 20 in the bridge's life).
+      if (u?.connection === "open") this.reconnects = 0;
       if (u?.connection !== "close" || this.stopped) return;
       const code = u.lastDisconnect?.error?.output?.statusCode;
       if (code === 401) {

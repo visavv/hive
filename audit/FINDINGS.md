@@ -1,12 +1,12 @@
 # hive: cumulative findings register
 
-Cumulative register for passes 1–3 (branch `claude/execute-planned-features-loop-9amlre`). Pass 1 changed no product code. In passes 2 and 3, fixes were authorized and are listed per finding. The detailed write-ups below are from pass 1 unless marked otherwise; their "Remedy" sections are what was implemented.
+Cumulative register for passes 1–5 (passes 1–3 on branch `claude/execute-planned-features-loop-9amlre`). Pass 1 changed no product code. In passes 2 and 3, fixes were authorized and are listed per finding. The detailed write-ups below are from pass 1 unless marked otherwise; their "Remedy" sections are what was implemented.
 
 Severity: Critical / High / Medium / Low / Opportunity. Confidence: High = reproduced; Medium = supported by code reading; Low = hypothesis.
 
 ## Summary
 
-Passes: 1 (2026-09-30, commit e5d0908); 2 and 3 (2026-10-01, commits a4f18dc → dbd173d); 4 = fix round for the remaining items (2026-10-01). Fixes were authorized in pass 2 ("now fix audit gaps"), so each finding records what changed and which test verifies it. A finding is "fixed" only after a test or a hands-on re-check passed on the fixed code.
+Passes: 1 (2026-09-30, commit e5d0908); 2 and 3 (2026-10-01, commits a4f18dc → dbd173d); 4 = fix round for the remaining items (2026-10-01); 5 = security, terminal UI, CLI and setup-script review (2026-10-01, see [Pass 5](#pass-5-2026-10-01)). Fixes were authorized in pass 2 ("now fix audit gaps"), so each finding records what changed and which test verifies it. A finding is "fixed" only after a test or a hands-on re-check passed on the fixed code.
 
 | ID | Title | Sev. | Conf. | Found | Status (pass 3) | Verified by |
 |---|---|---|---|---|---|---|
@@ -42,17 +42,48 @@ Passes: 1 (2026-09-30, commit e5d0908); 2 and 3 (2026-10-01, commits a4f18dc →
 
 Disproved: pass 1 suspected "Ctrl+9 doesn't scroll in vertical layout". The cause was UX-001; Ctrl+9 works.
 
----|---|---|---|---|---|
-| SEC-001 | A repo's `.hive-skills/*.md` can request `policy: allow-all` | Medium | High | confirmed defect | open |
-| SEC-002 | Symlinks let API-agent file tools and media inputs leave the folder | Medium | High | confirmed defect | open |
-| COST-001 | No default token cap for pay-per-token API agents; agent chatter can burn tokens for hours | Medium | Medium | supported concern | open |
-| SEC-003 | Confused deputy: any agent can drive an `allow-all` agent through mail / `hive_followup` | Medium | Medium | supported concern (by design) | open |
-| BUG-001 | Skill `output:` check is fooled by a sibling folder sharing a prefix | Low | High | confirmed defect | open |
-| BUG-002 | Failed media calls (no key, API error) still count against `media_daily` and show as usage | Low | High | confirmed defect | open |
-| UX-001 | Add Agent accepts "owner": a dead pane whose Retry can never work | Low | High | confirmed defect | open |
-| UX-002 | Name validation message is the same for every error (length, spaces, unicode) | Low | High | confirmed | open |
-| UX-003 | `hive providers add` accepts a non-URL base; `hive doctor` shows ✓ for an unreachable API | Low | High | confirmed | open |
-| IDEA-001 | Trusted senders / per-agent mail allowlist | Opportunity | — | opportunity | proposed |
+## Pass 5 (2026-10-01)
+
+Security review of permission prompts and agent-to-agent reach, plus a review of `hive tui`, the CLI and the phone-access setup scripts. Items not fixed yet are being fixed on the core and UI branches.
+
+| ID | Title | Sev. | Conf. | Status | Verified by |
+|---|---|---|---|---|---|
+| SEC-005 | Permission prompt skipped for shell commands whose text names a hive tool (`rm -rf ~ && echo hive_status`), and for another MCP server's `mcp__evil__hive_send` | High | High | **fixed** in 4449f95: the whole title must be a hive tool, execute calls never match | test/fixes.ts |
+| SEC-003b | Unlinked agents can still reach allow-all agents through broadcasts (`*`) and groups they create themselves | Medium | Medium | in progress (core/UI branches) | — |
+| SEC-006 | Secrets (API keys, bridge tokens) passed on to agent processes in their environment | Medium | Medium | in progress (core/UI branches) | — |
+| TUI-001 | `hive tui <unknown team>`, an unknown `--agent`, or a stale `tui.json` entry threw after raw mode + alternate screen: broken terminal, and the stale layout failed every time | High | High | **fixed**: team/agent checked before the screen switch; bad layout entries skipped with a hint and dropped; terminal restored on every exit path | test/tui.ts; pty run |
+| TUI-002 | Multi-line paste: each line submitted separately, Tab moved focus | High | High | **fixed**: bracketed paste; a paste is one block in the prompt (newlines shown as ⏎, sent intact) | test/tui.ts |
+| TUI-003 | Tabs, ANSI escapes and control characters in agent output shifted pane borders | Medium | High | **fixed**: output sanitized before wrapping (tabs to 4-column stops) | test/tui.ts |
+| TUI-004 | Long input: cursor drawn on the wrong character; wide characters overflowed the line | Medium | High | **fixed**: horizontal window around the cursor in display columns | test/tui.ts |
+| TUI-005 | Cursor moved in UTF-16 units; Backspace after an emoji left a lone surrogate | Low | High | **fixed**: editing by code points | test/tui.ts |
+| TUI-006 | `/rm --forget [name]` failed (flag read as the name) | Low | High | **fixed** | test/tui.ts |
+| TUI-007 | `/verdict --judge` with no value, `/release` without id, `/link` and `/group` names unchecked, Esc recorded `/stop` in history, PgUp unbounded | Low | High | **fixed** | test/tui.ts (most) |
+| CLI-001 | Bad arguments (`--foo`, missing value, a prompt starting with `-`) printed a stack trace; no `--version` | Medium | High | **fixed**: one line plus a hint to use `--`; `hive --version` | manual |
+| CLI-002 | Expected errors (not a git repository, unknown worktree or skill) printed stack traces | Medium | High | **fixed**: message only; `HIVE_DEBUG=1` for the stack | manual |
+| CLI-003 | Stale help (recipes without squad, `hive job show`, worktree location); a wrong `--policy` reported as "could not start" | Low | High | **fixed**: help updated, `--policy` checked up front | manual |
+| OPS-001 | `setup-remote.sh --ssh-only-tailscale` with ufw: an existing `allow OpenSSH`/`allow 22` rule came before the deny, so SSH stayed open on every interface | Medium | High | **fixed**: those allow rules removed, the tailscale0 allow inserted first; firewalld also drops port 22 and the public zone's ssh | dry run, code reading |
+| OPS-002 | `setup-remote-windows.ps1`: Administrators looked up by name (localised on non-English Windows), so the wrong authorized_keys file was named | Medium | High | **fixed**: by SID S-1-5-32-544 | code reading |
+| OPS-003 | `setup-remote-windows.ps1`: DefaultShell could be the WindowsApps `pwsh` alias, which sshd can't start (SSH sessions close at once) | Medium | Medium | **fixed**: `%ProgramFiles%\PowerShell\7\pwsh.exe` if present, else Windows PowerShell | code reading |
+| OPS-004 | `setup-remote.sh`: `dnf install curl` conflicts with curl-minimal; relative `--project` broke the systemd unit; `--project` without a value crashed | Medium | High | **fixed** | dry run |
+| OPS-005 | `.ps1` files are UTF-8 without BOM: Windows PowerShell 5.1 showed mojibake for → and · | Low | High | **fixed**: ASCII only | grep |
+| DOC-001 | docs/COMPARISON.md and the pass-1 table below still listed SEC-001/002/003 as open | Low | High | **fixed** | — |
+
+## Pass 1 register (as found, 2026-09-30)
+
+The original pass-1 table, kept for history. "Status now" is the current state; details are in the Summary above.
+
+| ID | Title | Sev. | Conf. | Classification (pass 1) | Status now |
+|---|---|---|---|---|---|
+| SEC-001 | A repo's `.hive-skills/*.md` can request `policy: allow-all` | Medium | High | confirmed defect | fixed (passes 2–3) |
+| SEC-002 | Symlinks let API-agent file tools and media inputs leave the folder | Medium | High | confirmed defect | fixed (passes 2–3) |
+| COST-001 | No default token cap for pay-per-token API agents; agent chatter can burn tokens for hours | Medium | Medium | supported concern | fixed (passes 2–3) |
+| SEC-003 | Confused deputy: any agent can drive an `allow-all` agent through mail / `hive_followup` | Medium | Medium | supported concern (by design) | fixed (pass 4); follow-up SEC-003b in pass 5 |
+| BUG-001 | Skill `output:` check is fooled by a sibling folder sharing a prefix | Low | High | confirmed defect | fixed (passes 2–3) |
+| BUG-002 | Failed media calls (no key, API error) still count against `media_daily` and show as usage | Low | High | confirmed defect | fixed (passes 2–3) |
+| UX-001 | Add Agent accepts "owner": a dead pane whose Retry can never work | Low | High | confirmed defect | fixed (pass 2) |
+| UX-002 | Name validation message is the same for every error (length, spaces, unicode) | Low | High | confirmed | fixed (passes 2–3) |
+| UX-003 | `hive providers add` accepts a non-URL base; `hive doctor` shows ✓ for an unreachable API | Low | High | confirmed | fixed (passes 2–3) |
+| IDEA-001 | Trusted senders / per-agent mail allowlist | Opportunity | — | opportunity | done as links |
 | IDEA-002 | USD cost estimate for API providers in the Usage tab | Opportunity | — | opportunity | proposed |
 | IDEA-003 | Per-pane mute, and "ready" pushed to Discord/WhatsApp | Opportunity | — | opportunity | proposed |
 | IDEA-004 | Prompt editor: "use result" round trip from prompt-engineer | Opportunity | — | opportunity | proposed |

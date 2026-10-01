@@ -20,11 +20,16 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import * as acp from "@agentclientprotocol/sdk";
 import type * as schema from "@agentclientprotocol/sdk";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { AGENTS, groupSpawn, killTree, resolveEnv, spawnSpec, type AgentDef } from "./agents.js";
+import { confine } from "./confine.js";
+import { AGENTS, agentEnv, groupSpawn, killTree, spawnSpec, type AgentDef } from "./agents.js";
 import { nodeEntry } from "./paths.js";
 import { AUTH_STATUS_UPDATE, authLabel, type AuthStatus } from "./doctor.js";
 import { HiveDb } from "../hive/db.js";
 import { TRUST_POLICY } from "./trust.js";
+import * as ledger from "./ledger.js";
+import { projectRoot } from "./home.js";
+import { BUDGET_RECHECK_MS, budgetRev } from "./budget.js";
+import { resolveMcpServers } from "./mcp-extra.js";
 
 export type PermissionPolicy = "ask" | "allow-reads" | "allow-all" | "reject-all";
 export const POLICIES: PermissionPolicy[] = ["ask", "allow-reads", "allow-all", "reject-all"];
@@ -62,11 +67,15 @@ export interface SessionOptions {
    */
   /** Media tools the hub can run for this agent (tts, image). */
   mediaKinds?: string[];
+  /** Device tools to offer (browser, android); the hub runs them (src/hive/devices.ts). */
+  deviceKinds?: string[];
   autoGuard?: () => { ok: true } | { ok: false; reason: string; until?: number };
   /** Mail wake-ups allowed per agent per 10 minutes (stops agent ping-pong). Default 30. */
   maxWakesPer10Min?: number;
   /** Max ms to wait for the agent to initialize and open a session. */
   startTimeoutMs?: number;
+  /** Extra MCP servers by name from <HIVE_HOME>/mcp.json (added to the type's own; see mcp-extra.ts). */
+  mcp?: string[];
 }
 
 export interface TurnResult {
@@ -202,9 +211,10 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
   }
 
   async start(): Promise<void> {
-    const env: NodeJS.ProcessEnv = { ...process.env, ...resolveEnv(this.def) };
-    // Media keys are only used by the hub (media.ts); agents don't need to see them.
-    for (const k of ["ELEVENLABS_API_KEY", "HIVE_IMAGE_KEY"]) if (!JSON.stringify(this.def.env ?? {}).includes(k)) delete env[k];
+    // An unknown --mcp name fails here, before anything is spawned.
+    this.extraServers();
+    // Bridge tokens, media keys and other providers' keys stay in the hive process.
+    const env = agentEnv(this.def);
     const spec = spawnSpec(this.def);
     this.proc = spawn(spec.command, spec.args, {
       cwd: this.cwd,
@@ -374,7 +384,7 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
   /** If idle and mail is waiting, deliver it. Returns true if a turn ran. */
   async poke(): Promise<boolean> {
     if (this.busy || this.closed) return false;
-    if (!this.queue.length && (Date.now() < this.nextWakeAt || this.db.unreadCount(this.name) === 0)) return false;
+    if (!this.queue.length && ((Date.now() < this.nextWakeAt && !this.budgetChanged()) || this.db.unreadCount(this.name) === 0)) return false;
     await this.drain();
     return true;
   }
@@ -388,6 +398,18 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
     for (const abort of this.pendingAsks) abort();
     this.pendingAsks.clear();
     await this.ctx.notify(acp.methods.agent.session.cancel, { sessionId: this.sessionIdValue });
+  }
+
+  private projectPath?: string;
+  /** The model this agent is running, for the usage ledger (API agents: their configured model). */
+  modelName(): string | undefined {
+    const o = this.configOptions.find((c: any) => c.category === "model" || c.id === "model") as any;
+    const v = o?.currentValue;
+    if (v != null) {
+      const label = o.options?.find?.((x: any) => x.value === v)?.name;
+      return String(v === "default" && label ? label : v);
+    }
+    return this.def.env?.HIVE_API_MODEL || undefined;
   }
 
   /** Change a model/effort/mode selector the agent advertised via configOptions. */
@@ -418,6 +440,22 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
 
   // ---- internals ----
 
+  /** Names of the extra MCP servers this agent gets (type's + its own), for the UI. */
+  get extraMcp(): string[] {
+    try {
+      return this.extraServers().map((s) => s.name);
+    } catch {
+      return [];
+    }
+  }
+  private extraServers() {
+    return resolveMcpServers(this.def.mcp, this.opts.mcp);
+  }
+  /** hive's own server first, then the extra ones (resolved at every session open, so mcp.json edits apply). */
+  private mcpServers(): schema.McpServer[] {
+    return [this.hiveMcp(), ...this.extraServers()];
+  }
+
   private hiveMcp(): schema.McpServer {
     return {
       name: "hive",
@@ -428,6 +466,7 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
         { name: "HIVE_AGENT", value: this.name },
         // Which media tools to offer (the hub runs them; no keys are passed).
         ...(this.opts.mediaKinds?.length ? [{ name: "HIVE_MEDIA", value: this.opts.mediaKinds.join(",") }] : []),
+        ...(this.opts.deviceKinds?.length ? [{ name: "HIVE_DEVICES", value: this.opts.deviceKinds.join(",") }] : []),
       ],
     };
   }
@@ -446,7 +485,7 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
           const r = await ctx.request(acp.methods.agent.session.resume, {
             sessionId: resumeId,
             cwd: this.cwd,
-            mcpServers: [this.hiveMcp()],
+            mcpServers: this.mcpServers(),
           });
           cfg = r?.configOptions;
           sid = resumeId;
@@ -461,7 +500,7 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
           const r = await ctx.request(acp.methods.agent.session.load, {
             sessionId: resumeId,
             cwd: this.cwd,
-            mcpServers: [this.hiveMcp()],
+            mcpServers: this.mcpServers(),
           });
           cfg = r?.configOptions;
           sid = resumeId;
@@ -474,7 +513,7 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
       }
     }
     if (!sid) {
-      const r = await ctx.request(acp.methods.agent.session.new, { cwd: this.cwd, mcpServers: [this.hiveMcp()] });
+      const r = await ctx.request(acp.methods.agent.session.new, { cwd: this.cwd, mcpServers: this.mcpServers() });
       sid = r.sessionId;
       cfg = r.configOptions;
     }
@@ -498,6 +537,13 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
   private replayingId?: string;
   /** Mail delivery waits until this time (backoff after failures / ignored mail / budget). */
   private nextWakeAt = 0;
+  /** budgetRev() when mail was last held back by the budget (undefined: not held). */
+  private budgetHeldRev?: string;
+  /** Mail is held by the budget and the owner changed a budget setting since. */
+  private budgetChanged(): boolean {
+    return this.budgetHeldRev !== undefined && this.budgetHeldRev !== budgetRev(this.db);
+  }
+  private heldWhy?: string;
   private failStreak = 0;
   /** Consecutive wake-ups that didn't reduce unread mail. */
   private ignoredStreak = 0;
@@ -568,15 +614,24 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
         await this.runTurn(queued);
         continue;
       }
-      if (Date.now() < this.nextWakeAt) break;
+      // Held by the budget: a budget change (setBudget) re-checks at once.
+      if (Date.now() < this.nextWakeAt && !this.budgetChanged()) break;
+      this.budgetHeldRev = undefined;
       if (this.db.unreadCount(this.name) === 0) break;
       const guard = this.opts.autoGuard?.();
       if (guard && !guard.ok) {
         // Budget / subscription reserve: mail waits (what you type still runs).
-        this.nextWakeAt = guard.until ?? Date.now() + 10 * 60_000;
-        this.emitEv({ type: "notice", text: `mail delivery held: ${guard.reason}` });
+        // Re-check every minute rather than sleeping until `until` (often "tomorrow"):
+        // the owner may raise the budget, or the window may reset early.
+        this.nextWakeAt = Math.min(guard.until ?? Infinity, Date.now() + BUDGET_RECHECK_MS);
+        this.budgetHeldRev = budgetRev(this.db);
+        // Once per reason (it re-checks every minute).
+        const why = guard.reason.replace(/[\d,]+/g, "#");
+        if (why !== this.heldWhy) this.emitEv({ type: "notice", text: `mail delivery held: ${guard.reason}` });
+        this.heldWhy = why;
         break;
       }
+      this.heldWhy = undefined;
       const next = this.mailWake();
       if (!next) break;
       const before = this.db.unreadCount(this.name);
@@ -624,6 +679,7 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
     }
     this.busy = true;
     this.automatic = automatic;
+    if (automatic) this.db.setAutoTurn(this.name, true);
     this.lastActivity = Date.now();
     this.dbStatus(this.name, "working", text.slice(0, 120));
     this.emitEv({ type: "status", status: "working", note: text.slice(0, 120) });
@@ -674,12 +730,29 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
       this.lastReply = this.replyText;
       this.emitEv({ type: "turn_end", stopReason: result.stopReason, usage: result.usage });
       if (this.db.db.open) {
+        if (this.automatic) this.db.setAutoTurn(this.name, false);
         const tokens = (result.usage as any)?.totalTokens ?? 0;
         const cost = Math.max(0, this.costTotal - this.costLogged);
         this.costLogged = this.costTotal;
         if (tokens || cost)
           try {
             this.db.recordUsage(this.name, this.def.id, tokens, cost, this.automatic);
+          } catch {}
+        if (tokens || cost)
+          try {
+            const u = result.usage as any;
+            ledger.record({
+              project: (this.projectPath ??= projectRoot(this.opts.cwd)),
+              agent: this.name,
+              kind: this.def.id,
+              model: this.modelName(),
+              role: this.opts.role,
+              automatic: this.automatic,
+              tokens,
+              inputTokens: u?.inputTokens,
+              outputTokens: u?.outputTokens,
+              costUsd: cost,
+            });
           } catch {}
         if (this.replyText) this.dbLog(this.name, "reply", { text: this.replyText });
         this.dbLog(this.name, "turn_end", { stopReason: result.stopReason, usage: result.usage, error: result.error });
@@ -757,6 +830,8 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
   /** Agents must send absolute paths; refuse anything else. */
   private checkPath(p: string): string {
     if (!isAbsolute(p)) throw new Error(`path must be absolute: ${p}`);
+    // A chat-only agent has no business with files outside its folder (other policies ask per tool call).
+    if (this.policy === "reject-all") return confine(this.cwd, p);
     return p;
   }
 
@@ -914,8 +989,12 @@ export function errorText(e: unknown): string {
 
 /** Calls to hive's own MCP tools (mail, blackboard, status, read-only git). */
 export function isHiveTool(req: schema.RequestPermissionRequest): boolean {
-  const title = String(req.toolCall.title ?? "");
+  // Only the hive MCP server's own tools, matched on the WHOLE name: a shell command's title is the
+  // command itself ("rm -rf ~ && echo hive_status"), so a substring match would let it skip the prompt.
+  if (req.toolCall.kind === "execute") return false;
   const ri = (req.toolCall as any).rawInput ?? {};
-  const name = `${title} ${typeof ri.tool === "string" ? ri.tool : ""} ${typeof ri.name === "string" ? ri.name : ""}`;
-  return /(^|[\s_:.])(mcp__hive__)?hive_(agents|send|inbox|thread|bb_get|bb_set|bb_list|bb_delete|status|diff|log|group|followup)\b/.test(name);
+  const re = /^(mcp__hive__|hive[.:/]\s?)?hive_(agents|send|inbox|thread|bb_get|bb_set|bb_list|bb_delete|status|diff|log|group|followup|card_add|card_move|card_list)(\s*\(MCP\))?$/;
+  // rawInput is written by the agent, so it only counts together with the server name (codex-style calls)
+  const fromRaw = typeof ri.server === "string" && ri.server === "hive" && typeof ri.tool === "string" && re.test(ri.tool.trim());
+  return (typeof req.toolCall.title === "string" && re.test(req.toolCall.title.trim())) || fromRaw;
 }

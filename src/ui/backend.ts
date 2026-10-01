@@ -6,9 +6,12 @@
  *
  *   node backend.js --db .hive/hive.db [--cwd DIR]
  */
+import * as ledger from "../core/ledger.js";
+import { board } from "../hive/kanban.js";
+import { improvePrompt } from "../core/improve.js";
 import { parseArgs } from "node:util";
 import { createInterface } from "node:readline";
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import type * as schema from "@agentclientprotocol/sdk";
@@ -27,7 +30,15 @@ import { runSkill, skillAgentName } from "../core/skill-run.js";
 import { BB_PREFIX, BRANCHES } from "../core/watch.js";
 import { setBudget, usageSummary } from "../core/budget.js";
 import { applyVerdict, runVerdict } from "../core/verdict.js";
-import type { AccountView, AgentView, BackendEvent, ElicitationAsk, GroupView, JobView, Layout, Methods, PermissionAsk, Request } from "./protocol.js";
+import { codeDiff, listFiles, readCodeFile } from "../core/code.js";
+import { ExplainWatcher } from "../core/learn.js";
+import { confine } from "../core/confine.js";
+import { checkAutomatic, concurrencyGuard, notifyOnce } from "../core/budget.js";
+import type { AccountView, AgentView, BackendEvent, DeviceKind, DeviceMethods, ElicitationAsk, GroupView, JobView, Layout, Methods, PermissionAsk, Request } from "./protocol.js";
+import { setSttPrefs, speakFor, sttStatus, transcribeFor, type SttPrefs } from "../hive/voice.js";
+import { ttsAvailable, voices as listVoices } from "../hive/media.js";
+import { projectRoot } from "../core/home.js";
+import { mcpServerList, parseMcpNames } from "../core/mcp-extra.js";
 
 // stdout is the protocol channel: keep stray logging off it.
 const out = process.stdout.write.bind(process.stdout);
@@ -96,8 +107,9 @@ function toolDetail(req: schema.RequestPermissionRequest): string | undefined {
 
 /** Tiny line diff for previews (prefix-based; the renderer does the same for tool cards). */
 function diffLines(a: string, b: string): string {
-  const A = a.split("\n");
-  const B = b.split("\n");
+  // a new or deleted file has no lines on that side, not one empty line
+  const A = a ? a.split("\n") : [];
+  const B = b ? b.split("\n") : [];
   let i = 0;
   while (i < A.length && i < B.length && A[i] === B[i]) i++;
   let j = 0;
@@ -193,8 +205,13 @@ const hub = new Hub({
     if (e.type === "status" || e.type === "context" || e.type === "config" || e.type === "exit" || e.type === "auth" || e.type === "session")
       schedulePush();
     if (e.type === "exit") dropPending(agent);
+    learnEvent(agent, e);
   },
 });
+// dictation provider / model / language the owner picked in the app
+try {
+  setSttPrefs(JSON.parse(hub.db.getSetting("voice.stt") ?? "{}"));
+} catch {}
 const scheduler = new Scheduler({
   hub,
   closeIdleAgents: true,
@@ -219,16 +236,28 @@ const scheduler = new Scheduler({
 });
 
 const policies = new Map<string, AgentView["policy"]>();
-const branches = new Map<string, { at: number; branch?: string }>();
+/**
+ * Git branch per agent folder, refreshed in the background (at most every 30s)
+ * so the 1s agent push never blocks streaming on a git process.
+ */
+const branches = new Map<string, { at: number; branch?: string; busy?: boolean }>();
 function branchOf(cwd: string): string | undefined {
   const hit = branches.get(cwd);
-  if (hit && Date.now() - hit.at < 15_000) return hit.branch;
-  let branch: string | undefined;
-  try {
-    branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], windowsHide: true }).trim();
-  } catch {}
-  branches.set(cwd, { at: Date.now(), branch });
-  return branch;
+  if (hit && (hit.busy || Date.now() - hit.at < 30_000)) return hit.branch;
+  const entry = { at: Date.now(), branch: hit?.branch, busy: true };
+  branches.set(cwd, entry);
+  execFile("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd, encoding: "utf8", windowsHide: true }, (err, stdout) => {
+    const branch = err ? undefined : stdout.trim() || undefined;
+    const changed = branch !== entry.branch;
+    branches.set(cwd, { at: Date.now(), branch });
+    if (changed) schedulePush();
+  });
+  return entry.branch;
+}
+
+/** Timer work must never take the backend down (e.g. SQLITE_BUSY): log it and carry on. */
+function logError(where: string, e: unknown) {
+  console.error(`[hive backend] ${where}:`, e instanceof Error ? (e.stack ?? e.message) : e);
 }
 
 function view(s: AgentSession): AgentView {
@@ -259,16 +288,24 @@ function view(s: AgentSession): AgentView {
     auth: s.authStatus ? (s.authStatus.kind === "none" ? `not logged in${s.authStatus.detail ? ` · ${s.authStatus.detail}` : ""}` : (s.authStatus.label ?? s.authStatus.kind)) : undefined,
     jobs: hub.db.listJobs(false).filter((j) => j.agent === s.name).length,
     branch: branchOf(s.cwd),
+    mcp: s.extraMcp,
   };
 }
 
 function pushAgents() {
   pushTimer = undefined;
+  try {
+    pushAgentsNow();
+  } catch (e) {
+    logError("pushAgents", e);
+  }
+}
+function pushAgentsNow() {
   if (!hub.db.db.open) return;
   const others = hub.db
     .listAgents()
     // Verdict contenders/judges live in the verdict window, not the sidebar.
-    .filter((a) => !hub.sessions.has(a.name) && a.kind && !a.role?.startsWith("verdict #"))
+    .filter((a) => !hub.sessions.has(a.name) && a.kind && !a.role?.startsWith("verdict #") && !a.role?.endsWith("(helper)"))
     .map((a) => {
       const status = hub.db.effectiveStatus(a);
       return {
@@ -299,7 +336,12 @@ const groupView = (name: string) => groupViews().find((g) => g.name === name);
 let lastOwnerUnread = -1;
 function pushOwnerMail(force = false) {
   if (!hub.db.db.open) return;
-  const unread = hub.db.inbox("owner", true, 500);
+  let unread: ReturnType<typeof hub.db.inbox>;
+  try {
+    unread = hub.db.inbox("owner", true, 500);
+  } catch (e) {
+    return logError("pushOwnerMail", e);
+  }
   if (!force && unread.length === lastOwnerUnread) return;
   const grew = unread.length > lastOwnerUnread && lastOwnerUnread >= 0;
   lastOwnerUnread = unread.length;
@@ -308,6 +350,13 @@ function pushOwnerMail(force = false) {
 }
 
 function pushJobs() {
+  try {
+    pushJobsNow();
+  } catch (e) {
+    logError("pushJobs", e);
+  }
+}
+function pushJobsNow() {
   if (!hub.db.db.open) return;
   const jobs: JobView[] = hub.db.listJobs(true).slice(-50).map((j) => ({
     id: j.id,
@@ -374,8 +423,146 @@ async function checkAccounts(): Promise<AccountView[]> {
   accountsCache = { at: Date.now(), rows };
   return rows;
 }
+// ---- code view + teacher (read-only file access, "explain every change") ----
+
+/** The folder a code view request reads: an agent's folder, a known folder, or the project. */
+function codeRoot(p: { agent?: string; dir?: string }): string {
+  if (p.agent) {
+    const cwd = hub.sessions.get(p.agent)?.cwd ?? hub.db.getAgent(p.agent)?.cwd;
+    if (!cwd) throw new Error(`no agent "${p.agent}"`);
+    return cwd;
+  }
+  if (!p.dir) return defaultCwd;
+  // Only the project and agents' folders (and what's inside them) can be browsed.
+  const roots = new Set([defaultCwd, ...[...hub.sessions.values()].map((s) => s.cwd), ...hub.db.listAgents().map((a) => a.cwd).filter(Boolean)]);
+  for (const r of roots)
+    try {
+      if (existsSync(r)) return confine(r, resolve(p.dir), p.dir);
+    } catch {}
+  throw new Error(`${p.dir} is outside the project and the agents' folders`);
+}
+
+const EXPLAIN_KEY = "learn.explain.";
+const explainOn = (agent: string) => hub.db.db.open && hub.db.getSetting(EXPLAIN_KEY + agent) === "1";
+
+/** The running teacher: an agent started from the teacher preset (or with the role "teacher"). */
+function teacherSession(): AgentSession | undefined {
+  const all = [...hub.sessions.values()];
+  return all.find((s) => hub.db.getAgent(s.name)?.preset === "teacher") ?? all.find((s) => s.role === "teacher");
+}
+
+const explain = new ExplainWatcher({
+  isOn: explainOn,
+  cwdOf: (a) => hub.sessions.get(a)?.cwd,
+  onError: (a, e) => logError(`explain changes (${a})`, e),
+  // Automatic work: the budget guard and max_concurrent apply, like job runs and mail wake-ups.
+  async deliver(prompt, from) {
+    const t = teacherSession();
+    if (!t) return "no-teacher";
+    if (t.name === from) return "sent";
+    const g = checkAutomatic(hub.db, t.def.id);
+    if (!g.ok) {
+      notifyOnce(hub.db, g);
+      send({ event: "agent", agent: t.name, e: { type: "notice", text: `explaining ${from}'s changes held back: ${g.reason}` } });
+      return "held";
+    }
+    if (!concurrencyGuard(hub.db, [], t.name).ok) return "held";
+    void t.runOnce(prompt, { automatic: true }).catch((e) => send({ event: "error", text: `${t.name}: ${e?.message ?? e}` }));
+    return "sent";
+  },
+});
+
+function learnEvent(agent: string, e: SessionEvent) {
+  try {
+    if (e.type === "prompt") explain.turnStart(agent);
+    else if (e.type === "turn_end") void explain.turnEnd(agent).catch((err) => logError("explain changes", err));
+  } catch (err) {
+    logError("explain changes", err);
+  }
+}
+
+type Handlers = { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promise<ReturnType<Methods[K]>> | ReturnType<Methods[K]> };
+const codeHandlers: Pick<Handlers, "listFiles" | "readFile" | "fileDiff" | "explainChanges"> = {
+  listFiles: (p) => listFiles(codeRoot(p)),
+  readFile: (p) => readCodeFile(codeRoot(p), need(p.path, "path")),
+  fileDiff: (p) => codeDiff(codeRoot(p)),
+  explainChanges({ agent, on }) {
+    if (agent !== undefined && on !== undefined) {
+      if (!hub.db.getAgent(agent) && !hub.sessions.has(agent)) throw new Error(`no agent "${agent}"`);
+      hub.db.setSetting(EXPLAIN_KEY + agent, on ? "1" : null);
+      if (!on) explain.drop(agent);
+    }
+    const agents = Object.entries(hub.db.settings(EXPLAIN_KEY))
+      .filter(([, v]) => v === "1")
+      .map(([k]) => k.slice(EXPLAIN_KEY.length));
+    return { agents, teacher: teacherSession()?.name };
+  },
+};
+
+// ---- device panes: sandboxed browser and Android (src/hive/devices.ts) ----
+// The hub owns the devices; panes watch them as frame streams (only while watched).
+const devices = hub.devices!;
+const watching = new Set<DeviceKind>();
+const FPS: Record<DeviceKind, number> = { browser: 8, android: 3 };
+devices.on("frame", (device: DeviceKind, frame) => {
+  if (watching.has(device)) send({ event: "device_frame", device, frame });
+});
+devices.on("state", (device: DeviceKind, state) => send({ event: "device_state", device, state } as BackendEvent));
+devices.on("activity", (device: DeviceKind, agent: string, action: string) => send({ event: "device_activity", device, agent, action }));
+devices.on("problem", (device: DeviceKind, text: string) => send({ event: "device_problem", device, text }));
+const deviceHandlers: { [K in keyof DeviceMethods]: (p: Parameters<DeviceMethods[K]>[0]) => Promise<ReturnType<DeviceMethods[K]>> | ReturnType<DeviceMethods[K]> } = {
+  async deviceWatch({ device, on }) {
+    if (device !== "browser" && device !== "android") throw new Error(`unknown device ${device}`);
+    if (on) watching.add(device);
+    else watching.delete(device);
+    if (device === "browser") await devices.browser.watch(on ? FPS.browser : 0);
+    else devices.android.watch(on ? FPS.android : 0);
+  },
+  browserState: () => devices.browser.state(),
+  browserOpen: ({ url }) => devices.browser.open(url),
+  browserNav: ({ action }) => {
+    if (!["back", "forward", "reload", "stop"].includes(action)) throw new Error(`unknown action ${action}`);
+    return devices.browser.nav(action);
+  },
+  browserInput: (p) => devices.browser.input(p),
+  async browserSettings({ persistent }) {
+    await devices.setPersistent(!!persistent);
+    return devices.browser.state();
+  },
+  browserClose: () => devices.browser.close(),
+  androidState: () => devices.android.state(),
+  async androidSelect({ serial }) {
+    await devices.android.select(serial ?? undefined);
+    return devices.android.state();
+  },
+  async androidInput(p) {
+    const a = devices.android;
+    if (p.type === "tap") await a.tap(p.x, p.y);
+    else if (p.type === "swipe") await a.swipe(p.x1, p.y1, p.x2, p.y2, p.ms);
+    else if (p.type === "text") await a.text(String(p.text ?? ""));
+    else if (p.type === "key") await a.key(String(p.key ?? ""));
+    else throw new Error("unknown input");
+  },
+  async androidAction({ action, value }) {
+    const a = devices.android;
+    if (action === "rotate") return a.rotate();
+    // The owner may install any APK path they choose (agents only from their own folder).
+    if (action === "install") return a.install(need(value, "apk path"));
+    if (action === "launch") return a.launch(need(value, "package"));
+    if (action === "startAvd") {
+      a.startAvd(need(value, "emulator name"));
+      return `starting ${value}… it shows up in the device list once booted`;
+    }
+    throw new Error(`unknown action ${action}`);
+  },
+};
+
 const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promise<ReturnType<Methods[K]>> | ReturnType<Methods[K]> } = {
   getState: () => handlersExtra.getState(),
+  ...codeHandlers,
+  ...deviceHandlers,
+  // ---- creator ----
+  mcpServers: () => mcpServerList(),
   async addAgent(p) {
     const name = need(p.name, "name").trim();
     if (!/^[\w.-]{1,40}$/.test(name)) throw new Error(`name must be letters, digits, _ . - (got "${name}")`);
@@ -397,6 +584,7 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
       briefing: r?.briefing,
       worktree: p.worktree ?? r?.worktree ?? false,
       resume: p.resume ?? true,
+      mcp: p.mcp ? parseMcpNames(p.mcp) : undefined,
     });
     if (p.startJob && r?.job) {
       const j = r.job;
@@ -574,6 +762,29 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
   usage() {
     return usageSummary(hub.db);
   },
+  async improvePrompt({ name, draft }) {
+    return { prompt: await improvePrompt(hub, name, draft) };
+  },
+  board({ done, project, q }) {
+    const b = board();
+    const all = b.list({ done: true });
+    return { cards: b.list({ done, project, q }), counts: b.counts(), projects: [...new Set(all.map((c) => c.project).filter(Boolean))].sort() };
+  },
+  cardAdd(p) {
+    return board().add({ ...p, source: "owner" });
+  },
+  cardMove({ id, col, before }) {
+    return board().move(id, col, before);
+  },
+  cardUpdate({ id, ...p }) {
+    return board().update(id, p);
+  },
+  cardRemove({ id }) {
+    return board().remove(id);
+  },
+  stats({ by, filter }) {
+    return { ...ledger.stats(by, filter ?? {}), facets: ledger.facets(filter ?? {}) };
+  },
   startVerdict({ prompt, kinds, judge, judgeModel, mode, policy }) {
     // Runs in the background; progress arrives as "verdict" events. Resolves once it has an id.
     return new Promise<{ id: number }>((res, rej) => {
@@ -701,12 +912,37 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
     hub.db.markRead(hub.db.inbox("owner", true, 500).map((m) => m.id), "owner");
     pushOwnerMail(true);
   },
+  // ---- voice (src/hive/voice.ts) ----
+  transcribe({ audio, mime, seconds, agent }) {
+    const cwd = (agent && hub.sessions.get(agent)?.cwd) || defaultCwd;
+    return transcribeFor(hub.db, { audio, mime, seconds, agent, project: projectRoot(cwd) });
+  },
+  speak({ agent, text, voice }) {
+    const cwd = hub.sessions.get(agent)?.cwd || defaultCwd;
+    return speakFor(hub.db, { agent: need(agent, "agent"), text, voice: voice || undefined, project: projectRoot(cwd) });
+  },
+  setStt(p) {
+    // the owner's choice of dictation provider / model / language (keys stay in the environment)
+    const prov = p.provider ?? "auto";
+    if (prov !== "auto" && !sttStatus().providers.some((x) => x.id === prov)) throw new Error(`unknown dictation provider ${prov}`);
+    const prefs: SttPrefs = { provider: prov as SttPrefs["provider"], model: (p.model ?? "").trim().slice(0, 120), language: (p.language ?? "").trim().slice(0, 20) };
+    hub.db.setSetting("voice.stt", JSON.stringify(prefs));
+    setSttPrefs(prefs);
+    return { stt: sttStatus(), tts: ttsAvailable() };
+  },
+  voiceStatus() {
+    return { stt: sttStatus(), tts: ttsAvailable() };
+  },
+  voiceList() {
+    return listVoices();
+  },
 };
 
 function readyEvent(): Extract<BackendEvent, { event: "ready" }> {
   return {
     event: "ready",
-    kinds: Object.values(AGENTS).map((a) => ({
+    // the mock agent is for tests (HIVE_SHOW_MOCK=1); users never pick it
+    kinds: Object.values(AGENTS).filter((a) => a.id !== "mock" || process.env.HIVE_SHOW_MOCK === "1").map((a) => ({
       id: a.id,
       label: a.api ? `${a.label} · API` : a.label,
       api: a.api,
@@ -760,6 +996,7 @@ let closing = false;
 async function shutdown() {
   if (closing) return;
   closing = true;
+  explain.close();
   await scheduler.stop();
   await hub.close();
   process.exit(0);
@@ -767,6 +1004,12 @@ async function shutdown() {
 rl.on("close", () => void shutdown());
 process.on("SIGTERM", () => void shutdown());
 process.on("SIGINT", () => void shutdown());
+// One failed callback (a busy database, a dying agent process) must not end every session in the window.
+process.on("uncaughtException", (e: any) => {
+  logError("uncaught", e);
+  if (e?.code === "EPIPE") void shutdown(); // the window is gone
+});
+process.on("unhandledRejection", (e) => logError("unhandled rejection", e));
 
 hub.run();
 scheduler.start();

@@ -1,4 +1,4 @@
-/** Renders a live hive tui session (mock agents) to audit/evidence/tui-squad.png. Not part of npm test. */
+/** Renders a live hive tui session (demo agents, no model calls) to docs/screenshots/13-tui.png. Not part of npm test. */
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { writeFileSync, mkdirSync, rmSync } from "node:fs";
@@ -6,21 +6,29 @@ import { chromium } from "playwright-core";
 import { Hub } from "../src/core/hub.ts";
 import { TuiController } from "../src/tui/controller.ts";
 import { render } from "../src/tui/render.ts";
-const S = "/tmp/claude-0/-home-user-hargent/da434d54-30be-57ef-b11a-02cf7debcf58/scratchpad/tuishot";
+const S = join(process.cwd(), ".hive-test-tuishot");
 rmSync(S, { recursive: true, force: true }); mkdirSync(S, { recursive: true });
 process.env.HIVE_HOME = join(S, "home");
-const repo = join(S, "myapp"); mkdirSync(repo);
+import { AGENTS } from "../src/core/agents.ts";
+const demo = (label: string, model: string) => ({ type: "acp", label, command: AGENTS.mock.command, args: AGENTS.mock.args, env: { MOCK_DEMO: "1", MOCK_MODEL: model } });
+mkdirSync(process.env.HIVE_HOME, { recursive: true });
+writeFileSync(join(process.env.HIVE_HOME, "agents.json"), JSON.stringify({ "claude-code": demo("Claude Code (demo)", "default"), "codex-cli": demo("Codex (demo)", "gpt-5") }));
+const { loadCustomAgents } = await import("../src/core/agents.ts").catch(() => ({} as any));
+loadCustomAgents?.();
+const repo = join(S, "acme-api"); mkdirSync(repo);
 const g = (a: string[]) => execFileSync("git", a, { cwd: repo });
 g(["init", "-q", "-b", "main"]); g(["config", "user.email", "t@t"]); g(["config", "user.name", "t"]);
 writeFileSync(join(repo, "a.txt"), "a\n"); g(["add", "."]); g(["commit", "-qm", "init"]);
 let ctl!: TuiController;
 const hub = new Hub({ hiveDb: join(S, "hive.db"), pollMs: 200, onEvent: (a, e) => ctl.onEvent(a, e), defaults: { askPermission: (r, a, s) => ctl.askPermission(r, a, s) } });
-ctl = new TuiController(hub, repo, { kind: "mock", alt: "mock" });
+ctl = new TuiController(hub, repo, { kind: "claude-code", alt: "codex-cli" });
 await ctl.team("squad");
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
-ctl.setFocus(2); await ctl.submit("review the auth module for token handling bugs"); await wait(2500); if (ctl.panes[2].pending) ctl.answer(false); await wait(1500);
-ctl.setFocus(0); await ctl.submit("Plan: add rate limiting to the API client"); await wait(2500); if (ctl.panes[0].pending) ctl.answer(false); await wait(1500);
-ctl.setFocus(1); await ctl.submit("implement the plan; please edit src/client.ts"); await wait(2500);
+ctl.setFocus(1); await ctl.submit("implement task 2 from the plan"); await wait(1500);
+ctl.setFocus(0); await ctl.submit("Plan: add rate limiting to the API client"); await wait(500);
+ctl.setFocus(2); await ctl.submit("review the new commits on hive/coder"); await wait(500);
+ctl.setFocus(3); await ctl.submit("test hive/coder"); await wait(4000);
+ctl.setFocus(1);
 ctl.input = "/link coder reviewer --review"; ctl.cursor = ctl.input.length;
 const lines = render(ctl.view(), 170, 46);
 const pal = (n: number) => { if (n < 16) return ["#000","#c33","#3c3","#cc3","#33c","#c3c","#3cc","#ccc","#666","#f66","#6f6","#ff6","#66f","#f6f","#6ff","#fff"][n]; if (n >= 232) { const v = 8 + (n - 232) * 10; return `rgb(${v},${v},${v})`; } n -= 16; const r = Math.floor(n / 36), gg = Math.floor(n / 6) % 6, b = n % 6; const m = (x: number) => (x ? 55 + x * 40 : 0); return `rgb(${m(r)},${m(gg)},${m(b)})`; };
@@ -30,5 +38,5 @@ writeFileSync(join(S, "tui.html"), `<html><body style="margin:0;background:#1212
 const b = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium" }).catch(() => chromium.launch());
 const p = await b.newPage({ viewport: { width: 1420, height: 800 } });
 await p.goto("file://" + join(S, "tui.html"));
-await p.screenshot({ path: "/home/user/hargent/audit/evidence/tui-squad.png", fullPage: true });
+await p.screenshot({ path: join(process.cwd(), "docs/screenshots/13-tui.png"), fullPage: true });
 await b.close(); await hub.close(); process.exit(0);

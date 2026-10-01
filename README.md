@@ -2,6 +2,8 @@
 
 Local multi-agent harness. One process, any number of coding agents (Claude Code, Codex, Qwen, OpenCode, Gemini, …), all driven through the [Agent Client Protocol](https://agentclientprotocol.com), all able to message each other, with loops, schedules and file watchers that run 24/7.
 
+![A squad of four agents: planner, coder, reviewer, tester](docs/screenshots/03-squad.png)
+
 Design goals, in order:
 
 1. **Your subscriptions keep working.** Every agent is the vendor's own binary behind its official ACP adapter. Auth, sandboxing and permission prompts are the vendor's; hive never re-implements the agent loop.
@@ -19,13 +21,56 @@ Design goals, in order:
 | Automation | loops, intervals, watch-for-new-code/commits/blackboard, cooldowns, recipes (coder + reviewer, tester + improver, idea pipeline, creator studio) |
 | Skills | prompts with parameters (YouTube titles/descriptions/chapters from a transcript **or a YouTube link**, code review, prompt-engineer) |
 | Media | ElevenLabs voice-over, image generate/edit (keys stay in the hive process) |
+| Devices | a sandboxed browser (its own Chromium profile, never your logins) and an Android emulator/phone pane over adb; you watch and click, agents test web and Android apps with `hive_browser_*` / `hive_android_*` ([docs/DEVICES.md](docs/DEVICES.md)) |
+| Voice | dictation on every prompt box (mic button or hold Ctrl+Shift+Space; local Whisper, OpenAI or ElevenLabs), each agent can answer out loud in its own voice, "Talk with &lt;agent&gt;" conversation mode ([docs/VOICE.md](docs/VOICE.md)) |
+| Motion graphics | HTML/three.js animations rendered frame by frame to MP4 or ProRes 4444 with alpha for DaVinci (`hive render`, skill `motion`, starter template) ([docs/CREATOR.md](docs/CREATOR.md)) |
+| Twitch | new VODs and clips become board cards (`hive twitch watch`); recipe `twitch-clips`: a clipper cuts shorts with yt-dlp + ffmpeg, a studio agent writes titles ([docs/CREATOR.md](docs/CREATOR.md)) |
+| Board & stats | Kanban board for notes and projects (agents and automations add cards; `hive board`), token ledger by provider / model / task / project (`hive stats`) |
 | Safety & cost | per-agent permission policies, worktrees, untrusted-content labelling, usage + limit windows with reset times, daily budgets, pause switch |
 | Terminal | `hive tui`: the pane grid in your terminal, starting with a four-agent squad (planner, coder, reviewer, tester); `/add`, `/rm`, `/link`, `/group` ([docs/TUI.md](docs/TUI.md)) |
+| Cloud | run hive on a server or VPS and open the same agents, sessions, board and stats from any machine: `hive ui --remote you@server --remote-cwd ~/code/app` ([docs/CLOUD.md](docs/CLOUD.md)) |
+| Phone | Tailscale + SSH + tmux: `hive tui` from anywhere, one-command setup for Ubuntu/Fedora/Windows; Discord pushes ([docs/REMOTE.md](docs/REMOTE.md)) |
+| Phone app | the full pane UI on your phone: `hive web` + `tailscale serve`, one agent per screen with a bottom bar; install it from Chrome (PWA) or as an Android APK ([docs/MOBILE.md](docs/MOBILE.md)) |
 | Platforms | Windows ([docs/WINDOWS.md](docs/WINDOWS.md), one-script install), Linux/Fedora ([docs/LINUX.md](docs/LINUX.md)), Ubuntu server + chat bridges ([docs/BRIDGES.md](docs/BRIDGES.md)) |
+| Extra MCP servers | attach DaVinci Resolve or any MCP server to an agent type (`agents.json`) or one agent (`--mcp NAME`, Add-agent checkboxes) ([docs/MCP.md](docs/MCP.md)) |
 
 How it compares with Maestro, Agent Deck, Zed, Claude Code teams and others: [docs/COMPARISON.md](docs/COMPARISON.md). Audit records: [audit/](audit/).
 
+## Screenshots
+
+<sub>Demo session with scripted agents on a sample repo (no model output); regenerate with `xvfb-run -a npx tsx test/showcase.ts`.</sub>
+
+| | |
+|---|---|
+| ![Command palette](docs/screenshots/04-palette.png) **Ctrl+K palette:** every agent with its state, every action with its shortcut | ![One agent maximized](docs/screenshots/05-focus-coder.png) **Focus an agent (Ctrl+M):** file reads, diffs, test runs, a permission prompt answered inline |
+| ![Code review](docs/screenshots/06-review.png) **Reviewer:** finished turns fold their tool calls into "Worked for …" so the answer is what you read | ![Group chat](docs/screenshots/07-group-chat.png) **Group chat:** what linked agents said to each other; review-each-message mode holds mail for you |
+| ![Hive drawer](docs/screenshots/08-hive-drawer.png) **Since you left:** what needs you, job runs, blackboard changes | ![Usage and spending guards](docs/screenshots/09-usage.png) **Usage:** limit windows, daily caps, pause all automatic work |
+| ![Verdict setup](docs/screenshots/10-verdict.png) **Verdict:** one prompt to several agents, a blind judge picks the best parts | ![Recipes](docs/screenshots/02-recipes.png) **Recipes:** ready-made teams (squad, coder + reviewer, idea pipeline, creator studio) |
+| ![Kanban board](docs/screenshots/14-board.png) **Board (Ctrl+J):** Draft, In progress, Done hidden away; agents add cards too | ![Token stats](docs/screenshots/16-stats-task.png) **Token stats:** by provider, model, task and project, across all projects |
+| ![Light theme](docs/screenshots/11-light.png) **Themes and density** from the palette | ![Terminal UI](docs/screenshots/13-tui.png) **`hive tui`:** the same squad in a terminal, over SSH from your phone |
+
+**Themes:** Dark, OLED black, Midnight, Forest, Ember, Rosé, Light, Paper (Ctrl+K → "theme").
+
+<table><tr>
+<td><img src="docs/screenshots/17-theme-oled.png" alt="OLED black"><br><sub>OLED black</sub></td>
+<td><img src="docs/screenshots/17-theme-midnight.png" alt="Midnight"><br><sub>Midnight</sub></td>
+<td><img src="docs/screenshots/17-theme-forest.png" alt="Forest"><br><sub>Forest</sub></td>
+</tr><tr>
+<td><img src="docs/screenshots/17-theme-ember.png" alt="Ember"><br><sub>Ember</sub></td>
+<td><img src="docs/screenshots/17-theme-rose.png" alt="Rosé"><br><sub>Rosé</sub></td>
+<td><img src="docs/screenshots/17-theme-paper.png" alt="Paper"><br><sub>Paper</sub></td>
+</tr></table>
+
+<img src="docs/screenshots/12-vertical.png" width="300" align="right" alt="Vertical 9:16 layout">
+
+**Vertical monitors:** on a 9:16 screen (or a narrow window) panes stack in one column and the sidebar hides; `Auto` switches by aspect ratio.
+
+<br clear="right">
+
 ## Quick start
+
+**New here? Read [docs/START-HERE.md](docs/START-HERE.md)**: desktop, server and phone in one page.
+
 
 **On Windows, follow [docs/WINDOWS.md](docs/WINDOWS.md)** (PowerShell, step by step).
 
@@ -85,6 +130,7 @@ In `chat`: type while the agent works (prompts queue), Ctrl-C cancels a turn, Ct
 - Grid of panes, N per row, drag the gaps to resize, Ctrl+M maximizes, Ctrl+= / Ctrl+- zoom. Layout persists per project; panes come back (and their ACP sessions resume) on restart.
 - Sidebar: every agent with model/effort, idle time, ctx %, unread mail, status note; other agents in the hive (e.g. run by `hive serve`); worktrees with a merge button; jobs (click for run history and summaries).
 - ✉ Hive drawer (Ctrl+I): since-you-left report, mail agents sent you, the blackboard, all mail, and a box to message agents.
+- **✦ Improve** (button, Ctrl+Shift+Enter, or start with `/improve`): type a rough idea in any agent's box and it becomes a full prompt for that agent, written by a short-lived helper of the same agent type that sees the recent chat; edit it and press Enter to send it in the same chat (Ctrl+Z / undo restores your draft). Your agent's conversation never sees the request. Also `/improve …` in `hive tui`.
 - Each pane: a state pill in the header (only the focused pane gets an accent edge), finished turns fold their tool calls into one "Worked for 1m 12s" line, markdown replies, collapsible thinking, tool cards with diffs, plan checklist, permission prompts and agent questions answered inline, model/effort selectors, ctx meter, ⏱ to schedule a loop / interval / watch job on that agent.
 - Input routing for voice typing (Handy): hover a pane to focus its input (short dwell; never leaves an unsent draft; toggle with Ctrl+K → "hover"), Ctrl+1..9 jump, Ctrl+Tab cycle, Ctrl+Alt+H (global) brings hive forward on the last active pane. Enter sends (queues while busy), Esc cancels, ↑ recalls.
 - Broadcast box: send one prompt to the ticked panes, or all.
@@ -101,7 +147,17 @@ Architecture: Electron main is a relay; the hub runs in a system-Node child proc
 | reviewer | allow-reads | no | — |
 | security | allow-reads | no | watch ≥50 changed lines |
 | scout | allow-reads | no | every 10m |
+| teacher | allow-reads | no | — (explains code to you; see [Learn while you build](#learn-while-you-build)) |
 | bughunter | allow-all | yes | loop 5× |
+
+## Learn while you build
+
+Read the code your agents write, and have an agent explain it. Details for beginners: [docs/LEARN.md](docs/LEARN.md).
+
+- **Code view** (Ctrl+P, or Ctrl+K → "Open file…" / "Browse code", or click a file path in a tool card or diff): file tree of the focused agent's folder (its worktree if it has one; switch folders at the top), syntax highlighting, M/N marks for modified and new files, and a **Changes** tab with the agent's branch against its base. Read-only.
+- **Ask about code:** select lines (drag, or click / Shift+click line numbers) → Explain, Why like this?, Simpler?, Quiz me or Ask…. The question goes to your **teacher** with the file, line range and code; its answer appears next to the code.
+- **Teacher** (Ctrl+K → "Start a teacher", or the `teacher` preset): reads code, never changes it; short paragraphs tied to exact lines, jargon defined, one quiz question when asked; new terms go on your board as cards labelled `glossary`.
+- **Explain every change** (toggle per agent in the code view or Ctrl+K): after each turn of that agent that changes files, the teacher explains the diff (trimmed to 8 KB, at most once per agent every 2 minutes). It's automatic work, so it costs tokens and your spending guards apply.
 
 ## Scheduler
 

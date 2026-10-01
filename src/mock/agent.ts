@@ -21,6 +21,7 @@ import { Readable, Writable } from "node:stream";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { demoTurn } from "./demo.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 type Sess = { mcp: Client[]; cwd: string; turns: number; cancelled: boolean; how: string; wake?: () => void };
@@ -83,6 +84,9 @@ async function openSess(sessionId: string, cwd: string, servers: acp.McpServer[]
   const mcp = await connectMcp(servers);
   sessions.set(sessionId, { mcp, cwd, turns: 0, cancelled: false, how });
 }
+
+// MOCK_MODEL="Label" renames the model option (demo screenshots).
+if (process.env.MOCK_MODEL) configOptions[0].options[0].name = process.env.MOCK_MODEL;
 
 // MOCK_NO_RESUME=1 → advertise only session/load (tests the replay path).
 const noResume = process.env.MOCK_NO_RESUME === "1";
@@ -150,6 +154,28 @@ acp
     }
     sess.turns++;
     sess.cancelled = false;
+    // the ✦ improve helper (core/improve.ts): echo the draft back as a "better" prompt
+    if (/You are a prompt engineer\. The owner is about to send/.test(text)) {
+      const draft = text.match(/The owner's draft:\n<<<\n([\s\S]*?)\n>>>/)?.[1] ?? "";
+      const lastOwner = [...text.matchAll(/OWNER: (.+)/g)].at(-1)?.[1] ?? "none";
+      await say(cx, sessionId, "```text\nIMPROVED: " + draft + "\nContext seen: " + lastOwner + "\nCheck your work with the tests and report what changed.\n```");
+      return { stopReason: "end_turn", usage: { totalTokens: 50, inputTokens: 40, outputTokens: 10 } };
+    }
+    if (process.env.MOCK_DEMO === "1") {
+      const ask = async (title: string, kind: string, content?: unknown[]) => {
+        const perm: any = await cx.request(acp.methods.client.session.requestPermission, {
+          sessionId,
+          toolCall: { toolCallId: `t${++n}`, title, kind: kind as any, status: "pending", content: content as any },
+          options: [
+            { optionId: "allow", name: "Allow", kind: "allow_once" },
+            { optionId: "reject", name: "Reject", kind: "reject_once" },
+          ],
+        });
+        return perm.outcome.outcome === "selected" && perm.outcome.optionId === "allow";
+      };
+      const r = await demoTurn(cx, sessionId, text, (name, args) => callTool(sess, name, args), ask, me);
+      return { stopReason: "end_turn", usage: { totalTokens: r.tokens, inputTokens: Math.round(r.tokens * 0.8), outputTokens: Math.round(r.tokens * 0.2) } };
+    }
     if (sess.turns === 1 && sess.how !== "new") await say(cx, sessionId, `(${sess.how} session ${sessionId})\n`);
 
     // 1. inbox (MOCK_DEAF=1: an agent that never reads its mail)

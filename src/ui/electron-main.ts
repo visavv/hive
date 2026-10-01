@@ -20,6 +20,12 @@ const argVal = (flag: string) => {
 const workDir = resolve(argVal("--cwd") ?? process.env.HIVE_CWD ?? process.cwd());
 const dbArg = argVal("--db") ?? process.env.HIVE_DB_PATH;
 const dbPath = dbArg ? resolve(workDir, dbArg) : undefined; // backend picks the per-repo default
+// Cloud / other machine: run the backend there and talk to it over SSH (`hive attach`, see docs/CLOUD.md).
+const remote = argVal("--remote") ?? process.env.HIVE_REMOTE;
+const remoteCwd = argVal("--remote-cwd") ?? process.env.HIVE_REMOTE_CWD;
+// Local, but keep agents running after the window closes (a background daemon you re-attach to).
+const attachLocal = args.includes("--attach") || process.env.HIVE_ATTACH === "1";
+const shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
 // Linux: WM_CLASS / desktop-entry matching; on Wayland, global shortcuts go through the desktop portal.
 app.setName("hive");
@@ -38,16 +44,23 @@ function startBackend() {
   const node = process.env.HIVE_NODE ?? (process.platform === "win32" ? "node.exe" : "node");
   const built = join(root, "dist", "ui", "backend.js");
   const src = join(root, "src", "ui", "backend.ts");
-  const entry = existsSync(src) && !process.env.HIVE_UI_PROD ? [join(root, "node_modules", "tsx", "dist", "cli.mjs"), src] : [built];
+  const dev = existsSync(src) && !process.env.HIVE_UI_PROD;
+  const entry = dev ? [join(root, "node_modules", "tsx", "dist", "cli.mjs"), src] : [built];
+  const cli = dev ? [join(root, "node_modules", "tsx", "dist", "cli.mjs"), join(root, "src", "cli", "index.ts")] : [join(root, "dist", "cli", "index.js")];
   backendReady = false;
-  const proc = spawn(node, [...entry, ...(dbPath ? ["--db", dbPath] : []), "--cwd", workDir, "--owner-pid", String(process.pid)], {
+  const [cmd, cmdArgs] = remote
+    ? ["ssh", ["-T", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=4", remote, `${process.env.HIVE_REMOTE_CMD ?? "hive"} attach --cwd ${remoteCwd?.startsWith("~/") ? "~/" + shq(remoteCwd.slice(2)) : shq(remoteCwd ?? ".")}`]]
+    : attachLocal
+      ? [node, [...cli, "attach", "--cwd", workDir]]
+      : [node, [...entry, ...(dbPath ? ["--db", dbPath] : []), "--cwd", workDir, "--owner-pid", String(process.pid)]];
+  const proc = spawn(cmd, cmdArgs, {
     cwd: workDir,
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
   });
   backend = proc;
   proc.on("error", (e) => {
-    dialog.showErrorBox("hive", `Could not start the hive backend with "${node}": ${e.message}\nSet HIVE_NODE to your node binary.`);
+    dialog.showErrorBox("hive", remote ? `Could not run ssh to ${remote}: ${e.message}\nInstall the OpenSSH client (Windows: Settings → Optional features).` : `Could not start the hive backend with "${node}": ${e.message}\nSet HIVE_NODE to your node binary.`);
     app.quit();
   });
   proc.stderr?.on("data", (d) => process.stderr.write(`[backend] ${d}`));
@@ -61,6 +74,13 @@ function startBackend() {
       return;
     }
     // Pending renderer requests will never be answered: let it reject them.
+    if (remote) {
+      // a dropped connection (sleep, Wi-Fi change): keep reconnecting, more slowly
+      restarts = [...restarts.filter((t) => Date.now() - t < 10 * 60_000), Date.now()];
+      toRenderer({ event: "backend_down", text: `connection to ${remote} lost (${code}); reconnecting…` });
+      setTimeout(startBackend, Math.min(30_000, 1000 * 2 ** Math.min(5, restarts.length - 1)));
+      return;
+    }
     toRenderer({ event: "backend_down", text: `backend exited (${code}); restarting…` });
     const now = Date.now();
     restarts = restarts.filter((t) => now - t < 60_000);
@@ -89,7 +109,7 @@ function createWindow() {
     width: 1600,
     height: 1000,
     backgroundColor: "#111318",
-    title: `hive — ${workDir}`,
+    title: remote ? `hive — ${remote}:${remoteCwd ?? "~"}` : `hive — ${workDir}`,
     webPreferences: {
       preload: join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -150,6 +170,28 @@ app.whenReady().then(() => {
     }
     if (details.url.startsWith("devtools:") || details.url.startsWith("data:")) return cb({});
     cb({ cancel: true }); // no network from the renderer
+  });
+  // ---- voice: permissions ----
+  // Microphone (audio only) for dictation, notifications and clipboard writes the
+  // UI already uses, for the app's own page only; everything else is denied.
+  const ownPage = (url?: string) => {
+    try {
+      return !!url && url.startsWith("file:") && resolve(fileURLToPath(url)).startsWith(appDir);
+    } catch {
+      return false;
+    }
+  };
+  const allowed = (permission: string, audioOnly: boolean) =>
+    (permission === "media" && audioOnly) || permission === "notifications" || permission === "clipboard-sanitized-write";
+  session.defaultSession.setPermissionRequestHandler((wc, permission, cb, details) => {
+    const types = (details as { mediaTypes?: string[] }).mediaTypes ?? [];
+    cb(wc === win?.webContents && ownPage(details.requestingUrl) && allowed(permission, types.length > 0 && types.every((t) => t === "audio")));
+  });
+  session.defaultSession.setPermissionCheckHandler((wc, permission, origin, details) => {
+    if (!wc || wc !== win?.webContents) return false;
+    const url = (details as { requestingUrl?: string }).requestingUrl;
+    if (url ? !ownPage(url) : !origin.startsWith("file:")) return false;
+    return allowed(permission, (details as { mediaType?: string }).mediaType !== "video");
   });
   startBackend();
   ipcMain.on("hive:send", (_e, line: string) => {

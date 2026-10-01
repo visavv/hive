@@ -12,6 +12,7 @@ const dir = freshDir(".hive-test-groups");
 const work = freshDir(join(dir, "work"));
 const log: { agent: string; e: SessionEvent }[] = [];
 const hub = new Hub({ hiveDb: join(dir, "hive.db"), pollMs: 200, onEvent: (agent, e) => log.push({ agent, e }) });
+hub.db.setGuardAllowAll(false); // agent-made groups with allow-all agents: the guard is tested in links.ts
 const texts = (a: string) => log.filter((l) => l.agent === a && l.e.type === "text").map((l) => (l.e as any).text).join("");
 
 const a = await hub.add({ name: "ana", agent: mock("ana"), cwd: work, policy: "allow-all" });

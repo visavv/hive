@@ -22,6 +22,39 @@ export interface PaneSpec {
   preset?: string;
   /** Run in its own git worktree (.hive/worktrees/<name>). */
   worktree?: boolean;
+  /** Voice settings of this pane (UI only; the backend ignores them in addAgent). */
+  voice?: PaneVoice;
+  /** Extra MCP servers by name from <HIVE_HOME>/mcp.json (creator: docs/MCP.md). */
+  mcp?: string[];
+}
+
+// ---- voice (docs/VOICE.md) ----
+
+export interface PaneVoice {
+  /** ElevenLabs voice id for spoken replies (default: ELEVENLABS_VOICE). */
+  id?: string;
+  /** Its display name, for menus. */
+  name?: string;
+  /** Speak a short summary when the agent finishes a turn. */
+  speak?: boolean;
+  /** Conversation mode: speak replies + send after dictation (+ listen again when hands-free). */
+  talk?: boolean;
+}
+
+export interface VoiceSettings {
+  /** Send the prompt as soon as dictated text is inserted. */
+  sendAfter?: boolean;
+  /** Push-to-talk key (hold to talk, tap to toggle). */
+  pttKey?: "ctrl+shift+space" | "ctrl+space" | "alt+shift+space" | "f9" | "off";
+  /** Speak turns hive started (jobs, mail) when that pane is focused (default on). */
+  speakAuto?: boolean;
+  /** Conversation mode listens again after a reply, until ~1.5 s of silence (default on). */
+  handsFree?: boolean;
+}
+
+export interface VoiceStatusView {
+  stt: import("../hive/voice.js").SttStatus;
+  tts: boolean;
 }
 
 export interface KindView {
@@ -72,8 +105,9 @@ export interface Layout {
   vsidebar?: boolean;
   /** Chime when an agent finishes (default on). */
   ping?: boolean;
-  theme?: "dark" | "light";
+  theme?: "dark" | "light" | "oled" | "midnight" | "forest" | "ember" | "rose" | "paper";
   density?: "compact" | "comfortable" | "spacious";
+  voice?: VoiceSettings;
 }
 
 export interface ConfigOptionView {
@@ -104,6 +138,8 @@ export interface AgentView {
   jobs: number;
   /** Current git branch of the agent's folder, if any. */
   branch?: string;
+  /** Extra MCP servers attached (type's + its own), shown in the pane header tooltip. */
+  mcp?: string[];
 }
 
 /** An agent in this hive that isn't running in this window. */
@@ -202,10 +238,53 @@ export type BackendEvent =
   | { event: "verdict"; state: import("../core/verdict.js").VerdictState }
   | { event: "owner_mail"; unread: number; latest?: { from: string; subject: string } }
   /** Sent by Electron main, not the backend. */
-  | { event: "backend_down"; text: string };
+  | { event: "backend_down"; text: string }
+  | DeviceEvent;
+
+// ---- device panes: sandboxed browser and Android (src/hive/devices.ts) ----
+export type DeviceKind = "browser" | "android";
+export type BrowserState = import("../hive/browser.js").BrowserState;
+export type AndroidState = import("../hive/android.js").AndroidState;
+export interface DeviceFrame {
+  mime: string;
+  /** base64 image */
+  data: string;
+  /** Size of the page / screen the frame shows (input coordinates map onto this). */
+  w: number;
+  h: number;
+}
+/** Frames go out only while a pane watches that device (deviceWatch). */
+export type DeviceEvent =
+  | { event: "device_frame"; device: DeviceKind; frame: DeviceFrame }
+  | { event: "device_state"; device: "browser"; state: BrowserState }
+  | { event: "device_state"; device: "android"; state: AndroidState }
+  /** An agent used a device: the UI opens its pane. */
+  | { event: "device_activity"; device: DeviceKind; agent: string; action: string }
+  | { event: "device_problem"; device: DeviceKind; text: string };
+export interface DeviceMethods {
+  /** Start / stop the frame stream for a pane (stops when nobody watches). */
+  deviceWatch: (p: { device: DeviceKind; on: boolean }) => void;
+  browserState: (p: Record<string, never>) => BrowserState;
+  browserOpen: (p: { url: string }) => BrowserState;
+  browserNav: (p: { action: "back" | "forward" | "reload" | "stop" }) => BrowserState;
+  browserInput: (p: import("../hive/browser.js").BrowserInput) => void;
+  /** persistent: keep logins for this project (a profile folder in the project's state dir). */
+  browserSettings: (p: { persistent: boolean }) => BrowserState;
+  browserClose: (p: Record<string, never>) => void;
+  androidState: (p: Record<string, never>) => AndroidState;
+  androidSelect: (p: { serial: string | null }) => AndroidState;
+  androidInput: (
+    p:
+      | { type: "tap"; x: number; y: number }
+      | { type: "swipe"; x1: number; y1: number; x2: number; y2: number; ms?: number }
+      | { type: "text"; text: string }
+      | { type: "key"; key: string },
+  ) => void;
+  androidAction: (p: { action: "rotate" | "install" | "launch" | "startAvd"; value?: string }) => string;
+}
 
 /** UI → backend requests; each gets `{id, result}` or `{id, error}`. */
-export interface Methods {
+export interface Methods extends DeviceMethods {
   addAgent: (p: PaneSpec & { resume?: boolean; startJob?: boolean }) => AgentView;
   worktrees: (p: Record<string, never>) => { repo: string; base: string; worktrees: WorktreeView[] }[];
   mergeWorktree: (p: { name: string; repo: string }) => { ok: boolean; message: string };
@@ -281,7 +360,44 @@ export interface Methods {
   heldMail: (p: Record<string, never>) => MailView[];
   saveSkill: (p: { name: string; description?: string; body: string; overwrite?: boolean }) => { path: string; params: string[] };
   usage: (p: Record<string, never>) => import("../core/budget.js").UsageSummary;
+  stats: (p: { by: import("../core/ledger.js").LedgerDim; filter: import("../core/ledger.js").LedgerFilter }) => ReturnType<typeof import("../core/ledger.js").stats> & {
+    facets: ReturnType<typeof import("../core/ledger.js").facets>;
+  };
   setBudget: (p: { key: string; value: string }) => import("../core/budget.js").UsageSummary;
+  improvePrompt: (p: { name: string; draft: string }) => { prompt: string };
+  board: (p: { done?: boolean; project?: string; q?: string }) => {
+    cards: import("../hive/kanban.js").Card[];
+    counts: Record<import("../hive/kanban.js").Column, number>;
+    projects: string[];
+  };
+  cardAdd: (p: { title: string; body?: string; project?: string; labels?: string[]; col?: import("../hive/kanban.js").Column }) => import("../hive/kanban.js").Card;
+  cardMove: (p: { id: number; col: import("../hive/kanban.js").Column; before?: number | null }) => import("../hive/kanban.js").Card;
+  cardUpdate: (p: { id: number; title?: string; body?: string; project?: string; labels?: string[] }) => import("../hive/kanban.js").Card;
+  cardRemove: (p: { id: number }) => boolean;
+  // ---- code view (read-only): a folder is an agent's cwd/worktree, or `dir` (the project or an agent's folder) ----
+  listFiles: (p: CodeTarget) => import("../core/code.js").FileList;
+  readFile: (p: CodeTarget & { path: string }) => import("../core/code.js").FileContent;
+  fileDiff: (p: CodeTarget) => import("../core/code.js").CodeDiff;
+  /** "Explain every change": turn it on/off for an agent (when given); returns who has it on and the teacher. */
+  explainChanges: (p: { agent?: string; on?: boolean }) => { agents: string[]; teacher?: string };
+  // ---- creator ----
+  /** Extra MCP servers configured in <HIVE_HOME>/mcp.json (Add-agent dialog checkboxes). */
+  mcpServers: (p: Record<string, never>) => { name: string; command: string }[];
+  // ---- voice ----
+  /** Speech-to-text of a dictation clip (base64 audio) by the configured provider. */
+  transcribe: (p: { audio: string; mime: string; seconds?: number; agent?: string }) => { text: string; provider: string };
+  /** A short spoken summary of `text` (an agent's reply) as base64 mp3; audio null when there is nothing to say. */
+  speak: (p: { agent: string; text: string; voice?: string }) => { audio: string | null; mime?: string; spoken: string };
+  voiceStatus: (p: Record<string, never>) => VoiceStatusView;
+  /** Pick the dictation provider ("auto" = first configured), model and language; saved per project. */
+  setStt: (p: { provider?: string; model?: string; language?: string }) => VoiceStatusView;
+  voiceList: (p: Record<string, never>) => { id: string; name: string; labels?: string }[];
+}
+
+/** Which folder the code view reads: an agent's folder, a directory, or (neither) the project. */
+export interface CodeTarget {
+  agent?: string;
+  dir?: string;
 }
 
 export type MethodName = keyof Methods;

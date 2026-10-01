@@ -2,7 +2,7 @@
 import { join } from "node:path";
 import { Hub } from "../src/core/hub.js";
 import { Scheduler, type JobEvent } from "../src/core/scheduler.js";
-import { checkAutomatic, usageSummary } from "../src/core/budget.js";
+import { checkAutomatic, setBudget, usageSummary } from "../src/core/budget.js";
 import { assert, finish, freshDir, sleep, until } from "./util.js";
 
 const dir = freshDir(".hive-test-budget");
@@ -50,7 +50,7 @@ await a.prompt("typed by the human");
 assert(true, "prompts you type still run over budget");
 
 // raising the budget releases the job
-db.setSetting("budget.daily_tokens", null);
+setBudget(db, "daily_tokens", "");
 await until(() => db.jobRuns(jid).length >= 1, 10_000, "released");
 assert(true, "raising the budget releases held jobs");
 await until(() => db.getJob(jid)?.enabled === 0, 15_000, "job done");
@@ -64,6 +64,29 @@ await sleep(1500);
 assert(db.jobRuns(j1).length + db.jobRuns(j2).length === 1, "max_concurrent caps automatic runs");
 db.endJob(j1, "stopped");
 db.endJob(j2, "stopped");
+await until(() => db.autoTurns().length === 0, 15_000, "slow job done");
+// …mail wake-ups count against it too
+await hub.add({ name: "mailer", agent: "mock", cwd: dir, policy: "allow-all" });
+db.send("owner", "mailer", "be slow", "take your time");
+await until(() => db.autoTurns().includes("mailer"), 10_000, "mail wake-up running");
+const j3 = db.addJob({ agent: "slow3", agent_kind: "mock", cwd: dir, kind: "once", prompt: "quick" });
+await sleep(1500);
+assert(db.jobRuns(j3).length === 0, "max_concurrent: a mail wake-up in progress holds a job back");
+await until(() => db.jobRuns(j3).length >= 1, 20_000, "job after the wake-up");
+assert(true, "max_concurrent: the job runs once the wake-up is done");
+db.endJob(j3, "stopped");
+
+// Regression: mail held by the DAILY budget used to wait until the next day even
+// after the owner raised the budget. A budget change now re-checks at once.
+db.setSetting("budget.max_concurrent", null);
+await hub.add({ name: "mailee", agent: "mock", cwd: dir, policy: "allow-all" });
+setBudget(db, "daily_tokens", "1");
+db.send("owner", "mailee", "later", "when the budget allows");
+await sleep(2500);
+assert(db.unreadCount("mailee") === 1, "mail held by the daily budget");
+setBudget(db, "daily_tokens", "50m");
+await until(() => db.unreadCount("mailee") === 0, 8000, "held mail delivered after setBudget");
+assert(true, "raising the budget (setBudget / hive budget set / UI) releases held mail at once, not the next day");
 
 // pause switch
 db.setSetting("budget.paused", "1");
