@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { rpc } from "./bridge.js";
 import { store } from "./store.js";
-import { focus } from "./focus.js";
+import { focus, useOverlay } from "./focus.js";
 import { IconClose, IconPlus, IconSearch } from "./Icons.js";
 
 type BoardData = Awaited<ReturnType<typeof rpc<"board">>>;
@@ -21,6 +21,7 @@ export function KanbanView({ onClose }: { onClose: () => void }) {
   const [q, setQ] = useState("");
   const [editing, setEditing] = useState<Card | null>(null);
   const [drag, setDrag] = useState<{ id: number; over?: Col; before?: number | null } | null>(null);
+  useOverlay("modal", onClose); // Esc closes the board; pane shortcuts wait while it's open
   const load = () =>
     void rpc("board", { done: showDone, project: project || undefined, q: q || undefined })
       .then(setData)
@@ -39,7 +40,7 @@ export function KanbanView({ onClose }: { onClose: () => void }) {
   };
   const cols: Col[] = showDone ? ["draft", "doing", "done"] : ["draft", "doing"];
   return (
-    <div className="kanban" onKeyDown={(e) => e.key === "Escape" && !editing && onClose()}>
+    <div className="kanban">
       <div className="kb-bar">
         <strong>Board</strong>
         <label className="kb-search">
@@ -173,6 +174,7 @@ function CardEditor({ card, onClose, onSaved }: { card: Card; onClose: () => voi
   const [labels, setLabels] = useState(card.labels.join(", "));
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => ref.current?.focus(), []);
+  useOverlay("modal", onClose); // on top of the board: Esc closes only the editor
   const save = async () => {
     await rpc("cardUpdate", { id: card.id, title, body, project, labels: labels.split(",") });
     onSaved();
@@ -186,10 +188,6 @@ function CardEditor({ card, onClose, onSaved }: { card: Card; onClose: () => voi
         role="dialog"
         aria-label={`card #${card.id}`}
         onKeyDown={(e) => {
-          if (e.key === "Escape") {
-            e.stopPropagation();
-            onClose();
-          }
           if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) void save();
         }}
       >

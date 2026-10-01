@@ -72,7 +72,7 @@ export interface Layout {
   vsidebar?: boolean;
   /** Chime when an agent finishes (default on). */
   ping?: boolean;
-  theme?: "dark" | "light";
+  theme?: "dark" | "light" | "oled" | "midnight" | "forest" | "ember" | "rose" | "paper";
   density?: "compact" | "comfortable" | "spacious";
 }
 

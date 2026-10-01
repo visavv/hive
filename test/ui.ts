@@ -366,6 +366,26 @@ try {
   await page.waitForFunction(() => document.activeElement?.closest("[data-pane]")?.getAttribute("data-pane") === "beta", null, { timeout: 5000 });
   assert(await activeIn(page, "beta"), "palette jumps to the agent");
 
+  // board: Ctrl+J, quick add, Esc closes; stats and themes from the palette
+  await page.keyboard.press("Control+j");
+  await page.locator(".kanban").waitFor({ timeout: 5000 });
+  await page.locator(".kb-add input").fill("Card from the UI test");
+  await page.keyboard.press("Enter");
+  await page.locator(".kb-card", { hasText: "Card from the UI test" }).waitFor({ timeout: 5000 });
+  assert((await page.locator(".kb-draft .kb-card", { hasText: "Card from the UI test" }).count()) === 1, "board: a quick-added card lands in Draft");
+  await page.keyboard.press("Escape");
+  await page.locator(".kanban").waitFor({ state: "detached", timeout: 5000 });
+  assert(true, "board: Esc closes it");
+  await command(page, "token stats");
+  await page.locator(".stats").waitFor({ timeout: 5000 });
+  assert((await page.locator(".stats-total .big").innerText()).length > 0, "token stats open from the palette");
+  await page.keyboard.press("Escape");
+  await command(page, "theme: oled");
+  assert((await page.evaluate("document.documentElement.dataset.theme")) === "oled" && (await page.evaluate("getComputedStyle(document.body).backgroundColor")) === "rgb(0, 0, 0)", "OLED theme: true black background");
+  await command(page, "theme: paper");
+  assert((await page.evaluate("document.documentElement.dataset.tone")) === "light", "Paper is a light theme");
+  await command(page, "theme: dark");
+
   // long prompt editor: write, save as skill with a parameter, send
   await pane(page, "alpha").locator("textarea").fill("draft line");
   await pane(page, "alpha").locator("button.expand").click();

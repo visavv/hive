@@ -38,6 +38,25 @@ writeFileSync(
   JSON.stringify({ "claude-code": demo("Claude Code (demo)", "Default (recommended)"), "codex-cli": demo("Codex (demo)", "gpt-5 · medium") }),
 );
 
+// a board with some life in it (the same board.db the app opens)
+{
+  const { Board } = await import("../src/hive/kanban.js");
+  const b = new Board(join(process.env.HIVE_HOME!, "board.db"));
+  const add = (title: string, o: Record<string, any> = {}) => b.add({ title, ...o });
+  add("Edit Friday stream highlights", { project: "youtube", labels: ["video"], body: "Pull the 3 best clips, 60 s each, add captions." });
+  add("Thumbnail ideas for the robot episode", { project: "youtube", labels: ["design"] });
+  add("New clip: chat raid at 1:42:10", { project: "twitch", labels: ["clips"], source: "scout" });
+  add("Review the Twitch bot's command list", { project: "twitch", labels: ["bots"] });
+  const d1 = add("Rate limiting for the API client", { project: "acme-api", labels: ["api"], source: "planner", body: "Token bucket, retry on 429/503, Retry-After." });
+  const d2 = add("Retry-After in HTTP-date form: add a test", { project: "acme-api", source: "reviewer" });
+  const d3 = add("Three.js intro animation, 5 s", { project: "youtube", labels: ["motion"] });
+  b.move(d1.id, "doing");
+  b.move(d2.id, "doing", null);
+  b.move(d3.id, "doing", null);
+  for (const t of ["Set up the Proxmox VM for hive", "Sign in Claude Code on the server", "Fix OBS audio delay"]) b.move(add(t).id, "done");
+  b.close();
+}
+
 const require = createRequire(import.meta.url);
 const app = await electron.launch({
   executablePath: require("electron") as unknown as string,
@@ -129,10 +148,25 @@ await page.locator(".modal.wide").waitFor();
 await shot("10-verdict");
 await page.keyboard.press("Escape");
 
-// light theme
-await palette("theme");
-await shot("11-light");
-await palette("theme");
+// board, token stats
+await page.keyboard.press("Control+j");
+await page.locator(".kanban").waitFor();
+await shot("14-board");
+await page.keyboard.press("Escape");
+await palette("token stats");
+await page.locator(".stats-rows li").first().waitFor({ timeout: 10_000 });
+await shot("15-stats");
+await page.locator(".stats-head button", { hasText: "Task" }).click();
+await sleep(300);
+await shot("16-stats-task");
+await page.keyboard.press("Escape");
+
+// themes
+for (const [id, label] of [["light", "Light"], ["oled", "OLED black"], ["midnight", "Midnight"], ["forest", "Forest"], ["ember", "Ember"], ["rose", "Rosé"], ["paper", "Paper"]]) {
+  await palette(`theme: ${label}`);
+  await shot(id === "light" ? "11-light" : `17-theme-${id}`);
+}
+await palette("theme: dark");
 
 // 9:16 monitor
 await page.setViewportSize({ width: 760, height: 1350 });
