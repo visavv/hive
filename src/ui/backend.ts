@@ -9,7 +9,7 @@
 import * as ledger from "../core/ledger.js";
 import { parseArgs } from "node:util";
 import { createInterface } from "node:readline";
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import type * as schema from "@agentclientprotocol/sdk";
@@ -221,16 +221,28 @@ const scheduler = new Scheduler({
 });
 
 const policies = new Map<string, AgentView["policy"]>();
-const branches = new Map<string, { at: number; branch?: string }>();
+/**
+ * Git branch per agent folder, refreshed in the background (at most every 30s)
+ * so the 1s agent push never blocks streaming on a git process.
+ */
+const branches = new Map<string, { at: number; branch?: string; busy?: boolean }>();
 function branchOf(cwd: string): string | undefined {
   const hit = branches.get(cwd);
-  if (hit && Date.now() - hit.at < 15_000) return hit.branch;
-  let branch: string | undefined;
-  try {
-    branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], windowsHide: true }).trim();
-  } catch {}
-  branches.set(cwd, { at: Date.now(), branch });
-  return branch;
+  if (hit && (hit.busy || Date.now() - hit.at < 30_000)) return hit.branch;
+  const entry = { at: Date.now(), branch: hit?.branch, busy: true };
+  branches.set(cwd, entry);
+  execFile("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd, encoding: "utf8", windowsHide: true }, (err, stdout) => {
+    const branch = err ? undefined : stdout.trim() || undefined;
+    const changed = branch !== entry.branch;
+    branches.set(cwd, { at: Date.now(), branch });
+    if (changed) schedulePush();
+  });
+  return entry.branch;
+}
+
+/** Timer work must never take the backend down (e.g. SQLITE_BUSY): log it and carry on. */
+function logError(where: string, e: unknown) {
+  console.error(`[hive backend] ${where}:`, e instanceof Error ? (e.stack ?? e.message) : e);
 }
 
 function view(s: AgentSession): AgentView {
@@ -266,6 +278,13 @@ function view(s: AgentSession): AgentView {
 
 function pushAgents() {
   pushTimer = undefined;
+  try {
+    pushAgentsNow();
+  } catch (e) {
+    logError("pushAgents", e);
+  }
+}
+function pushAgentsNow() {
   if (!hub.db.db.open) return;
   const others = hub.db
     .listAgents()
@@ -301,7 +320,12 @@ const groupView = (name: string) => groupViews().find((g) => g.name === name);
 let lastOwnerUnread = -1;
 function pushOwnerMail(force = false) {
   if (!hub.db.db.open) return;
-  const unread = hub.db.inbox("owner", true, 500);
+  let unread: ReturnType<typeof hub.db.inbox>;
+  try {
+    unread = hub.db.inbox("owner", true, 500);
+  } catch (e) {
+    return logError("pushOwnerMail", e);
+  }
   if (!force && unread.length === lastOwnerUnread) return;
   const grew = unread.length > lastOwnerUnread && lastOwnerUnread >= 0;
   lastOwnerUnread = unread.length;
@@ -310,6 +334,13 @@ function pushOwnerMail(force = false) {
 }
 
 function pushJobs() {
+  try {
+    pushJobsNow();
+  } catch (e) {
+    logError("pushJobs", e);
+  }
+}
+function pushJobsNow() {
   if (!hub.db.db.open) return;
   const jobs: JobView[] = hub.db.listJobs(true).slice(-50).map((j) => ({
     id: j.id,
@@ -773,6 +804,12 @@ async function shutdown() {
 rl.on("close", () => void shutdown());
 process.on("SIGTERM", () => void shutdown());
 process.on("SIGINT", () => void shutdown());
+// One failed callback (a busy database, a dying agent process) must not end every session in the window.
+process.on("uncaughtException", (e: any) => {
+  logError("uncaught", e);
+  if (e?.code === "EPIPE") void shutdown(); // the window is gone
+});
+process.on("unhandledRejection", (e) => logError("unhandled rejection", e));
 
 hub.run();
 scheduler.start();
