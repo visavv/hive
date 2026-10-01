@@ -7,6 +7,7 @@ import { focus } from "./focus.js";
 import { ctxPct, fmtIdle, statusLabel, noteLabel } from "./format.js";
 import { PromptEditor } from "./Extras.js";
 import { GroupChips, groupColor } from "./Links.js";
+import { agentState, StatePill } from "./state.js";
 import { IconClock, IconClose, IconExpand, IconLink, IconMaximize, IconRefresh, IconSend, IconStop } from "./Icons.js";
 
 export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
@@ -22,6 +23,7 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
   const hoverFocus = useStore((s) => s.layout.hoverFocus);
   const waiting = useStore((s) => s.waitingOn(name));
   const ready = useStore((s) => s.readyAt.has(name));
+  const state = useStore(() => agentState(name));
   const firstGroup = useStore((s) => s.groups.find((g) => g.members.includes(name))?.name);
   const linkColor = firstGroup ? groupColor(firstGroup) : undefined;
   // In the layout but not running (exited, closed by its job, backend restarted): stopped.
@@ -65,8 +67,7 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
           title="include in broadcast"
           onDoubleClick={(e) => e.stopPropagation()}
         />
-        <span className="idx">{index < 9 ? `^${index + 1}` : ""}</span>
-        <span className={`dot ${status}`} title={statusLabel(status)} />
+        <span className="idx">{index < 9 ? index + 1 : ""}</span>
         <strong
           className="pname"
           draggable
@@ -81,13 +82,9 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
         <span className="kind">{agent?.kind ?? starting?.kind}</span>
         <GroupChips agent={name} />
         {agent && <ConfigSelectors agent={agent} />}
-        {ready && !waiting && (
-          <span className="badge ready" role="status" title="finished — click or focus the pane to clear">
-            ✓ ready
-          </span>
-        )}
         <span className="spacer" />
         {agent?.ctx && <CtxMeter used={agent.ctx.used} size={agent.ctx.size} />}
+        <StatePill state={state} />
         {agent && agent.queued > 0 && <span className="badge" title="prompts queued">{agent.queued} queued</span>}
         {agent && agent.jobs > 0 && <span className="badge job" title="scheduled jobs on this agent"><IconClock size={12} /> {agent.jobs}</span>}
         <div className="pane-actions" onDoubleClick={(e) => e.stopPropagation()}>
@@ -268,12 +265,68 @@ const Transcript = memo(function Transcript({ name }: { name: string }) {
       }}
     >
       {pane.items.length === 0 && <div className="empty">Type below to talk to {name}. Esc cancels a turn; ↑ recalls your last prompt.</div>}
-      {pane.items.map((it) => (
-        <ItemView key={it.id} item={it} rev={it.rev} name={name} />
-      ))}
+      {foldTurns(pane.items).map((b) =>
+        b.work ? (
+          <details className="worked" key={"w" + b.work[0].id}>
+            <summary>
+              {b.ms !== undefined ? `Worked for ${duration(b.ms)}` : "Work"} · {b.work.length} step{b.work.length === 1 ? "" : "s"}
+            </summary>
+            <div className="worked-body">
+              {b.work.map((it) => (
+                <ItemView key={it.id} item={it} rev={it.rev} name={name} />
+              ))}
+            </div>
+          </details>
+        ) : (
+          <ItemView key={b.item.id} item={b.item} rev={b.item.rev} name={name} />
+        ),
+      )}
     </div>
   );
 });
+
+type Block = { item: Item; work?: undefined } | { work: Item[]; ms?: number; item?: undefined };
+
+/**
+ * Finished turns fold their tool calls and thinking into one "Worked for 1m 12s"
+ * line (as in T3 Code), so the answer is what you see. The running turn stays open.
+ */
+function foldTurns(items: Item[]): Block[] {
+  const out: Block[] = [];
+  let i = 0;
+  while (i < items.length) {
+    let end = i;
+    while (end < items.length && items[end].k !== "turn" && !(items[end].k === "user" && end > i)) end++;
+    if (end === items.length) end = -1;
+    if (end < 0 || items[end].k !== "turn") {
+      // unfinished turn (or a turn without an end marker): show as is up to the next user prompt
+      const stop = end < 0 ? items.length : end;
+      for (; i < stop; i++) out.push({ item: items[i] });
+      continue;
+    }
+    const seg = items.slice(i, end + 1);
+    const work = seg.filter((x) => x.k === "tool" || x.k === "thought");
+    if (work.length < 2) for (const x of seg) out.push({ item: x });
+    else {
+      const start = seg[0].k === "user" ? seg[0].ts : undefined;
+      const fin = items[end] as Item & { k: "turn" };
+      let placed = false;
+      for (const x of seg) {
+        if (x.k === "tool" || x.k === "thought") {
+          if (!placed) out.push({ work, ms: start ? fin.ts - start : undefined });
+          placed = true;
+        } else out.push({ item: x });
+      }
+    }
+    i = end + 1;
+  }
+  return out;
+}
+
+function duration(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return ms < 1000 ? "<1s" : s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+}
 
 const ItemView = memo(function ItemView({ item, name }: { item: Item; rev: number; name: string }) {
   switch (item.k) {

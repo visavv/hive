@@ -11,6 +11,7 @@ import { store, useStore } from "./store.js";
 import { Modal } from "./App.js";
 import { fmtIdle } from "./format.js";
 import { IconLink } from "./Icons.js";
+import { agentState, rollup, STATE_LABEL } from "./state.js";
 
 /** Pause icon drawn in SVG (the ⏸ glyph is missing from common Linux fonts). */
 export function PauseIcon({ title }: { title?: string }) {
@@ -343,6 +344,7 @@ export function GroupsSection() {
               <span className="spacer" />
               {g.mode === "review" && <span className="badge" title="you review each message">review</span>}
               {g.held > 0 && <span className="badge alert" title="messages waiting for you">{g.held}</span>}
+              <GroupState members={g.members} />
             </div>
             <div className="row3">{g.members.join(", ")}</div>
           </li>
@@ -351,6 +353,13 @@ export function GroupsSection() {
       </ul>
     </>
   );
+}
+
+/** The most urgent state among a group's agents, so a busy group reads at a glance. */
+function GroupState({ members }: { members: string[] }) {
+  const st = useStore((s) => rollup(members.filter((m) => s.agents.has(m) || s.starting.has(m)).map(agentState)));
+  if (!st || st === "idle" || st === "stopped") return null;
+  return <span className={`state-word st-${st}`}>{STATE_LABEL[st]}</span>;
 }
 
 /** Every message waiting for your review, with release / edit / drop / link. */

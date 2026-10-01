@@ -7,7 +7,9 @@ import { Drawer } from "./Drawer.js";
 import { agentNameProblem } from "../../core/names.js";
 import { GroupChat, GroupsSection, LinkDialog, PauseIcon } from "./Links.js";
 import { VerdictWindow } from "./Verdict.js";
-import { IconBell, IconBellOff, IconColumns, IconInbox, IconMenu, IconPlus, IconRows, IconScale, IconSpark, IconTeam } from "./Icons.js";
+import { Palette, type PaletteAction } from "./Palette.js";
+import { agentState, rollup, STATE_LABEL, StatePill } from "./state.js";
+import { IconBell, IconBellOff, IconColumns, IconInbox, IconMenu, IconPlus, IconRows, IconScale, IconSearch, IconSpark, IconTeam } from "./Icons.js";
 import { RecipesDialog, SkillsDialog } from "./Extras.js";
 import { focus } from "./focus.js";
 import { ctxPct, fmtIdle, parseDuration, statusLabel, suggestName, noteLabel } from "./format.js";
@@ -87,6 +89,7 @@ export function App() {
   const [jobFor, setJobFor] = useState<string | null>(null);
   const [drawer, setDrawer] = useState<false | "default" | "usage">(false);
   const [dialog, setDialog] = useState<"" | "recipes" | "skills">("");
+  const [palette, setPalette] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const skillReq = useStore((s) => s.skillRequest);
   const linkReq = useStore((s) => s.linkRequest);
@@ -127,9 +130,15 @@ export function App() {
       } else if (mod && e.key.toLowerCase() === "n" && !e.shiftKey) {
         e.preventDefault();
         setAdding(true);
-      } else if (mod && e.key.toLowerCase() === "b") {
+      } else if (mod && e.shiftKey && e.key.toLowerCase() === "b") {
         e.preventDefault();
         document.querySelector<HTMLInputElement>(".broadcast input")?.focus();
+      } else if (mod && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        toggleSidebar();
+      } else if (mod && e.shiftKey && (e.key === "[" || e.key === "{" || e.key === "]" || e.key === "}")) {
+        e.preventDefault();
+        focus.cycle(e.key === "[" || e.key === "{" ? -1 : 1);
       } else if (mod && e.key === "\\") {
         e.preventDefault();
         toggleSidebar();
@@ -138,9 +147,12 @@ export function App() {
         const z = store.layout.zoom ?? 1;
         const next = e.key === "0" ? 1 : Math.min(2, Math.max(0.6, Math.round((z + (e.key === "-" ? -0.1 : 0.1)) * 10) / 10));
         saveLayout({ zoom: next });
-      } else if (mod && e.key.toLowerCase() === "k") {
+      } else if (mod && e.shiftKey && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setDialog("skills");
+      } else if (mod && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPalette((v) => !v);
       } else if (mod && e.key.toLowerCase() === "i") {
         e.preventDefault();
         setDrawer((d) => (d ? false : "default"));
@@ -157,6 +169,31 @@ export function App() {
   useEffect(() => {
     (document.documentElement.style as any).zoom = String(layout.zoom ?? 1);
   }, [layout.zoom]);
+  useEffect(() => {
+    document.documentElement.dataset.theme = layout.theme ?? "dark";
+    document.documentElement.dataset.density = layout.density ?? "comfortable";
+  }, [layout.theme, layout.density]);
+
+  const actions: PaletteAction[] = [
+    { id: "new", label: "New agent", keys: "Ctrl+N", run: () => setAdding(true) },
+    { id: "team", label: "Set up a team (recipes)", hint: "squad, coder + reviewer, idea pipeline…", run: () => setDialog("recipes") },
+    { id: "verdict", label: "Verdict: one prompt, several agents, one judge", run: () => store.openVerdict({}) },
+    { id: "skills", label: "Run a skill", hint: "YouTube titles, code review, prompt-engineer…", keys: "Ctrl+Shift+K", run: () => setDialog("skills") },
+    { id: "link", label: "Link agents so they can talk", run: () => store.requestLink([]) },
+    { id: "inbox", label: "Inbox and messages waiting for review", keys: "Ctrl+I", run: () => setDrawer("default") },
+    { id: "usage", label: "Usage, limits and spending guards", run: () => setDrawer("usage") },
+    { id: "broadcast", label: "Message all agents", keys: "Ctrl+Shift+B", run: () => setTimeout(() => document.querySelector<HTMLInputElement>(".broadcast input")?.focus(), 0) },
+    { id: "sidebar", label: "Toggle sidebar", keys: "Ctrl+B", run: () => toggleSidebar() },
+    { id: "max", label: "Maximize / restore the focused agent", keys: "Ctrl+M", run: () => focus.active && saveLayout({ maximized: store.layout.maximized === focus.active ? null : focus.active }) },
+    { id: "layout", label: `Layout: ${layout.orientation === "vertical" ? "horizontal" : layout.orientation === "horizontal" ? "auto" : "vertical"} (now ${layout.orientation ?? "auto"})`, run: () => saveLayout({ orientation: layout.orientation === "vertical" ? "horizontal" : layout.orientation === "horizontal" ? "auto" : "vertical" }) },
+    { id: "theme", label: `Theme: ${layout.theme === "light" ? "dark" : "light"}`, run: () => saveLayout({ theme: layout.theme === "light" ? "dark" : "light" }) },
+    ...(["compact", "comfortable", "spacious"] as const)
+      .filter((d) => d !== (layout.density ?? "comfortable"))
+      .map((d) => ({ id: "density-" + d, label: `Density: ${d}`, run: () => saveLayout({ density: d }) })),
+    { id: "hover", label: `Hover to focus panes: ${layout.hoverFocus ? "turn off" : "turn on"}`, hint: "for Handy / voice typing", run: () => saveLayout({ hoverFocus: !layout.hoverFocus }) },
+    { id: "ping", label: `Finish chime: ${layout.ping === false ? "turn on" : "turn off"}`, run: () => saveLayout({ ping: layout.ping === false }) },
+    { id: "zoomin", label: "Zoom in / out / reset", keys: "Ctrl+= / Ctrl+- / Ctrl+0", run: () => {} },
+  ];
 
   if (!ready) return <div className="boot">starting hive…</div>;
 
@@ -169,28 +206,36 @@ export function App() {
         onAdd={() => setAdding(true)}
         onHive={() => setDrawer(drawer ? false : "default")}
         onUsage={() => setDrawer(drawer === "usage" ? false : "usage")}
-        onRecipes={() => setDialog("recipes")}
-        onSkills={() => setDialog("skills")}
+        onPalette={() => setPalette(true)}
         vertical={vertical}
         columns={columns}
       />
-      {sidebar && <Sidebar names={names} onAdd={() => setAdding(true)} />}
+      {sidebar && <Sidebar names={names} onAdd={() => setAdding(true)} onSearch={() => setPalette(true)} />}
       <main className="grid-wrap">
         {names.length === 0 ? (
           <div className="welcome">
-            <h1>hive</h1>
-            <p>Run Claude Code, Codex, Qwen and friends side by side. They can message each other through the hive.</p>
+            <div className="welcome-mark" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+              <span />
+            </div>
+            <h1>Start a hive</h1>
+            <p>Run Claude Code, Codex, Gemini and API models side by side. Link them so they review and test each other's work.</p>
             <div className="welcome-actions">
-              <button className="primary" onClick={() => setAdding(true)}>+ Add an agent</button>
-              <button onClick={() => setDialog("recipes")}>
-                <IconTeam /> Set up a team (recipe)
+              <button className="primary" onClick={() => setDialog("recipes")}>
+                <IconTeam /> Set up a team
               </button>
-              <button onClick={() => setDialog("skills")}>
-                <IconSpark /> Run a skill
+              <button onClick={() => setAdding(true)}>
+                <IconPlus /> Add one agent
+              </button>
+              <button onClick={() => store.openVerdict({})}>
+                <IconScale /> Verdict
               </button>
             </div>
-            <p className="dim">
-              Ctrl+N add · Ctrl+1..9 jump · Ctrl+Tab cycle · Ctrl+B broadcast · Ctrl+I hive report &amp; mail · Ctrl+M maximize · Ctrl+= / Ctrl+- zoom · Ctrl+\ sidebar · hover a pane to type into it
+            <p className="welcome-tip">
+              <kbd>Ctrl</kbd>
+              <kbd>K</kbd> jump to any agent or command
             </p>
           </div>
         ) : (
@@ -228,6 +273,7 @@ export function App() {
         />
       )}
       <VerdictWindow />
+      {palette && <Palette actions={actions} onClose={() => setPalette(false)} />}
       {groupOpen && <GroupChat key={groupOpen} name={groupOpen} onClose={() => store.openGroup(null)} />}
       {(dialog === "skills" || skillReq) && (
         <SkillsDialog
@@ -271,7 +317,7 @@ function toggleSidebar() {
 
 // ---- top bar: broadcast + layout controls ----
 
-function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onRecipes, onSkills, vertical, columns }: {
+function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onPalette, vertical, columns }: {
   onUsage: () => void;
   vertical: boolean;
   columns: number;
@@ -280,8 +326,7 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onRecipe
   setSelected: (s: Set<string>) => void;
   onAdd: () => void;
   onHive: () => void;
-  onRecipes: () => void;
-  onSkills: () => void;
+  onPalette: () => void;
 }) {
   const unread = useStore((s) => s.ownerUnread);
   const held = useStore((s) => s.heldTotal);
@@ -300,8 +345,6 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onRecipe
   const cols = columns;
   const setCols = (n: number) => saveLayout(vertical ? { vcolumns: n } : { columns: n, widths: undefined });
   const readyNames = useStore((s) => names.filter((n) => s.readyAt.has(n)));
-  const orient = layout.orientation ?? "auto";
-  const nextOrient = orient === "auto" ? "vertical" : orient === "vertical" ? "horizontal" : "auto";
   return (
     <div className="topbar">
       <button className="ghost" onClick={toggleSidebar} title="toggle sidebar (Ctrl+\)" aria-label="toggle sidebar"><IconMenu /></button>
@@ -338,14 +381,6 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onRecipe
       )}
       <button
         className="ghost"
-        onClick={() => saveLayout({ orientation: nextOrient })}
-        title={`layout: ${orient}${orient === "auto" ? ` (now ${vertical ? "vertical" : "horizontal"})` : ""} — click for ${nextOrient}. Auto goes vertical on tall/narrow windows (9:16 monitors).`}
-        aria-label={`layout ${orient}`}
-      >
-        {vertical ? <IconRows /> : <IconColumns />} <span className="bl">{orient === "auto" ? "Auto" : orient === "vertical" ? "Vertical" : "Horizontal"}</span>
-      </button>
-      <button
-        className="ghost"
         onClick={() => {
           saveLayout({ ping: layout.ping === false });
           if (layout.ping === false) ping();
@@ -355,9 +390,6 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onRecipe
       >
         {layout.ping === false ? <IconBellOff /> : <IconBell />}
       </button>
-      <label className="toggle" title="hovering a pane focuses its input (for Handy / voice typing)">
-        <input type="checkbox" checked={layout.hoverFocus} onChange={(e) => saveLayout({ hoverFocus: e.target.checked })} aria-label="hover focus" /> <span className="tl">hover focus</span>
-      </label>
       <span className="cols" title="panes per row">
         <button className="ghost" disabled={cols <= 1} onClick={() => setCols(cols - 1)} aria-label="fewer columns">−</button>
         {cols} cols
@@ -367,11 +399,8 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onRecipe
       <button className="ghost" onClick={() => store.openVerdict({})} title="send one prompt to several agents; a judge picks the best parts">
         <IconScale /> <span className="bl">Verdict</span>
       </button>
-      <button className="ghost" onClick={onSkills} title="reusable prompts with parameters (Ctrl+K)">
-        <IconSpark /> <span className="bl">Skills</span>
-      </button>
-      <button className="ghost" onClick={onRecipes} title="set up a ready-made team of agents">
-        <IconTeam /> <span className="bl">Recipes</span>
+      <button className="ghost cmd-btn" onClick={onPalette} title="jump to an agent or run any command (Ctrl+K)">
+        <IconSearch /> <span className="bl">Commands</span> <kbd>Ctrl K</kbd>
       </button>
       <button className={`hive-btn${unread || held ? " has-mail" : ""}`} onClick={onHive} title={`report, inbox, blackboard, mail (Ctrl+I)${held ? ` · ${held} message${held === 1 ? "" : "s"} waiting for your review` : ""}`}>
         <IconInbox /> <span className="bl">Hive</span>
@@ -470,7 +499,7 @@ function Grid({ names, columns, widths, minRow, children }: { names: string[]; c
 
 // ---- sidebar ----
 
-function Sidebar({ names, onAdd }: { names: string[]; onAdd: () => void }) {
+function Sidebar({ names, onAdd, onSearch }: { names: string[]; onAdd: () => void; onSearch: () => void }) {
   const agents = useStore((s) => s.agents);
   const starting = useStore((s) => s.starting);
   const jobs = useStore((s) => s.jobs);
@@ -480,44 +509,51 @@ function Sidebar({ names, onAdd }: { names: string[]; onAdd: () => void }) {
   const ended = jobs.filter((j) => !(j.state === "active" || j.state === "queued")).slice(-5).reverse();
   return (
     <aside className="sidebar">
+      <button className="side-search" onClick={onSearch} title="jump to an agent or run a command">
+        <IconSearch size={14} />
+        <span>Search</span>
+        <span className="spacer" />
+        <kbd>Ctrl K</kbd>
+      </button>
       <div className="side-head">
         <span>Agents</span>
-        <button className="ghost" onClick={onAdd} title="add agent">＋</button>
+        <button className="ghost" onClick={onAdd} title="add agent (Ctrl+N)" aria-label="add agent">
+          <IconPlus size={14} />
+        </button>
       </div>
       <ul className="agent-list">
         {names.map((n, i) => {
           const a = agents.get(n);
           const st = starting.get(n);
-          const status = a?.status ?? (st?.error ? "error" : "starting");
+          const state = agentState(n);
           const model = a?.config.find((c) => c.category === "model" || c.id === "model");
-          const effort = a?.config.find((c) => c.category === "thought_level" || /effort|reason|think/i.test(c.id));
-          const waiting = store.waitingOn(n);
           return (
             <li
               key={n}
-              className={`agent-item${layout.maximized === n ? " max" : ""}${store.readyAt.has(n) ? " ready" : ""}`}
+              className={`agent-item state-${state}${layout.maximized === n ? " max" : ""}${focus.active === n ? " current" : ""}`}
               onClick={() => {
                 if (layout.maximized && layout.maximized !== n) saveLayout({ maximized: null });
                 setTimeout(() => focus.to(n), 0);
               }}
             >
               <div className="row1">
-                <span className={`dot ${status}`} title={statusLabel(status)} />
+                <span className="idx">{i < 9 ? i + 1 : ""}</span>
                 <strong>{n}</strong>
-                <span className="kind">{a?.kind ?? st?.kind}</span>
                 <span className="spacer" />
-                {waiting > 0 && <span className="badge alert" title="waiting for your answer">!</span>}
-                {!waiting && store.readyAt.has(n) && <span className="badge ready" title="finished; not looked at yet">✓</span>}
-                {a && a.unread > 0 && <span className="badge" title="unread hive mail"><IconInbox size={11} /> {a.unread}</span>}
-                {i < 9 && <span className="key">^{i + 1}</span>}
+                {a && a.unread > 0 && (
+                  <span className="mono-meta" title="unread hive mail">
+                    <IconInbox size={11} /> {a.unread}
+                  </span>
+                )}
+                <span className={`state-word st-${state}`}>{STATE_LABEL[state]}</span>
               </div>
-              <div className="row2">
-                {model && <span>{labelOf(model)}</span>}
-                {effort && effort !== model && <span>· {labelOf(effort)}</span>}
-                {a && <span className="dim">· {a.status === "idle" ? `idle ${fmtIdle(a.idleMs)}` : statusLabel(a.status)}</span>}
-                {a?.ctx && <span className="dim">· {ctxPct(a.ctx.used, a.ctx.size)}% ctx</span>}
+              <div className="row2 mono-meta">
+                <span>{a?.kind ?? st?.kind}</span>
+                {model && <span>· {labelOf(model)}</span>}
+                {a?.branch?.startsWith("hive/") && <span className="branch">· {a.branch}</span>}
+                {a?.ctx && <span>· {ctxPct(a.ctx.used, a.ctx.size)}%</span>}
               </div>
-              {a?.note && <div className="row3" title={a.note}>{noteLabel(a.note)}</div>}
+              {a?.note && state !== "idle" && <div className="row3" title={a.note}>{noteLabel(a.note)}</div>}
               {st?.error && <div className="row3 err">{st.error}</div>}
             </li>
           );

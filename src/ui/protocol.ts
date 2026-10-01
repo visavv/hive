@@ -72,6 +72,8 @@ export interface Layout {
   vsidebar?: boolean;
   /** Chime when an agent finishes (default on). */
   ping?: boolean;
+  theme?: "dark" | "light";
+  density?: "compact" | "comfortable" | "spacious";
 }
 
 export interface ConfigOptionView {
