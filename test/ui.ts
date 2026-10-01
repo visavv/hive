@@ -367,17 +367,19 @@ try {
   // alignment: every visible item in a row shares the row's vertical center (±1px)
   const misaligned = await alignment(page);
   writeFileSync(join(shots, "alignment.json"), JSON.stringify(misaligned, null, 2));
-  // close-ups at 3x for checking spacing by eye
-  const vp = page.viewportSize() ?? { width: 1600, height: 950 };
-  await page.setViewportSize({ width: vp.width * 3, height: vp.height * 3 }).catch(() => {});
-  await page.evaluate(`document.documentElement.style.zoom = "3"; document.body.classList.add("no-toasts")`);
-  await page.addStyleTag({ content: ".no-toasts .toasts { display: none !important; }" });
-  await page.waitForTimeout(300);
-  for (const [file, sel] of [["head", '[data-pane="alpha"] .pane-head'], ["side", ".agent-list"], ["groups", ".group-item"]] as const)
-    await page.locator(sel).first().screenshot({ path: join(shots, `align-${file}.png`) }).catch(() => {});
-  await page.locator(".topbar").screenshot({ path: join(shots, "align-top.png"), clip: undefined }).catch(() => {});
-  await page.evaluate(`document.documentElement.style.zoom = "1"; document.body.classList.remove("no-toasts")`);
-  await page.setViewportSize(vp).catch(() => {});
+  // close-ups at 3x for checking spacing by eye (ALIGN_SHOTS=1; a 3x window crashes small CI displays)
+  if (process.env.ALIGN_SHOTS === "1") {
+    const vp = page.viewportSize() ?? { width: 1600, height: 950 };
+    await page.setViewportSize({ width: vp.width * 3, height: vp.height * 3 }).catch(() => {});
+    await page.evaluate(`document.documentElement.style.zoom = "3"; document.body.classList.add("no-toasts")`);
+    await page.addStyleTag({ content: ".no-toasts .toasts { display: none !important; }" });
+    await page.waitForTimeout(300);
+    for (const [file, sel] of [["head", '[data-pane="alpha"] .pane-head'], ["side", ".agent-list"], ["groups", ".group-item"]] as const)
+      await page.locator(sel).first().screenshot({ path: join(shots, `align-${file}.png`) }).catch(() => {});
+    await page.locator(".topbar").screenshot({ path: join(shots, "align-top.png"), clip: undefined }).catch(() => {});
+    await page.evaluate(`document.documentElement.style.zoom = "1"; document.body.classList.remove("no-toasts")`);
+    await page.setViewportSize(vp).catch(() => {});
+  }
   assert(misaligned.length === 0, `rows are vertically aligned${misaligned.length ? ": " + misaligned.slice(0, 6).map((m) => `${m.row} > ${m.el} off by ${m.dy}px`).join("; ") : ""}`);
   await pane(page, "beta").locator(".group-chip").click();
   const gc = page.locator(".modal.wide", { hasText: "@alpha-beta" });
