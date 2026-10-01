@@ -47,6 +47,29 @@ export async function repoRoot(cwd: string): Promise<string> {
   return resolve((await git(["rev-parse", "--show-toplevel"], cwd)).trim());
 }
 
+/**
+ * Make `dir` a git project with one (empty) commit, so agents can get worktrees. Leaves an existing
+ * repo alone apart from adding the first commit if it has none. Returns what it did.
+ */
+export async function initRepo(dir: string): Promise<"created" | "first-commit" | "already"> {
+  let made = false;
+  try {
+    await git(["rev-parse", "--git-dir"], dir);
+  } catch {
+    await git(["init", "-q"], dir);
+    made = true;
+  }
+  try {
+    await git(["rev-parse", "--verify", "HEAD"], dir);
+    return "already";
+  } catch {}
+  // no name/email configured yet (a fresh PC): commit as "hive" rather than fail
+  await git(["commit", "-q", "--allow-empty", "-m", "start (hive)"], dir).catch(() =>
+    git(["-c", "user.name=hive", "-c", "user.email=hive@localhost", "commit", "-q", "--allow-empty", "-m", "start (hive)"], dir),
+  );
+  return made ? "created" : "first-commit";
+}
+
 /** Make <dir>/.hive ignore itself in any repo it lands in. */
 export function selfIgnoreHiveDir(hiveDir: string) {
   mkdirSync(hiveDir, { recursive: true });

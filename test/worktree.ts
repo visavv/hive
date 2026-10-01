@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ensureWorktree, listWorktrees, mergeWorktree, removeWorktree } from "../src/core/worktree.js";
+import { ensureWorktree, initRepo, listWorktrees, mergeWorktree, removeWorktree } from "../src/core/worktree.js";
 import { Hub } from "../src/core/hub.js";
 import { ROLES } from "../src/core/roles.js";
 import { Scheduler } from "../src/core/scheduler.js";
@@ -100,5 +100,24 @@ const bare = mkdtempSync(join(tmpdir(), "hive-nogit-"));
 let err = "";
 await ensureWorktree(bare, "x").catch((e) => (err = e.message));
 assert(/not inside a git repository/.test(err), "clear error outside a git repo");
+
+// a worktree agent in a folder that isn't a git project starts anyway, in the folder, and says why
+{
+  const plain = mkdtempSync(join(tmpdir(), "hive-plain-"));
+  const h = new Hub({ hiveDb: join(mkdtempSync(join(tmpdir(), "hive-plaindb-")), "hive.db"), pollMs: 200 });
+  const notes: string[] = [];
+  const opts = (h as any).opts;
+  const prev = opts.onEvent;
+  opts.onEvent = (n: string, e: any) => {
+    if (e.type === "notice") notes.push(e.text);
+    prev?.(n, e);
+  };
+  const s = await h.add({ name: "loose", agent: mock("loose"), cwd: plain, policy: "ask", worktree: true });
+  assert(s.cwd === plain && notes.some((t) => /works directly in/.test(t) && /git init/.test(t)), `no git project: the agent starts in the folder with a notice (${notes.join(" | ").slice(0, 120)})`);
+  await h.close();
+  assert((await initRepo(plain)) === "created" && (await initRepo(plain)) === "already", "initRepo makes a git project with a first commit, once");
+  const wt2 = await ensureWorktree(plain, "after");
+  assert(existsSync(wt2.path), "after initRepo, worktrees work there");
+}
 
 finish("worktree");

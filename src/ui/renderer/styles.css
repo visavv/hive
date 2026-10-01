@@ -202,7 +202,9 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 .modal-back { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); display: grid; place-items: center; z-index: 50; }
 .modal { width: min(560px, 92vw); background: var(--bg2); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
 .modal h2 { margin: 0 0 12px; font-size: 16px; }
-.form label { display: grid; grid-template-columns: 100px 1fr; gap: 8px; align-items: center; margin: 8px 0; }
+.form label { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 8px; align-items: center; margin: 8px 0; }
+/* a long option label must not push a select past the dialog edge */
+.form label > select, .form label > input:not([type=checkbox]), .form label > textarea { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
 .form label > span { color: var(--dim); }
 .form textarea { resize: vertical; }
 .buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
@@ -294,7 +296,8 @@ button.danger { border-color: #6b2f35; color: var(--red); }
 
 /* ---- vertical layout (9:16 monitors, side-of-screen use) ---- */
 .app.vertical { grid-template-rows: auto 1fr; }
-.app.vertical .topbar { flex-wrap: wrap; padding: 4px 8px; row-gap: 4px; }
+/* height: auto — the base .topbar is a fixed 44px, which made the wrapped broadcast row spill over the panes */
+.app.vertical .topbar { flex-wrap: wrap; padding: 4px 8px; row-gap: 4px; height: auto; min-height: 44px; }
 .app.vertical .broadcast { order: 20; flex: 1 1 100%; min-width: 0; }
 .app.vertical .toggle { display: none; }
 .topbar { min-height: 40px; }

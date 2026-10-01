@@ -953,6 +953,11 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
     return res;
   }
 
+  /** A one-line notice in this agent's pane (e.g. "working without a worktree"). */
+  note(text: string) {
+    this.emitEv({ type: "notice", text });
+  }
+
   private emitEv(e: SessionEvent) {
     this.emit("event", e);
   }
