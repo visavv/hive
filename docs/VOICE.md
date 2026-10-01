@@ -106,3 +106,20 @@ The mic works the same when you open hive in a browser over `hive web`. Browsers
 - Audio is recorded only while the mic button is red (or the pane shows *listening*). It goes to the provider you chose and nowhere else. hive doesn't save recordings.
 - The desktop app gives microphone access only to its own page, and only audio, never the camera. All other permission requests are denied, except notifications and clipboard writes, which hive already uses.
 - Replies play from memory (Web Audio). The page loads nothing from the network.
+
+## Choosing a provider in the app
+
+Ctrl+K → **Dictation: set up** lists every provider, shows which ones are ready (✓) and what each still needs. Pick one (or **Automatic** = the first one that's ready), optionally a model and a language, and press **Save**. The choice is saved per project; keys always stay in hive's environment (set them, then restart hive).
+
+| Provider | Set | Models to try |
+|---|---|---|
+| Local server (Whisper, Parakeet, …) | `HIVE_STT_URL` | whatever your server serves |
+| OpenAI | `OPENAI_API_KEY` (or `HIVE_STT_KEY`) | `gpt-4o-mini-transcribe`, `gpt-4o-transcribe`, `whisper-1` |
+| ElevenLabs Scribe | `ELEVENLABS_API_KEY` | `scribe_v1` |
+| Groq (fast hosted Whisper) | `GROQ_API_KEY` | `whisper-large-v3-turbo`, `whisper-large-v3` |
+| NVIDIA (Parakeet / Canary / Nemotron speech) | `HIVE_NVIDIA_STT_URL` (+ `NVIDIA_API_KEY` if your endpoint needs one) | e.g. `parakeet-tdt-0.6b-v2`, `canary-1b` |
+| Any OpenAI-compatible service | `HIVE_STT_CUSTOM_URL` (+ `HIVE_STT_CUSTOM_KEY`) | the service's model name |
+
+Model names from third parties change; the picker's suggestions are only suggestions, and you can type any name.
+
+**NVIDIA on your RTX GPU:** NVIDIA ships its speech models (Parakeet, Canary) as NIM containers that serve an OpenAI-compatible `/v1/audio/transcriptions` endpoint. Run the container from NVIDIA's NIM catalogue on the Windows desktop (Docker Desktop with GPU support) or the Linux server, then set `HIVE_NVIDIA_STT_URL=http://127.0.0.1:9000` (use the port the container prints). Check NVIDIA's NIM docs for the current image name and whether it needs an `NVIDIA_API_KEY` to download. Community Parakeet servers with the same OpenAI-compatible API work too: point `HIVE_STT_URL` (local) or `HIVE_NVIDIA_STT_URL` at them.

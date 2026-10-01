@@ -27,42 +27,99 @@ import { checkMediaCap, recordMedia, ttsAudio, ttsAvailable } from "./media.js";
 const env = process.env;
 export const STT_MAX_BYTES = 25 * 1024 * 1024;
 export const SPEECH_MAX_CHARS = 400;
-export type SttProvider = "local" | "openai" | "elevenlabs";
-const PROVIDERS: SttProvider[] = ["local", "openai", "elevenlabs"];
+export type SttProvider = "local" | "openai" | "elevenlabs" | "groq" | "nvidia" | "custom";
+
+/**
+ * Every dictation provider hive can use. Keys only ever come from the environment;
+ * which provider, model and language to use is the owner's choice (setSttPrefs,
+ * saved by the backend), falling back to HIVE_STT / HIVE_STT_MODEL / HIVE_STT_LANGUAGE.
+ * All but ElevenLabs speak the OpenAI /audio/transcriptions protocol.
+ */
+export interface SttProviderInfo {
+  id: SttProvider;
+  label: string;
+  /** What has to be set (env var names, shown in the UI). */
+  needs: string;
+  /** Model suggestions for the picker (free text is allowed; third-party names change). */
+  models: string[];
+  note: string;
+}
+export const STT_PROVIDERS: SttProviderInfo[] = [
+  { id: "local", label: "Local server (Whisper, Parakeet, …)", needs: "HIVE_STT_URL", models: [], note: "free and private: whisper.cpp server, faster-whisper / speaches, or a Parakeet server on this machine or your LAN/tailnet" },
+  { id: "openai", label: "OpenAI", needs: "OPENAI_API_KEY (or HIVE_STT_KEY)", models: ["gpt-4o-mini-transcribe", "gpt-4o-transcribe", "whisper-1"], note: "accurate, paid per minute" },
+  { id: "elevenlabs", label: "ElevenLabs Scribe", needs: "ELEVENLABS_API_KEY", models: ["scribe_v1"], note: "same key also speaks replies" },
+  { id: "groq", label: "Groq (fast hosted Whisper)", needs: "GROQ_API_KEY", models: ["whisper-large-v3-turbo", "whisper-large-v3"], note: "very fast, cheap" },
+  { id: "nvidia", label: "NVIDIA (Parakeet / Canary / Nemotron speech)", needs: "HIVE_NVIDIA_STT_URL (self-hosted NIM) or NVIDIA_API_KEY + HIVE_NVIDIA_STT_URL", models: ["parakeet-tdt-0.6b-v2", "canary-1b", "parakeet-ctc-1.1b"], note: "NVIDIA speech models through an OpenAI-compatible NIM endpoint; great on your RTX GPU" },
+  { id: "custom", label: "Any OpenAI-compatible service", needs: "HIVE_STT_CUSTOM_URL (+ HIVE_STT_CUSTOM_KEY)", models: [], note: "Deepinfra, Together, Fireworks, a self-hosted gateway…" },
+];
+const PROVIDERS: SttProvider[] = STT_PROVIDERS.map((p) => p.id);
+
+export interface SttPrefs {
+  provider?: SttProvider | "auto";
+  model?: string;
+  language?: string;
+}
+let prefs: SttPrefs = {};
+/** The owner's saved choice (backend loads it from the db and calls this on change). */
+export function setSttPrefs(p: SttPrefs) {
+  prefs = { ...p };
+}
 
 const sttMaxSeconds = () => Math.max(5, Number(env.HIVE_STT_MAX_SECONDS) || 300);
 const openaiKey = () => env.HIVE_STT_KEY || env.OPENAI_API_KEY || "";
 const elBase = () => (env.ELEVENLABS_BASE || "https://api.elevenlabs.io").replace(/\/+$/, "");
+const trimBase = (u: string) => u.trim().replace(/\/+$/, "");
 
-function configured(p: SttProvider): boolean {
-  if (p === "local") return !!env.HIVE_STT_URL;
-  if (p === "openai") return !!openaiKey();
-  return !!env.ELEVENLABS_API_KEY;
+/** Where a provider's transcription endpoint is and which Bearer key it takes. */
+function target(p: SttProvider): { url: string; key: string } | null {
+  switch (p) {
+    case "local":
+      return env.HIVE_STT_URL ? { url: localEndpoint(), key: env.HIVE_STT_KEY ?? "" } : null;
+    case "openai":
+      return openaiKey() ? { url: `${trimBase(env.HIVE_STT_BASE || "https://api.openai.com/v1")}/audio/transcriptions`, key: openaiKey() } : null;
+    case "elevenlabs":
+      return env.ELEVENLABS_API_KEY ? { url: `${elBase()}/v1/speech-to-text`, key: env.ELEVENLABS_API_KEY } : null;
+    case "groq":
+      return env.GROQ_API_KEY ? { url: `${trimBase(env.HIVE_GROQ_BASE || "https://api.groq.com/openai/v1")}/audio/transcriptions`, key: env.GROQ_API_KEY } : null;
+    case "nvidia":
+      return env.HIVE_NVIDIA_STT_URL ? { url: localEndpoint(env.HIVE_NVIDIA_STT_URL), key: env.NVIDIA_API_KEY ?? "" } : null;
+    case "custom":
+      return env.HIVE_STT_CUSTOM_URL ? { url: localEndpoint(env.HIVE_STT_CUSTOM_URL), key: env.HIVE_STT_CUSTOM_KEY ?? "" } : null;
+  }
 }
 
-/** The local server's transcription endpoint: a full URL, a …/v1 base, or just host:port. */
+function configured(p: SttProvider): boolean {
+  return !!target(p);
+}
+
+/** A server's transcription endpoint from a full URL, a …/v1 base, or just host:port. */
 export function localEndpoint(url = env.HIVE_STT_URL ?? ""): string {
-  const u = url.trim().replace(/\/+$/, "");
+  const u = trimBase(url);
   if (/\/audio\/transcriptions$/.test(u)) return u;
   if (/\/v1$/.test(u)) return `${u}/audio/transcriptions`;
   return `${u}/v1/audio/transcriptions`;
 }
 
 function defaultModel(p: SttProvider): string | undefined {
+  if (prefs.model?.trim()) return prefs.model.trim();
   if (env.HIVE_STT_MODEL) return env.HIVE_STT_MODEL;
-  // Third-party model names; override with HIVE_STT_MODEL when they change.
+  // Third-party model names; pick another in the app (or HIVE_STT_MODEL) when they change.
   if (p === "openai") return "gpt-4o-mini-transcribe";
   if (p === "elevenlabs") return "scribe_v1";
-  return undefined; // local servers mostly serve one model; send one only if asked
+  if (p === "groq") return "whisper-large-v3-turbo";
+  return undefined; // local / NVIDIA / custom servers mostly serve one model; send one only if chosen
 }
+const sttLanguage = () => (prefs.language?.trim() || env.HIVE_STT_LANGUAGE?.trim() || "") || undefined;
 
 export interface SttStatus {
   /** The provider dictation will use, or null when none is set up. */
   provider: SttProvider | null;
-  /** What HIVE_STT asks for ("auto" when unset). */
+  /** What was chosen in the app, else HIVE_STT ("auto" when neither). */
   wanted: string;
   configured: Record<SttProvider, boolean>;
+  providers: SttProviderInfo[];
   model?: string;
+  language?: string;
   /** Where audio goes (host only, never a key). */
   endpoint?: string;
   maxSeconds: number;
@@ -72,32 +129,31 @@ export interface SttStatus {
 }
 
 export function sttStatus(): SttStatus {
-  const wanted = (env.HIVE_STT || "auto").trim().toLowerCase();
+  const wanted = String(prefs.provider || env.HIVE_STT || "auto").trim().toLowerCase();
   const conf = Object.fromEntries(PROVIDERS.map((p) => [p, configured(p)])) as Record<SttProvider, boolean>;
   let provider: SttProvider | null = null;
   let problem: string | undefined;
   if (wanted === "auto") {
     provider = PROVIDERS.find((p) => conf[p]) ?? null;
-    if (!provider) problem = "no speech-to-text provider is set up: set HIVE_STT_URL (a local Whisper server), OPENAI_API_KEY or ELEVENLABS_API_KEY, then restart hive (docs/VOICE.md)";
+    if (!provider) problem = "no speech-to-text provider is set up: set HIVE_STT_URL (a local Whisper/Parakeet server), OPENAI_API_KEY, ELEVENLABS_API_KEY, GROQ_API_KEY or HIVE_NVIDIA_STT_URL, then restart hive (docs/VOICE.md)";
   } else if ((PROVIDERS as string[]).includes(wanted)) {
     provider = wanted as SttProvider;
     if (!conf[provider]) {
-      problem = `HIVE_STT=${wanted} but ${wanted === "local" ? "HIVE_STT_URL" : wanted === "openai" ? "HIVE_STT_KEY (or OPENAI_API_KEY)" : "ELEVENLABS_API_KEY"} is not set (docs/VOICE.md)`;
+      problem = `${STT_PROVIDERS.find((p) => p.id === wanted)!.label} needs ${STT_PROVIDERS.find((p) => p.id === wanted)!.needs} in hive's environment (then restart hive; docs/VOICE.md)`;
       provider = null;
     }
-  } else problem = `HIVE_STT=${wanted} is not one of local, openai, elevenlabs, auto`;
+  } else problem = `"${wanted}" is not a dictation provider (${PROVIDERS.join(", ")}, auto)`;
   let endpoint: string | undefined;
   if (provider) {
-    const full = provider === "local" ? localEndpoint() : provider === "openai" ? `${(env.HIVE_STT_BASE || "https://api.openai.com/v1").replace(/\/+$/, "")}/audio/transcriptions` : `${elBase()}/v1/speech-to-text`;
     try {
-      const u = new URL(full);
+      const u = new URL(target(provider)!.url);
       endpoint = `${u.protocol}//${u.host}${u.pathname}`;
     } catch {
-      problem = `HIVE_STT_URL is not a URL: ${env.HIVE_STT_URL}`;
+      problem = `the ${provider} address is not a URL: ${target(provider)!.url}`;
       provider = null;
     }
   }
-  return { provider, wanted, configured: conf, model: provider ? defaultModel(provider) : undefined, endpoint, maxSeconds: sttMaxSeconds(), maxBytes: STT_MAX_BYTES, problem };
+  return { provider, wanted, configured: conf, providers: STT_PROVIDERS, model: provider ? defaultModel(provider) : undefined, language: sttLanguage(), endpoint, maxSeconds: sttMaxSeconds(), maxBytes: STT_MAX_BYTES, problem };
 }
 
 /** File name with an extension the STT APIs recognise, from a MIME type like "audio/webm;codecs=opus". */
@@ -136,28 +192,27 @@ export async function transcribe(audio: Buffer, mime: string, provider: SttProvi
   const form = new FormData();
   form.set("file", new Blob([new Uint8Array(audio)], { type: mime.split(";")[0] }), name);
   const model = defaultModel(provider);
-  const lang = env.HIVE_STT_LANGUAGE?.trim();
-  let url: string;
+  const lang = sttLanguage();
+  const t = target(provider);
+  if (!t) throw new Error(`${provider} speech-to-text is not set up (docs/VOICE.md)`);
+  const url = t.url;
   const headers: Record<string, string> = {};
   if (provider === "elevenlabs") {
-    url = `${elBase()}/v1/speech-to-text`;
-    headers["xi-api-key"] = env.ELEVENLABS_API_KEY ?? "";
+    headers["xi-api-key"] = t.key;
     form.set("model_id", model!);
     if (lang) form.set("language_code", lang);
   } else {
-    url = provider === "local" ? localEndpoint() : `${(env.HIVE_STT_BASE || "https://api.openai.com/v1").replace(/\/+$/, "")}/audio/transcriptions`;
-    const key = provider === "local" ? env.HIVE_STT_KEY : openaiKey();
-    if (key) headers.authorization = `Bearer ${key}`;
+    if (t.key) headers.authorization = `Bearer ${t.key}`;
     if (model) form.set("model", model);
     form.set("response_format", "json");
     if (lang) form.set("language", lang);
   }
-  const label = provider === "local" ? `local speech-to-text (${url})` : provider === "openai" ? "OpenAI speech-to-text" : "ElevenLabs speech-to-text";
+  const label = `${STT_PROVIDERS.find((p) => p.id === provider)!.label} speech-to-text${["local", "nvidia", "custom"].includes(provider) ? ` (${url})` : ""}`;
   let r: Response;
   try {
     r = await fetch(url, { method: "POST", headers, body: form, signal: AbortSignal.timeout(120_000) });
   } catch (e: any) {
-    throw new Error(`${label}: can't reach it (${e?.cause?.code ?? e?.message ?? e})${provider === "local" ? " — is the Whisper server running?" : ""}`);
+    throw new Error(`${label}: can't reach it (${e?.cause?.code ?? e?.message ?? e})${["local", "nvidia", "custom"].includes(provider) ? " — is the server running?" : ""}`);
   }
   if (!r.ok) await failText(r, label);
   const body = await r.text();

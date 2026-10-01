@@ -35,7 +35,7 @@ import { ExplainWatcher } from "../core/learn.js";
 import { confine } from "../core/confine.js";
 import { checkAutomatic, concurrencyGuard, notifyOnce } from "../core/budget.js";
 import type { AccountView, AgentView, BackendEvent, DeviceKind, DeviceMethods, ElicitationAsk, GroupView, JobView, Layout, Methods, PermissionAsk, Request } from "./protocol.js";
-import { speakFor, sttStatus, transcribeFor } from "../hive/voice.js";
+import { setSttPrefs, speakFor, sttStatus, transcribeFor, type SttPrefs } from "../hive/voice.js";
 import { ttsAvailable, voices as listVoices } from "../hive/media.js";
 import { projectRoot } from "../core/home.js";
 import { mcpServerList, parseMcpNames } from "../core/mcp-extra.js";
@@ -208,6 +208,10 @@ const hub = new Hub({
     learnEvent(agent, e);
   },
 });
+// dictation provider / model / language the owner picked in the app
+try {
+  setSttPrefs(JSON.parse(hub.db.getSetting("voice.stt") ?? "{}"));
+} catch {}
 const scheduler = new Scheduler({
   hub,
   closeIdleAgents: true,
@@ -916,6 +920,15 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
   speak({ agent, text, voice }) {
     const cwd = hub.sessions.get(agent)?.cwd || defaultCwd;
     return speakFor(hub.db, { agent: need(agent, "agent"), text, voice: voice || undefined, project: projectRoot(cwd) });
+  },
+  setStt(p) {
+    // the owner's choice of dictation provider / model / language (keys stay in the environment)
+    const prov = p.provider ?? "auto";
+    if (prov !== "auto" && !sttStatus().providers.some((x) => x.id === prov)) throw new Error(`unknown dictation provider ${prov}`);
+    const prefs: SttPrefs = { provider: prov as SttPrefs["provider"], model: (p.model ?? "").trim().slice(0, 120), language: (p.language ?? "").trim().slice(0, 20) };
+    hub.db.setSetting("voice.stt", JSON.stringify(prefs));
+    setSttPrefs(prefs);
+    return { stt: sttStatus(), tts: ttsAvailable() };
   },
   voiceStatus() {
     return { stt: sttStatus(), tts: ttsAvailable() };
