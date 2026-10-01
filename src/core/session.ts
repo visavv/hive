@@ -65,6 +65,8 @@ export interface SessionOptions {
    */
   /** Media tools the hub can run for this agent (tts, image). */
   mediaKinds?: string[];
+  /** Device tools to offer (browser, android); the hub runs them (src/hive/devices.ts). */
+  deviceKinds?: string[];
   autoGuard?: () => { ok: true } | { ok: false; reason: string; until?: number };
   /** Mail wake-ups allowed per agent per 10 minutes (stops agent ping-pong). Default 30. */
   maxWakesPer10Min?: number;
@@ -442,6 +444,7 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
         { name: "HIVE_AGENT", value: this.name },
         // Which media tools to offer (the hub runs them; no keys are passed).
         ...(this.opts.mediaKinds?.length ? [{ name: "HIVE_MEDIA", value: this.opts.mediaKinds.join(",") }] : []),
+        ...(this.opts.deviceKinds?.length ? [{ name: "HIVE_DEVICES", value: this.opts.deviceKinds.join(",") }] : []),
       ],
     };
   }
