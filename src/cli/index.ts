@@ -244,6 +244,8 @@ const USAGE = `hive — local multi-agent harness
   hive mcp                                extra MCP servers (<HIVE_HOME>/mcp.json) · attach with --mcp NAME (docs/MCP.md)
   hive usage · hive budget [set k=v …]    tokens per provider, limit windows + resets · spending guards
   hive ui --remote you@server --remote-cwd ~/code/app   the app with its agents on another machine (docs/CLOUD.md)
+  hive memory [ls] · add owner|project "fact" · rm owner|project <n>   what every agent is told about you / this project
+  hive learn [ls] · accept <id> · reject <id>   suggestions hive learned, waiting for your OK
   hive board [--all] [--in-project P] · add "title" · mv <id> draft|doing|done · rm <id>   the Kanban board
   hive daemon · hive attach [--status|--stop]   keep a project's hive running; connect to it (the app does this over SSH)
   hive web [--port 7777] [--new-token]    the app in your phone's browser / the Android app (127.0.0.1 only; docs/MOBILE.md)
@@ -1245,6 +1247,52 @@ async function main() {
       return;
     }
 
+    case "memory": {
+      // what every agent is told about you and this project: hive memory [ls] · add owner|project "fact" · rm owner|project <n>
+      const m = await import("../core/memory.js");
+      const cwd = resolve(values.cwd ?? process.cwd());
+      const sub = rest[0] ?? "ls";
+      const scope = rest[1] as "owner" | "project";
+      if (sub === "add") {
+        if (scope !== "owner" && scope !== "project") die('usage: hive memory add owner|project "fact"');
+        m.addMemory(scope, cwd, rest.slice(2).join(" "));
+        return void console.log(`remembered (${m.memoryPath(scope, cwd)})`);
+      }
+      if (sub === "rm") {
+        if ((scope !== "owner" && scope !== "project") || !Number(rest[2])) die("usage: hive memory rm owner|project <number>");
+        m.removeMemory(scope, cwd, Number(rest[2]) - 1);
+        return void console.log("forgotten");
+      }
+      if (sub !== "ls") die("usage: hive memory [ls|add|rm]");
+      for (const sc of ["owner", "project"] as const) {
+        const lines = m.readMemory(sc, cwd);
+        console.log(`\n${sc === "owner" ? "About you" : "About this project"} ${dim(m.memoryPath(sc, cwd))}`);
+        if (!lines.length) console.log(dim("  (nothing yet)"));
+        lines.forEach((l, i) => console.log(`  ${i + 1}. ${l}`));
+      }
+      return;
+    }
+    case "learn": {
+      // suggestions waiting for your OK: hive learn [ls] · accept <id> · reject <id>
+      const m = await import("../core/memory.js");
+      const cwd = resolve(values.cwd ?? process.cwd());
+      const db = new HiveDb(values.db!);
+      const sub = rest[0] ?? "ls";
+      if (sub === "accept" || sub === "reject") {
+        const id = Number(rest[1]);
+        if (!id) die(`usage: hive learn ${sub} <id>`);
+        const p = m.decide(db.db, cwd, id, sub === "accept");
+        return void console.log(`#${id} ${p.status}`);
+      }
+      if (sub !== "ls") die("usage: hive learn [ls|accept <id>|reject <id>]");
+      const ps = m.proposals(db.db);
+      if (!ps.length) return void console.log("nothing waiting");
+      for (const p of ps) {
+        console.log(`\n#${p.id} ${p.kind}${p.title ? ` ${p.title}` : ""}${p.agent ? dim(` from ${p.agent}`) : ""}${p.reason ? dim(` · ${p.reason}`) : ""}`);
+        console.log(p.text.split("\n").map((l) => "  " + l).join("\n"));
+      }
+      return;
+    }
     case "board": {
       // the Kanban board: hive board [ls] [--all] [--project P] · add "title" · mv <id> draft|doing|done · rm <id>
       const { board, COLUMN_LABEL } = await import("../hive/kanban.js");

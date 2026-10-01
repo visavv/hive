@@ -41,6 +41,7 @@ Details: [MOBILE.md](MOBILE.md). Terminal fallback over SSH: [REMOTE.md](REMOTE.
 | | Guide |
 |---|---|
 | Dictation (local Whisper/Parakeet, OpenAI, ElevenLabs, Groq, NVIDIA) and spoken replies | [VOICE.md](VOICE.md) |
+| Memory: hive remembers you and your projects, suggests skills from what you repeat | [MEMORY.md](MEMORY.md) |
 | Learn while you build: code view, teacher with the hint ladder | [LEARN.md](LEARN.md) |
 | Sandboxed browser and Android device panes | [DEVICES.md](DEVICES.md) |
 | DaVinci Resolve and other MCP servers per agent | [MCP.md](MCP.md) |

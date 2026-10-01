@@ -462,6 +462,21 @@ try {
   await page.locator(".stats").waitFor({ timeout: 5000 });
   assert((await page.locator(".stats-total .big").innerText()).length > 0, "token stats open from the palette");
   await page.keyboard.press("Escape");
+  // memory: what every agent is told about you
+  await command(page, "memory and learning");
+  await page.locator(".drawer .learn").waitFor({ timeout: 5000 });
+  await page.locator(".memory-owner input").fill("Makes YouTube videos for beginners");
+  await page.locator(".memory-owner input").press("Enter");
+  await page.locator(".memory-owner .memory-line", { hasText: "Makes YouTube videos for beginners" }).waitFor({ timeout: 5000 });
+  assert(readFileSync(join(process.env.HIVE_HOME!, "memory", "owner.md"), "utf8").includes("- Makes YouTube videos for beginners"), "Learning tab: a line added to 'About you' is saved to owner.md");
+  await page.locator(".memory-owner input").fill("my token: sk-abcdefghijklmnopqrstuvwx");
+  await page.locator(".memory-owner input").press("Enter");
+  await page.locator(".toast", { hasText: "looks like a secret" }).waitFor({ timeout: 5000 });
+  assert(true, "Learning tab: secrets are refused");
+  await page.locator('.memory-owner button[aria-label^="forget"]').click();
+  await page.locator(".memory-owner .memory-line").waitFor({ state: "detached", timeout: 5000 });
+  assert(true, "Learning tab: a memory line can be forgotten");
+  await page.keyboard.press("Escape");
   await command(page, "theme: oled");
   assert((await page.evaluate("document.documentElement.dataset.theme")) === "oled" && (await page.evaluate("getComputedStyle(document.body).backgroundColor")) === "rgb(0, 0, 0)", "OLED theme: true black background");
   await command(page, "theme: paper");

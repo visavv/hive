@@ -228,6 +228,7 @@ export type BackendEvent =
   | { event: "agent"; agent: string; e: SessionEvent | { type: "prompt"; text: string; queued?: boolean } }
   | { event: "agents"; agents: AgentView[]; others?: OtherAgent[]; groups?: GroupView[]; mailScope?: "open" | "linked"; heldTotal?: number; guardAllowAll?: boolean }
   | { event: "jobs"; jobs: JobView[] }
+  | { event: "learn"; pending: number }
   | { event: "permission"; ask: PermissionAsk }
   | { event: "permission_done"; reqId: string; outcome?: string }
   | { event: "elicitation"; ask: ElicitationAsk }
@@ -365,6 +366,12 @@ export interface Methods extends DeviceMethods {
   };
   setBudget: (p: { key: string; value: string }) => import("../core/budget.js").UsageSummary;
   improvePrompt: (p: { name: string; draft: string }) => { prompt: string };
+  learnState: (p: Record<string, never>) => LearnStateView;
+  learnDecide: (p: { id: number; accept: boolean; text?: string }) => LearnStateView;
+  memoryAdd: (p: { scope: "owner" | "project"; text: string }) => LearnStateView;
+  memoryRemove: (p: { scope: "owner" | "project"; index: number }) => LearnStateView;
+  learnSettings: (p: { on?: boolean }) => LearnStateView;
+  learnNow: (p: { agent: string }) => LearnStateView & { added: number };
   board: (p: { done?: boolean; project?: string; q?: string }) => {
     cards: import("../hive/kanban.js").Card[];
     counts: Record<import("../hive/kanban.js").Column, number>;
@@ -403,3 +410,12 @@ export interface CodeTarget {
 export type MethodName = keyof Methods;
 export type Request = { id: number; method: MethodName; params: unknown };
 export type Response = { id: number; result?: unknown; error?: string };
+
+export interface LearnStateView {
+  on: boolean;
+  owner: string[];
+  project: string[];
+  pending: import("../core/memory.js").Proposal[];
+  ownerPath: string;
+  projectPath: string;
+}

@@ -161,6 +161,16 @@ acp
       await say(cx, sessionId, "```text\nIMPROVED: " + draft + "\nContext seen: " + lastOwner + "\nCheck your work with the tests and report what changed.\n```");
       return { stopReason: "end_turn", usage: { totalTokens: 50, inputTokens: 40, outputTokens: 10 } };
     }
+    // the learning helper (core/memory.ts): learn "always/never/prefer" lines the owner said; a skill when repeats were listed
+    if (/You are hive's learning helper/.test(text)) {
+      const convo = text.match(/<<<\n([\s\S]*?)\n>>>/)?.[1] ?? "";
+      const said = [...convo.matchAll(/^OWNER: (.*)$/gm)].map((m) => m[1]);
+      const pref = said.find((l) => /\b(always|never|prefer)\b/i.test(l));
+      const owner = pref ? [pref.replace(/^(please\s+)?/i, "").slice(0, 150)] : [];
+      const skill = /skill candidates/.test(text) ? { name: "repeat-task", description: "The thing you keep asking for", params: ["topic"], body: "Do the usual steps for {{topic}} and report back.", reason: "asked 3 times" } : null;
+      await say(cx, sessionId, "```json\n" + JSON.stringify({ owner, project: [], skill }) + "\n```");
+      return { stopReason: "end_turn", usage: { totalTokens: 60, inputTokens: 50, outputTokens: 10 } };
+    }
     if (process.env.MOCK_DEMO === "1") {
       const ask = async (title: string, kind: string, content?: unknown[]) => {
         const perm: any = await cx.request(acp.methods.client.session.requestPermission, {

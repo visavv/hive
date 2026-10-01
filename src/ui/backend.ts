@@ -9,6 +9,7 @@
 import * as ledger from "../core/ledger.js";
 import { board } from "../hive/kanban.js";
 import { improvePrompt } from "../core/improve.js";
+import { addMemory, decide, memoryPath, proposals, proposeUnused, readMemory, recordSkillUse, reflect, removeMemory, shouldReflect } from "../core/memory.js";
 import { parseArgs } from "node:util";
 import { createInterface } from "node:readline";
 import { execFile } from "node:child_process";
@@ -34,7 +35,7 @@ import { codeDiff, listFiles, readCodeFile } from "../core/code.js";
 import { ExplainWatcher } from "../core/learn.js";
 import { confine } from "../core/confine.js";
 import { checkAutomatic, concurrencyGuard, notifyOnce } from "../core/budget.js";
-import type { AccountView, AgentView, BackendEvent, DeviceKind, DeviceMethods, ElicitationAsk, GroupView, JobView, Layout, Methods, PermissionAsk, Request } from "./protocol.js";
+import type { AccountView, AgentView, BackendEvent, DeviceKind, DeviceMethods, ElicitationAsk, GroupView, JobView, LearnStateView, Layout, Methods, PermissionAsk, Request } from "./protocol.js";
 import { setSttPrefs, speakFor, sttStatus, transcribeFor, type SttPrefs } from "../hive/voice.js";
 import { ttsAvailable, voices as listVoices } from "../hive/media.js";
 import { projectRoot } from "../core/home.js";
@@ -479,7 +480,74 @@ function learnEvent(agent: string, e: SessionEvent) {
   } catch (err) {
     logError("explain changes", err);
   }
+  try {
+    memoryEvent(agent, e);
+  } catch (err) {
+    logError("learning", err);
+  }
 }
+
+// ---- memory and learning (src/core/memory.ts) ----
+// After a few owner prompts to an agent, a hidden helper reflects on the chat and
+// proposes memory lines / a skill; they wait in the Learning tab for your OK.
+const learnOn = () => hub.db.db.open && hub.db.getSetting("learn.on") !== "off";
+const learnPrompts = new Map<string, number>();
+const learnAt = new Map<string, number>();
+const isHelper = (agent: string) => /^(pe|lr)-/.test(agent) || /\(helper\)|verdict #/.test(hub.sessions.get(agent)?.role ?? "");
+
+function learnState(): LearnStateView {
+  return {
+    on: learnOn(),
+    owner: readMemory("owner", defaultCwd),
+    project: readMemory("project", defaultCwd),
+    pending: proposals(hub.db.db),
+    ownerPath: memoryPath("owner", defaultCwd),
+    projectPath: memoryPath("project", defaultCwd),
+  };
+}
+function pushLearn(): LearnStateView {
+  const st = learnState();
+  learnSent = st.pending.length;
+  send({ event: "learn", pending: st.pending.length });
+  return st;
+}
+
+let learnSent = -1;
+function memoryEvent(agent: string, e: SessionEvent) {
+  if (e.type === "turn_end") {
+    // agents suggest memories with hive_remember (in their own MCP process): refresh the badge
+    const n = proposals(hub.db.db).length;
+    if (n !== learnSent) pushLearn();
+  }
+  if (isHelper(agent)) return;
+  const s = hub.sessions.get(agent);
+  if (e.type === "prompt" && s && !s.isAutomatic) learnPrompts.set(agent, (learnPrompts.get(agent) ?? 0) + 1);
+  if (e.type !== "turn_end" || !s) return;
+  if (!shouldReflect({ promptsSince: learnPrompts.get(agent) ?? 0, lastAt: learnAt.get(agent), now: Date.now(), on: learnOn(), helper: false })) return;
+  const g = checkAutomatic(hub.db, s.def.id);
+  if (!g.ok) return; // budget says no: try again after a later turn
+  learnAt.set(agent, Date.now());
+  learnPrompts.set(agent, 0);
+  void reflect(hub, agent)
+    .then((n) => {
+      if (n) pushLearn();
+    })
+    .catch((err) => logError(`learning (${agent})`, err));
+}
+// Learned skills nobody runs get a removal proposal (checked at start and daily).
+setTimeout(() => {
+  try {
+    pushLearn();
+    if (proposeUnused(hub.db.db, defaultCwd)) pushLearn();
+  } catch (err) {
+    logError("learning", err);
+  }
+}, 3000).unref();
+setInterval(() => {
+  try {
+    if (hub.db.db.open && proposeUnused(hub.db.db, defaultCwd)) pushLearn();
+  } catch {}
+}, 86_400_000).unref();
 
 type Handlers = { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promise<ReturnType<Methods[K]>> | ReturnType<Methods[K]> };
 const codeHandlers: Pick<Handlers, "listFiles" | "readFile" | "fileDiff" | "explainChanges"> = {
@@ -743,6 +811,7 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
   },
   async runSkill({ name, params: raw, kind }) {
     const sk = findSkill(defaultCwd, name);
+    recordSkillUse(hub.db.db, sk.name);
     const params = await prepareSkillValues(sk, raw); // YouTube link → transcript (errors show in the dialog)
     renderSkill(sk, params, defaultCwd); // validate now, so errors show in the dialog
     const k = kind || sk.agent || "claude";
@@ -764,6 +833,29 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
   },
   async improvePrompt({ name, draft }) {
     return { prompt: await improvePrompt(hub, name, draft) };
+  },
+  learnState: () => learnState(),
+  learnDecide({ id, accept, text }) {
+    decide(hub.db.db, defaultCwd, Number(id), !!accept, text);
+    return pushLearn();
+  },
+  memoryAdd({ scope, text }) {
+    addMemory(scope === "owner" ? "owner" : "project", defaultCwd, need(text, "text"));
+    return pushLearn();
+  },
+  memoryRemove({ scope, index }) {
+    removeMemory(scope === "owner" ? "owner" : "project", defaultCwd, Number(index));
+    return pushLearn();
+  },
+  learnSettings({ on }) {
+    if (on !== undefined) hub.db.setSetting("learn.on", on ? null : "off");
+    return pushLearn();
+  },
+  async learnNow({ agent }) {
+    const added = await reflect(hub, agent);
+    learnAt.set(agent, Date.now());
+    learnPrompts.set(agent, 0);
+    return { ...pushLearn(), added };
   },
   board({ done, project, q }) {
     const b = board();
