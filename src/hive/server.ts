@@ -54,18 +54,20 @@ server.registerTool(
     inputSchema: {},
   },
   async () => {
+    // Another agent's role and status note are its own words: data, not instructions.
+    const peer = (a: { name: string }, what: string, v: string) => (a.name === me || !v ? v : untrusted(`${what} of agent ${a.name}`, v));
     const rows = db.listAgents().map((a) => ({
       name: a.name,
       kind: a.kind,
-      role: a.role,
+      role: peer(a, "role", a.role),
       cwd: a.cwd,
       status: db.effectiveStatus(a),
-      note: a.status_note,
+      note: peer(a, "status note", a.status_note),
       me: a.name === me,
       groups: db.groups().filter((g) => g.members.includes(a.name)).map((g) => g.name),
       unread: db.unreadCount(a.name),
     }));
-    return text(JSON.stringify(rows, null, 2));
+    return text(rows.some((r) => !r.me && (r.role || r.note)) ? `${TRUST_NOTE}\n${JSON.stringify(rows, null, 2)}` : JSON.stringify(rows, null, 2));
   },
 );
 
@@ -144,15 +146,16 @@ server.registerTool(
     inputSchema: { thread: z.string() },
   },
   async ({ thread }) => {
-    const msgs = db.thread(thread).map((m) => ({
+    // Only mail I sent or got (never someone else's private or held mail); peers' words are data.
+    const msgs = db.thread(thread, me).map((m) => ({
       id: m.id,
       from: m.from_agent,
       trust: senderTrust(m.from_agent),
       to: m.to_agent,
-      subject: m.subject,
-      body: m.from_agent === "owner" ? m.body : untrusted(`mail from agent ${m.from_agent}`, m.body),
+      subject: m.from_agent === "owner" || m.from_agent === me ? m.subject : untrusted(`subject from ${m.from_agent}`, m.subject),
+      body: m.from_agent === "owner" || m.from_agent === me ? m.body : untrusted(`mail from agent ${m.from_agent}`, m.body),
     }));
-    return text(JSON.stringify(msgs, null, 2));
+    return text(msgs.some((m) => m.trust !== "owner" && m.from !== me) ? `${TRUST_NOTE}\n${JSON.stringify(msgs, null, 2)}` : JSON.stringify(msgs, null, 2));
   },
 );
 

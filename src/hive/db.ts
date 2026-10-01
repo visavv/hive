@@ -579,8 +579,11 @@ export class HiveDb {
       }),
     )();
   }
-  thread(thread: string): Message[] {
-    return this.db.prepare(`SELECT * FROM messages WHERE thread=? ORDER BY id`).all(thread) as Message[];
+  /** A thread as `agent` may see it: mail it sent or received (broadcasts, its groups), nothing held. */
+  thread(thread: string, agent: string): Message[] {
+    return this.db
+      .prepare(`SELECT m.* FROM messages m WHERE m.thread=@thread AND m.held IS NULL AND (m.from_agent=@agent OR m.to_agent=@agent OR ${BCAST}) ORDER BY m.id`)
+      .all({ thread, agent }) as Message[];
   }
 
   // ---- usage, limits, settings ----
