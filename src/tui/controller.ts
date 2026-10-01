@@ -389,6 +389,8 @@ export class TuiController extends EventEmitter {
       args.splice(i, 1);
       return true;
     };
+    // /1 … /9: jump to an agent (phones have no Alt key)
+    if (/^[1-9]$/.test(cmd)) return this.setFocus(Number(cmd) - 1);
     switch (cmd) {
       case "help":
       case "?":
@@ -564,7 +566,7 @@ const HELP = [
   "/link a b [--review]         let agents talk; --review: you approve each message (/held, /release, /drop)",
   "/group <name> a b …          a group: @name reaches all members · /groups · /unlink <group>",
   "/scope open|linked           linked: agents only talk to agents they're linked with",
-  "/focus <n|name> · /zoom · /all <msg> · /stop [name]",
+  "/1 … /9 or /focus <n|name> · /zoom · /all <msg> · /stop [name]",
   "/verdict <prompt> --agents claude,codex [--text]   several agents, one judge",
   "/usage · /help · /quit",
 ];

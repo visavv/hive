@@ -25,6 +25,14 @@ assert(JSON.stringify(wrap("the quick brown fox", 9)) === JSON.stringify(["the q
   assert(mdPlain("| a | b |\n|---|---|\n| " + "x".repeat(50) + " | y |", 30).split("\n")[1] === "x".repeat(50) + " · y", "terminal markdown: a table wider than the pane becomes one line per row");
   assert(promptPart('You are agent "x"\n\n---\n\nfix the --- parser') === "fix the --- parser" && promptPart("a --- b") === "a --- b", "a prompt containing --- is shown whole; only a briefing in front is dropped");
 }
+{
+  const pv = (name: string, extra: Partial<TuiView["panes"][number]> = {}) => ({ name, kind: "claude", role: "", status: "idle" as const, lines: [{ text: "hello from " + name, style: "agent" as const }], groups: [], ready: false, scroll: 0, unread: 0, ...extra });
+  const v: TuiView = { title: "p", panes: [pv("planner"), pv("coder", { pending: "Write a.ts" }), pv("tester", { status: "working" })], focus: 1, zoom: false, input: "", cursor: 0, hint: "", held: 0 };
+  const ls = render(v, 60, 24);
+  const scr = ls.join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+  assert(ls.length === 24 && ls.every((l) => strWidth(l.replace(/\x1b\[[0-9;]*m/g, "")) === 60), "phone-width render still fills exactly 60×24");
+  assert(scr.includes("[2 coder!]") && scr.includes("3 tester…") && scr.includes("hello from coder") && !scr.includes("hello from planner"), "on a phone-width terminal: one agent at a time, the others as tabs with their state");
+}
 assert(gridShape(4, 200).gcols === 2 && gridShape(6, 200).gcols === 3 && gridShape(10, 250).gcols === 4 && gridShape(6, 120).gcols === 2 && gridShape(4, 80).gcols === 1 && gridShape(1, 200).gcols === 1, "grid is as square as fits (4 → 2×2, 6 → 3×2), capped by terminal width");
 const view: TuiView = {
   title: "proj",

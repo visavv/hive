@@ -23,6 +23,7 @@ Design goals, in order:
 | Media | ElevenLabs voice-over, image generate/edit (keys stay in the hive process) |
 | Safety & cost | per-agent permission policies, worktrees, untrusted-content labelling, usage + limit windows with reset times, daily budgets, pause switch |
 | Terminal | `hive tui`: the pane grid in your terminal, starting with a four-agent squad (planner, coder, reviewer, tester); `/add`, `/rm`, `/link`, `/group` ([docs/TUI.md](docs/TUI.md)) |
+| Phone | Tailscale + SSH + tmux: `hive tui` from anywhere, one-command setup for Ubuntu/Fedora/Windows; Discord pushes ([docs/REMOTE.md](docs/REMOTE.md)) |
 | Platforms | Windows ([docs/WINDOWS.md](docs/WINDOWS.md), one-script install), Linux/Fedora ([docs/LINUX.md](docs/LINUX.md)), Ubuntu server + chat bridges ([docs/BRIDGES.md](docs/BRIDGES.md)) |
 
 How it compares with Maestro, Agent Deck, Zed, Claude Code teams and others: [docs/COMPARISON.md](docs/COMPARISON.md). Audit records: [audit/](audit/).

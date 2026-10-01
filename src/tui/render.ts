@@ -280,7 +280,16 @@ export function render(v: TuiView, cols: number, rows: number): string[] {
   const left = ` hive  ${v.title}  ·  ${v.panes.length} agent${v.panes.length === 1 ? "" : "s"}`;
   const bar = fit(left, Math.max(0, cols - strWidth(right) - 1)) + right + " ";
   out.push(`${c.barBg}${c.fg}${fit(bar, cols)}${reset}`);
-  const areaH = Math.max(0, rows - 3);
+  // Narrow terminals (a phone over SSH): one agent at a time, the others as tabs.
+  const narrow = cols < 90 && v.panes.length > 1 && !v.overlay;
+  if (narrow) {
+    const tabs = v.panes.map((p, i) => {
+      const mark = p.pending ? "!" : p.ready ? "✓" : p.status === "working" ? "…" : p.status === "error" ? "✗" : "";
+      return i === v.focus ? `[${i + 1} ${p.name}${mark}]` : ` ${i + 1} ${p.name}${mark} `;
+    });
+    out.push(`${c.dim}${fit(tabs.join(""), cols)}${reset}`);
+  }
+  const areaH = Math.max(0, rows - 3 - (narrow ? 1 : 0));
   if (v.overlay) {
     const w = Math.min(cols, 100);
     const pad = " ".repeat(Math.max(0, Math.floor((cols - w) / 2)));
@@ -293,7 +302,7 @@ export function render(v: TuiView, cols: number, rows: number): string[] {
     for (let i = 0; i < areaH; i++)
       out.push(i === Math.floor(areaH / 2) ? fit(" ".repeat(Math.max(0, Math.floor((cols - 44) / 2))) + "No agents. Try /add claude coder or /team", cols) : " ".repeat(cols));
   } else {
-    const shown = v.zoom ? [v.focus] : v.panes.map((_, i) => i);
+    const shown = v.zoom || narrow ? [v.focus] : v.panes.map((_, i) => i);
     const { gcols, grows } = gridShape(shown.length, cols);
     const baseW = Math.floor(cols / gcols);
     const baseH = Math.floor(areaH / grows);
