@@ -28,6 +28,8 @@ export interface AgentDef {
   install: string;
   /** Env var that must be set for this agent to work (doctor / UI hint). */
   needs?: string;
+  /** How to sign in, shown in the Accounts view (subscription CLIs log in once on this machine). */
+  login?: string;
   /** Built-in API agent (api/agent.ts) rather than a vendor CLI. */
   api?: boolean;
   /** Came from <HIVE_HOME>/agents.json. */
@@ -57,7 +59,7 @@ const mockEntry = nodeEntry("mock/agent");
 const apiEntry = nodeEntry("api/agent");
 
 /** An agent backed by any OpenAI-compatible chat API (see api/agent.ts). */
-export function apiAgent(o: { id: string; label: string; base: string; keyEnv?: string; model: string; models?: string; context?: number; tools?: boolean; install?: string; custom?: boolean }): AgentDef {
+export function apiAgent(o: { id: string; label: string; base: string; keyEnv?: string; model: string; models?: string; context?: number; tools?: boolean; install?: string; login?: string; custom?: boolean }): AgentDef {
   return {
     id: o.id,
     label: o.label,
@@ -75,6 +77,7 @@ export function apiAgent(o: { id: string; label: string; base: string; keyEnv?: 
       HIVE_API_CONTEXT: o.context ? String(o.context) : "",
       HIVE_API_TOOLS: o.tools === false ? "0" : "",
     },
+    login: o.login ?? (o.keyEnv ? `Set ${o.keyEnv} in your environment (Windows: setx ${o.keyEnv} "…" then reopen; Linux: export it in ~/.bashrc or ~/.config/environment.d/).` : "No key needed."),
     install: o.install ?? `Set ${o.keyEnv ?? "nothing (no key needed)"}. Talks to ${o.base} directly; pick the model in the pane.`,
   };
 }
@@ -84,6 +87,7 @@ export const AGENTS: Record<string, AgentDef> = {
     id: "claude",
     label: "Claude Code",
     ...claudeAcp,
+    login: "Run `claude` in a terminal and type /login (Claude Pro/Max), or set ANTHROPIC_API_KEY.",
     install:
       "Auth via `claude login` (Max/Pro) or ANTHROPIC_API_KEY. Uses the Claude Agent SDK under the hood.",
   },
@@ -91,6 +95,7 @@ export const AGENTS: Record<string, AgentDef> = {
     id: "codex",
     label: "Codex",
     ...codexAcp,
+    login: "Run `codex login` (ChatGPT Plus/Pro/Business), or `codex login --device-auth` on a machine without a browser.",
     install:
       "Auth via `codex login` (ChatGPT subscription) or OPENAI_API_KEY. Wraps the Codex App Server.",
   },
@@ -99,6 +104,7 @@ export const AGENTS: Record<string, AgentDef> = {
     label: "Qwen Code (local)",
     command: "qwen",
     args: ["--acp"],
+    login: "Run `qwen` once and sign in, or set QWEN_BASE_URL / QWEN_MODEL / QWEN_API_KEY for a local server.",
     env: {
       // Point at the T550 / any OpenAI-compatible endpoint (Ollama, vLLM, llama.cpp).
       OPENAI_BASE_URL: "${QWEN_BASE_URL}",
@@ -113,6 +119,7 @@ export const AGENTS: Record<string, AgentDef> = {
     label: "OpenCode (any provider: DeepSeek, GLM, OpenRouter, local)",
     command: "opencode",
     args: ["acp"],
+    login: "Run `opencode auth login` and pick a provider.",
     install:
       "Install opencode; configure providers in ~/.config/opencode/opencode.json. Good home for API-key models.",
   },
@@ -121,6 +128,7 @@ export const AGENTS: Record<string, AgentDef> = {
     label: "Gemini CLI",
     command: "gemini",
     args: ["--experimental-acp"],
+    login: "Run `gemini` once and choose “Login with Google”, or set GEMINI_API_KEY.",
     install: "npm i -g @google/gemini-cli; `gemini` once to auth.",
   },
   // ---- API models (pay per token with your own keys; no CLI to install) ----
@@ -149,11 +157,20 @@ export const AGENTS: Record<string, AgentDef> = {
     model: "${OPENAI_MODEL:-gpt-4.1-mini}",
     install: "OPENAI_API_KEY (platform.openai.com, billed per token — separate from a ChatGPT subscription; use `codex` for that). OPENAI_MODEL picks the default.",
   }),
+  "meta-llama": apiAgent({
+    id: "meta-llama",
+    label: "Meta Llama API",
+    base: "${LLAMA_API_BASE:-https://api.llama.com/compat/v1}",
+    keyEnv: "LLAMA_API_KEY",
+    model: "${LLAMA_MODEL:-Llama-4-Maverick-17B-128E-Instruct-FP8}",
+    install: "Key from Meta's Llama API developer console → LLAMA_API_KEY. If Meta changes the endpoint or model names, set LLAMA_API_BASE / LLAMA_MODEL (or use openrouter for Meta models).",
+  }),
   ollama: apiAgent({
     id: "ollama",
     label: "Ollama (local / T550)",
     base: "${OLLAMA_BASE_URL:-http://localhost:11434/v1}",
     model: "${OLLAMA_MODEL:-llama3.1}",
+    login: "No key. Start Ollama here (`ollama serve`) or point OLLAMA_BASE_URL at the T550 (http://<ip>:11434/v1).",
     context: 32_000,
     install: "Run Ollama (ollama.com) here or on the T550; set OLLAMA_BASE_URL=http://<host>:11434/v1 and OLLAMA_MODEL. No key. Use a model with tool support (llama3.1, qwen2.5, qwen3…).",
   }),

@@ -333,3 +333,10 @@ label.radio { display: flex; gap: 6px; align-items: center; }
 .small-editor { min-height: 90px; }
 .modal .compose { display: flex; gap: 6px; }
 .modal .compose input { flex: 1; }
+/* ---- accounts ---- */
+.acct { display: flex; gap: 10px; padding: 6px 4px; border-bottom: 1px solid var(--line); align-items: flex-start; }
+.acct-mark { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; flex: none; background: var(--bg3); }
+.acct.ok .acct-mark { background: var(--green); color: #07210f; }
+.acct.no .acct-mark { background: color-mix(in srgb, var(--red) 70%, var(--bg3)); color: #fff; }
+.acct-main { flex: 1; min-width: 0; }
+.acct-main .row1 { flex-wrap: wrap; }

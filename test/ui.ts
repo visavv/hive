@@ -243,6 +243,12 @@ try {
   await page.screenshot({ path: join(shots, "hive-ui-usage.png") });
   await page.locator(".drawer .usage-pause button").click();
   await page.locator(".drawer .usage-pause:not(.on)").waitFor({ timeout: 5000 });
+  // accounts: which agents are signed in / have keys, with how to fix it
+  await page.locator(".drawer .seg button", { hasText: "Accounts" }).click();
+  const gem = page.locator(".drawer .acct", { hasText: "Google Gemini (API)" });
+  await gem.waitFor({ timeout: 60_000 });
+  assert((await gem.getAttribute("class"))!.includes("no") && (await gem.textContent())!.includes("GEMINI_API_KEY"), "accounts tab: an API agent without its key shows ✗ and which variable to set");
+  await page.screenshot({ path: join(shots, "hive-ui-accounts.png") });
   await page.keyboard.press("Escape");
 
   // ready: a turn that finishes while you're elsewhere turns the pane green (+ top-bar button); focusing clears it

@@ -13,6 +13,7 @@ import { dirname, join, resolve } from "node:path";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import type * as schema from "@agentclientprotocol/sdk";
 import { Hub } from "../core/hub.js";
+import { probe } from "../core/doctor.js";
 import { AGENTS } from "../core/agents.js";
 import { POLICIES, type AgentSession, type SessionEvent } from "../core/session.js";
 import { Scheduler, describeSchedule, formatDuration } from "../core/scheduler.js";
@@ -25,7 +26,7 @@ import { findSkill, listSkills, renderSkill, skillFromPrompt, userSkillsDir } fr
 import { runSkill, skillAgentName } from "../core/skill-run.js";
 import { BB_PREFIX, BRANCHES } from "../core/watch.js";
 import { setBudget, usageSummary } from "../core/budget.js";
-import type { AgentView, BackendEvent, ElicitationAsk, GroupView, JobView, Layout, Methods, PermissionAsk, Request } from "./protocol.js";
+import type { AccountView, AgentView, BackendEvent, ElicitationAsk, GroupView, JobView, Layout, Methods, PermissionAsk, Request } from "./protocol.js";
 
 // stdout is the protocol channel: keep stray logging off it.
 const out = process.stdout.write.bind(process.stdout);
@@ -353,6 +354,24 @@ const handlersExtra = {
   },
 };
 
+// Sign-in status per agent type (spawns each adapter briefly, like `hive doctor`).
+let accountsCache: { at: number; rows: AccountView[] } | undefined;
+let accountsRunning: Promise<AccountView[]> | undefined;
+async function checkAccounts(): Promise<AccountView[]> {
+  const defs = Object.values(AGENTS).filter((d) => d.id !== "mock");
+  const rows = await Promise.all(
+    defs.map(async (d): Promise<AccountView> => {
+      const r = await probe(d, 45_000, 12_000).catch((e) => ({ ok: false, installed: "ok" as const, error: String(e?.message ?? e) }) as any);
+      const auth: string | undefined = r.auth;
+      const signedIn =
+        !r.ok ? false : !auth || /^(unknown|not reported)/.test(auth) ? null : /^(not logged in|key refused|can't reach)/.test(auth) ? false : true;
+      const status = r.installed === "missing" ? "not installed" : !r.ok ? `doesn't start: ${String(r.error ?? "").slice(0, 160)}` : (auth ?? "installed (sign-in is checked when it starts)");
+      return { id: d.id, label: d.label, api: !!d.api, signedIn, installed: r.installed, status, login: d.login, install: d.install, checkedAt: Date.now() };
+    }),
+  );
+  accountsCache = { at: Date.now(), rows };
+  return rows;
+}
 const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promise<ReturnType<Methods[K]>> | ReturnType<Methods[K]> } = {
   getState: () => handlersExtra.getState(),
   async addAgent(p) {
@@ -551,6 +570,11 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
   },
   usage() {
     return usageSummary(hub.db);
+  },
+  async accounts({ refresh }) {
+    if (!refresh && accountsCache && Date.now() - accountsCache.at < 120_000) return accountsCache.rows;
+    accountsRunning ??= checkAccounts().finally(() => (accountsRunning = undefined));
+    return accountsRunning;
   },
   link({ members, name, mode, maxPerHour, includeOwner }) {
     const ms = [...new Set(members)].filter(Boolean);

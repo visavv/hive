@@ -8,7 +8,7 @@ import { rpc } from "./bridge.js";
 import { store, useStore } from "./store.js";
 import { fmtIdle } from "./format.js";
 
-type Tab = "report" | "inbox" | "board" | "mail" | "usage";
+type Tab = "report" | "inbox" | "board" | "mail" | "usage" | "accounts";
 type Usage = Awaited<ReturnType<typeof rpc<"usage">>>;
 type HiveData = Awaited<ReturnType<typeof rpc<"hiveData">>>;
 
@@ -45,9 +45,9 @@ export function Drawer({ onClose, initialTab }: { onClose: () => void; initialTa
       <div className="drawer-head">
         <strong>Hive</strong>
         <div className="seg">
-          {(["report", "inbox", "board", "mail", "usage"] as Tab[]).map((t) => (
+          {(["report", "inbox", "board", "mail", "usage", "accounts"] as Tab[]).map((t) => (
             <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>
-              {t === "report" ? "Since you left" : t === "inbox" ? `Inbox${unread ? ` (${unread})` : ""}` : t === "board" ? "Blackboard" : t === "usage" ? "Usage" : "All mail"}
+              {t === "report" ? "Since you left" : t === "inbox" ? `Inbox${unread ? ` (${unread})` : ""}` : t === "board" ? "Blackboard" : t === "usage" ? "Usage" : t === "accounts" ? "Accounts" : "All mail"}
             </button>
           ))}
         </div>
@@ -79,6 +79,7 @@ export function Drawer({ onClose, initialTab }: { onClose: () => void; initialTa
         )}
         {tab === "board" && <Board rows={data?.blackboard ?? []} onChange={refresh} />}
         {tab === "usage" && <UsageView />}
+        {tab === "accounts" && <AccountsView />}
         {tab === "mail" && (
           <>
             {(data?.messages ?? []).map((m) => (
@@ -145,6 +146,75 @@ function ReportView({ r }: { r: Report }) {
         </section>
       )}
       <div className="dim small">{r.mailCount} hive messages exchanged.</div>
+    </div>
+  );
+}
+
+type Accounts = Awaited<ReturnType<typeof rpc<"accounts">>>;
+
+/** Which agents are signed in on this machine (CLI logins) or have their API key set. */
+export function AccountsView() {
+  const [rows, setRows] = useState<Accounts | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = (refresh = false) => {
+    setBusy(true);
+    void rpc("accounts", { refresh })
+      .then(setRows)
+      .catch((e) => store.toast(e.message, "error"))
+      .finally(() => setBusy(false));
+  };
+  useEffect(() => load(), []);
+  const cmd = (s?: string) => s?.match(/`([^`]+)`/)?.[1];
+  const groups: [string, Accounts][] = rows
+    ? [
+        ["Subscriptions (sign in once with the vendor's CLI on this machine)", rows.filter((r) => !r.api)],
+        ["API keys (pay per token)", rows.filter((r) => r.api)],
+      ]
+    : [];
+  return (
+    <div className="accounts">
+      <div className="row1">
+        <span className="dim small">
+          hive doesn't store logins. Each CLI keeps its own sign-in on this machine and hive asks it on start. API agents read their key from the environment.
+        </span>
+        <span className="spacer" />
+        <button className="ghost small" onClick={() => load(true)} disabled={busy}>
+          {busy ? "checking…" : "↻ check again"}
+        </button>
+      </div>
+      {!rows && <div className="dim pad">checking each agent (a few seconds)…</div>}
+      {groups.map(([title, list]) => (
+        <section key={title}>
+          <h3>{title}</h3>
+          {list.map((r) => (
+            <div key={r.id} className={`acct ${r.signedIn === true ? "ok" : r.signedIn === false ? "no" : "unk"}`}>
+              <span className="acct-mark" aria-label={r.signedIn === true ? "ready" : r.signedIn === false ? "not ready" : "unknown"}>
+                {r.signedIn === true ? "✓" : r.signedIn === false ? "✗" : "?"}
+              </span>
+              <div className="acct-main">
+                <div className="row1">
+                  <strong>{r.label}</strong>
+                  <span className="kind">{r.id}</span>
+                  <span className="dim small">{r.status}</span>
+                </div>
+                {r.signedIn !== true && (
+                  <div className="small">
+                    {r.installed === "missing" ? r.install : r.login}
+                    {cmd(r.installed === "missing" ? r.install : r.login) && (
+                      <button
+                        className="ghost small"
+                        onClick={() => void navigator.clipboard.writeText(cmd(r.installed === "missing" ? r.install : r.login)!).then(() => store.toast("copied — paste it in a terminal"))}
+                      >
+                        copy command
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </section>
+      ))}
     </div>
   );
 }

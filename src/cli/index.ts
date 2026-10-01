@@ -136,7 +136,7 @@ const USAGE = `hive — local multi-agent harness
   hive run <agent> [opts] "prompt"        one prompt, wait for replies, exit
   hive chat <agent> [opts]                interactive; resumes last session (--fresh for new)
   hive agents                             list hive members
-  hive doctor [agent...] [--quick]        installed? speaks ACP? logged in / key set?
+  hive doctor [agent...] [--quick]        installed? speaks ACP? logged in / key set? (alias: hive accounts)
   hive providers                          agent types: CLIs (subscriptions) and API models (keys)
   hive providers add <id> --base URL --key-env VAR --model M [--label L]   any OpenAI-compatible API
   hive providers rm <id>
@@ -579,6 +579,7 @@ async function main() {
       return;
     }
 
+    case "accounts":
     case "doctor": {
       const ids = rest.length ? rest : Object.keys(AGENTS);
       for (const id of ids) if (!AGENTS[id]) die(`unknown agent "${id}"`);
@@ -593,9 +594,11 @@ async function main() {
           }
           const r = await probe(def);
           if (r.ok) {
+            const bad = !r.auth || /^(not |unknown|can't reach|key refused)/.test(r.auth);
             console.log(
-              `${green("✓")} ${id.padEnd(9)} ${r.agent ?? ""} ${dim(`proto v${r.protocolVersion}`)} auth: ${r.auth && !/^(not |unknown)/.test(r.auth) ? green(r.auth) : yellow(r.auth ?? "?")} ${dim(`[${r.features?.join(", ")}] ${r.ms}ms`)}`,
+              `${bad && r.auth ? yellow("!") : green("✓")} ${id.padEnd(9)} ${r.agent ?? ""} ${dim(`proto v${r.protocolVersion}`)} auth: ${bad ? yellow(r.auth ?? "checked when it starts") : green(r.auth!)} ${dim(`[${r.features?.join(", ")}] ${r.ms}ms`)}`,
             );
+            if (bad && r.auth && def.login) console.log(dim(`    sign in: ${def.login}`));
           } else {
             console.log(`${red("✗")} ${id.padEnd(9)} ${r.error}${r.stderr ? "\n" + dim(r.stderr.replace(/^/gm, "    ")) : ""}`);
             if (r.installed !== "missing") console.log(dim(`    ${def.install}`));
