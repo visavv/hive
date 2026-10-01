@@ -21,6 +21,11 @@ const workDir = resolve(argVal("--cwd") ?? process.env.HIVE_CWD ?? process.cwd()
 const dbArg = argVal("--db") ?? process.env.HIVE_DB_PATH;
 const dbPath = dbArg ? resolve(workDir, dbArg) : undefined; // backend picks the per-repo default
 
+// Linux: WM_CLASS / desktop-entry matching; on Wayland, global shortcuts go through the desktop portal.
+app.setName("hive");
+const wayland = process.platform === "linux" && (process.env.XDG_SESSION_TYPE === "wayland" || !!process.env.WAYLAND_DISPLAY);
+if (wayland) app.commandLine.appendSwitch("enable-features", "GlobalShortcutsPortal");
+
 let win: BrowserWindow | undefined;
 let backend: ChildProcess | undefined;
 let backendReady = false;
@@ -187,7 +192,12 @@ app.whenReady().then(() => {
   });
   if (!ok)
     win?.webContents.once("did-finish-load", () =>
-      toRenderer({ event: "error", text: `global hotkey ${hotkey} is taken by another app; set HIVE_HOTKEY to change it` }),
+      toRenderer({
+        event: "error",
+        text: wayland
+          ? `global hotkey ${hotkey} isn't available on this Wayland desktop; add a keyboard shortcut in your desktop settings that runs "hive ui" instead`
+          : `global hotkey ${hotkey} is taken by another app; set HIVE_HOTKEY to change it`,
+      }),
     );
 });
 app.on("will-quit", () => globalShortcut.unregisterAll());
