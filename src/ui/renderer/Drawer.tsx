@@ -11,7 +11,7 @@ import { useOverlay } from "./focus.js";
 import { HeldList, PauseIcon } from "./Links.js";
 import { VoiceAccounts } from "./Voice.js";
 
-type Tab = "report" | "inbox" | "board" | "mail" | "usage" | "accounts";
+type Tab = "report" | "inbox" | "learn" | "board" | "mail" | "usage" | "accounts";
 type Usage = Awaited<ReturnType<typeof rpc<"usage">>>;
 type HiveData = Awaited<ReturnType<typeof rpc<"hiveData">>>;
 
@@ -23,12 +23,13 @@ const SINCE: [string, number][] = [
 ];
 
 export function Drawer({ onClose, initialTab }: { onClose: () => void; initialTab?: Tab }) {
-  const [tab, setTab] = useState<Tab>(initialTab ?? (store.ownerUnread || store.heldTotal ? "inbox" : "report"));
+  const [tab, setTab] = useState<Tab>(initialTab ?? (store.ownerUnread || store.heldTotal ? "inbox" : store.learnPending ? "learn" : "report"));
   const [data, setData] = useState<HiveData | null>(null);
   const [report, setReport] = useState<Report | null>(null);
   const [since, setSince] = useState(12 * 3_600_000);
   const unread = useStore((s) => s.ownerUnread);
   const held = useStore((s) => s.heldTotal);
+  const learn = useStore((s) => s.learnPending);
   const refresh = () => {
     void rpc("hiveData", {}).then(setData).catch((e) => store.toast(e.message, "error"));
     void rpc("report", { sinceMs: since }).then(setReport).catch((e) => store.toast(e.message, "error"));
@@ -55,9 +56,9 @@ export function Drawer({ onClose, initialTab }: { onClose: () => void; initialTa
       <div className="drawer-head">
         <strong>Hive</strong>
         <div className="seg">
-          {(["report", "inbox", "board", "mail", "usage", "accounts"] as Tab[]).map((t) => (
+          {(["report", "inbox", "learn", "board", "mail", "usage", "accounts"] as Tab[]).map((t) => (
             <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>
-              {t === "report" ? "Since you left" : t === "inbox" ? `Inbox${unread + held ? ` (${unread + held})` : ""}` : t === "board" ? "Blackboard" : t === "usage" ? "Usage" : t === "accounts" ? "Accounts" : "All mail"}
+              {t === "report" ? "Since you left" : t === "inbox" ? `Inbox${unread + held ? ` (${unread + held})` : ""}` : t === "learn" ? `Learning${learn ? ` (${learn})` : ""}` : t === "board" ? "Blackboard" : t === "usage" ? "Usage" : t === "accounts" ? "Accounts" : "All mail"}
             </button>
           ))}
         </div>
@@ -88,6 +89,7 @@ export function Drawer({ onClose, initialTab }: { onClose: () => void; initialTa
             ))}
           </>
         )}
+        {tab === "learn" && <LearnView />}
         {tab === "board" && <Board rows={data?.blackboard ?? []} onChange={refresh} />}
         {tab === "usage" && <UsageView />}
         {tab === "accounts" && <AccountsView />}
@@ -427,6 +429,124 @@ function Compose({ agents, onSent }: { agents: string[]; onSent: () => void }) {
         placeholder="message as owner (agents are woken to read it, even ones not on screen)"
       />
       <button onClick={send} disabled={!to || !body.trim()}>Send</button>
+    </div>
+  );
+}
+
+type LearnState = Awaited<ReturnType<typeof rpc<"learnState">>>;
+const KIND_LABEL: Record<string, string> = { owner: "about you", project: "about this project", skill: "new skill", "forget-skill": "remove skill" };
+
+/** Memory and learning: what hive remembers, and what it learned waiting for your OK. */
+function LearnView() {
+  const [st, setSt] = useState<LearnState | null>(null);
+  const [busy, setBusy] = useState(false);
+  const agents = useStore((s) => [...s.agents.keys()].filter((n) => !/^(pe|lr)-/.test(n)));
+  const [who, setWho] = useState("");
+  const act = (p: Promise<LearnState>) =>
+    void p.then(setSt).catch((e) => store.toast(e.message, "error"));
+  useEffect(() => act(rpc("learnState", {})), []);
+  if (!st) return <div className="dim pad">loading…</div>;
+  const reflectNow = () => {
+    const agent = who || agents[0];
+    if (!agent) return store.toast("start an agent first", "error");
+    setBusy(true);
+    void rpc("learnNow", { agent })
+      .then((r) => {
+        setSt(r);
+        store.toast(r.added ? `${r.added} new suggestion${r.added === 1 ? "" : "s"} from ${agent}'s chat` : `nothing new to learn from ${agent}'s chat`);
+      })
+      .catch((e) => store.toast(e.message, "error"))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div className="learn">
+      <div className="row1">
+        <label className="learn-on">
+          <input type="checkbox" checked={st.on} onChange={(e) => act(rpc("learnSettings", { on: e.target.checked }))} /> Learn from my sessions
+        </label>
+        <span className="dim small">after a few messages with an agent, a helper suggests what to remember (counts as "learning" in token stats)</span>
+        <span className="spacer" />
+        {agents.length > 0 && (
+          <>
+            <select value={who || agents[0]} onChange={(e) => setWho(e.target.value)} aria-label="agent to learn from">
+              {agents.map((a) => (
+                <option key={a}>{a}</option>
+              ))}
+            </select>
+            <button className="ghost small" disabled={busy} onClick={reflectNow}>
+              {busy ? "reading…" : "Learn from this chat now"}
+            </button>
+          </>
+        )}
+      </div>
+      <h4>Waiting for your OK {st.pending.length ? `(${st.pending.length})` : ""}</h4>
+      {!st.pending.length && <div className="dim pad">Nothing waiting. Suggestions appear here; nothing is remembered until you accept it.</div>}
+      {st.pending.map((p) => (
+        <Suggestion key={p.id} p={p} onDone={setSt} />
+      ))}
+      <MemoryList title="About you" hint="every project · e.g. “I make YouTube videos about coding for beginners”, “use PowerShell, not bash”" scope="owner" lines={st.owner} path={st.ownerPath} onChange={setSt} />
+      <MemoryList title="About this project" hint="e.g. “tests: npm test”, “never touch render/”" scope="project" lines={st.project} path={st.projectPath} onChange={setSt} />
+    </div>
+  );
+}
+
+function Suggestion({ p, onDone }: { p: LearnState["pending"][number]; onDone: (s: LearnState) => void }) {
+  const [text, setText] = useState(p.text);
+  const decide = (accept: boolean) =>
+    void rpc("learnDecide", { id: p.id, accept, text: accept && text !== p.text ? text : undefined })
+      .then(onDone)
+      .catch((e) => store.toast(e.message, "error"));
+  const big = p.kind === "skill";
+  return (
+    <div className="bb-row learn-item" data-kind={p.kind}>
+      <div className="row1">
+        <strong>{KIND_LABEL[p.kind] ?? p.kind}{p.title ? `: ${p.title}` : ""}</strong>
+        <span className="dim small">{[p.agent && `from ${p.agent}'s chat`, p.reason].filter(Boolean).join(" · ")}</span>
+      </div>
+      {p.kind === "forget-skill" ? (
+        <div className="mail-body">{p.text}</div>
+      ) : big ? (
+        <textarea className="learn-edit mono" rows={8} value={text} onChange={(e) => setText(e.target.value)} aria-label="edit before accepting" />
+      ) : (
+        <input className="learn-edit" value={text} onChange={(e) => setText(e.target.value)} aria-label="edit before accepting" />
+      )}
+      <div className="row1">
+        <button className="primary small" onClick={() => decide(true)}>{p.kind === "forget-skill" ? "Remove it" : "Accept"}</button>
+        <button className="ghost small" onClick={() => decide(false)}>{p.kind === "forget-skill" ? "Keep it" : "Reject"}</button>
+      </div>
+    </div>
+  );
+}
+
+function MemoryList({ title, hint, scope, lines, path, onChange }: { title: string; hint: string; scope: "owner" | "project"; lines: string[]; path: string; onChange: (s: LearnState) => void }) {
+  const [draft, setDraft] = useState("");
+  const add = () => {
+    if (!draft.trim()) return;
+    void rpc("memoryAdd", { scope, text: draft })
+      .then((s) => {
+        onChange(s);
+        setDraft("");
+      })
+      .catch((e) => store.toast(e.message, "error"));
+  };
+  return (
+    <div className={`memory memory-${scope}`}>
+      <h4>
+        {title} <span className="dim small" title={path}>{lines.length} · every agent reads this</span>
+      </h4>
+      {lines.map((l, i) => (
+        <div key={i} className="row1 memory-line">
+          <span>{l}</span>
+          <span className="spacer" />
+          <button className="ghost small" title="forget" aria-label={`forget: ${l}`} onClick={() => void rpc("memoryRemove", { scope, index: i }).then(onChange).catch((e) => store.toast(e.message, "error"))}>
+            ✕
+          </button>
+        </div>
+      ))}
+      <div className="row1">
+        <input value={draft} placeholder={hint} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} aria-label={`add to ${title}`} />
+        <button className="ghost small" onClick={add}>Add</button>
+      </div>
     </div>
   );
 }

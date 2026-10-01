@@ -73,6 +73,7 @@ export function vendorOf(kind: string, model?: string): string {
 export function categoryOf(role = "", name = "", automatic = false): string {
   const t = `${role} ${name}`.toLowerCase();
   if (/prompt engineer/.test(t)) return "prompting";
+  if (/learning helper|\blearner\b/.test(t)) return "learning";
   if (/judge/.test(t)) return "verdict judge";
   if (/verdict|contender|builder/.test(t)) return "verdict";
   if (/review/.test(t)) return "review";
