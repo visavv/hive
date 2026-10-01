@@ -20,6 +20,7 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import * as acp from "@agentclientprotocol/sdk";
 import type * as schema from "@agentclientprotocol/sdk";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { confine } from "./confine.js";
 import { AGENTS, agentEnv, groupSpawn, killTree, spawnSpec, type AgentDef } from "./agents.js";
 import { nodeEntry } from "./paths.js";
 import { AUTH_STATUS_UPDATE, authLabel, type AuthStatus } from "./doctor.js";
@@ -788,6 +789,8 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
   /** Agents must send absolute paths; refuse anything else. */
   private checkPath(p: string): string {
     if (!isAbsolute(p)) throw new Error(`path must be absolute: ${p}`);
+    // A chat-only agent has no business with files outside its folder (other policies ask per tool call).
+    if (this.policy === "reject-all") return confine(this.cwd, p);
     return p;
   }
 

@@ -9,7 +9,7 @@ import { HiveDb } from "../src/hive/db.js";
 import { checkAutomatic } from "../src/core/budget.js";
 import { agentNameProblem } from "../src/core/names.js";
 import { AGENTS, agentEnv, customAgentDef, withoutApiKey } from "../src/core/agents.js";
-import { isHiveTool } from "../src/core/session.js";
+import { AgentSession, isHiveTool } from "../src/core/session.js";
 import { TRUST_POLICY, senderTrust, untrusted } from "../src/core/trust.js";
 
 const dir = freshDir(".hive-test-fixes");
@@ -134,6 +134,15 @@ db2.close();
   const t = (title: string, kind = "other", rawInput?: unknown) => isHiveTool({ sessionId: "s", toolCall: { toolCallId: "1", title, kind, rawInput }, options: [] } as any);
   assert(t("mcp__hive__hive_send") && t("hive_status") && t("hive.hive_inbox") && t("x", "other", { server: "hive", tool: "hive_send" }), "SEC-005: hive's own tool calls are still recognised");
   assert(!t("rm -rf ~ && echo hive_status", "execute") && !t("rm -rf ~ && echo hive_status") && !t("mcp__evil__hive_send") && !t("x", "other", { name: "hive_send" }) && !t("hive_status", "execute"), "SEC-005: a shell command or another server's tool naming a hive tool still asks");
+}
+
+// ACP fs requests from a chat-only (reject-all) agent stay inside its folder
+{
+  const mk = (policy: "reject-all" | "allow-reads") => new AgentSession({ name: "fs", agent: "mock", cwd: work, policy, hiveDb: join(dir, "fs.db") }) as any;
+  const chat = mk("reject-all");
+  assert(refuses(() => chat.checkPath(join(outside, "secret.png"))) && chat.checkPath(join(work, "a.txt")).endsWith("a.txt"), "reject-all: fs read/write outside the agent's folder is refused, inside is fine");
+  if (linked) assert(refuses(() => chat.checkPath(join(work, "link", "secret.png"))), "reject-all: …also through a symlink");
+  assert(mk("allow-reads").checkPath(join(outside, "secret.png")) === join(outside, "secret.png"), "other policies keep their fs paths (they ask per tool call)");
 }
 
 // SEC-006: agents don't see bridge tokens, media keys or other providers' keys
