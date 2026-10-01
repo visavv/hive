@@ -279,6 +279,7 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onRecipe
   onSkills: () => void;
 }) {
   const unread = useStore((s) => s.ownerUnread);
+  const held = useStore((s) => s.heldTotal);
   const layout = useStore((s) => s.layout);
   const [text, setText] = useState("");
   const targets = names.filter((n) => selected.has(n) && store.agents.has(n));
@@ -367,8 +368,8 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onRecipe
       <button className="ghost" onClick={onRecipes} title="set up a ready-made team of agents">
         ⚡ Recipes
       </button>
-      <button className={`hive-btn${unread ? " has-mail" : ""}`} onClick={onHive} title="report, inbox, blackboard, mail (Ctrl+I)">
-        ✉ Hive{unread ? <span className="badge alert">{unread}</span> : null}
+      <button className={`hive-btn${unread || held ? " has-mail" : ""}`} onClick={onHive} title={`report, inbox, blackboard, mail (Ctrl+I)${held ? ` · ${held} message${held === 1 ? "" : "s"} waiting for your review` : ""}`}>
+        ✉ Hive{unread + held ? <span className="badge alert">{unread + held}</span> : null}
       </button>
       <button className="primary" onClick={onAdd} title="add agent (Ctrl+N)">+ Agent</button>
     </div>
@@ -843,6 +844,12 @@ function AddAgentDialog({ onClose }: { onClose: () => void }) {
             own git worktree on branch hive/{name || "<name>"} (recommended for agents that edit)
           </span>
         </label>
+        {policy === "allow-all" && !worktree && (
+          <div className="hint small warn" role="note">
+            Allow all outside a worktree: this agent runs commands as you and can change any file you can, including your checkout and hive's own settings. Prefer
+            a worktree, or "ask".
+          </div>
+        )}
         {preset?.job && (
           <label>
             <span>Job</span>

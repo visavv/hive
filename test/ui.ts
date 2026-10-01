@@ -315,6 +315,10 @@ try {
   await pane(page, "alpha").locator("textarea").press("Enter");
   await pane(page, "beta").locator(".group-chip .badge").waitFor({ timeout: 10_000 });
   assert(true, "a message between linked agents in review mode waits for you (badge)");
+  await page.keyboard.press("Control+I");
+  await page.locator(".drawer .held-list .gmsg", { hasText: "please check the login flow" }).waitFor({ timeout: 5000 });
+  assert(true, "everything waiting for review is also listed in the Inbox");
+  await page.keyboard.press("Escape");
   await pane(page, "beta").locator(".group-chip").click();
   const gc = page.locator(".modal.wide", { hasText: "@alpha-beta" });
   await gc.locator(".gmsg.held", { hasText: "please check the login flow" }).waitFor({ timeout: 5000 });

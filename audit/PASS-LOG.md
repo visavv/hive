@@ -87,3 +87,14 @@
 - A screen reader run (NVDA, Orca).
 - A long soak with jobs and links.
 - IDEA-005 (chaining) and IDEA-006 (`.worktreeinclude`) as the most useful next features.
+
+## Pass 4 (fix round): 2026-10-01
+
+All open items fixed or mitigated:
+- **SEC-003**: unlinked peer mail to allow-all agents is held for review by default; Inbox has a "Waiting for your review" list with Link & release.
+- **SEC-004**: warnings in the Add Agent dialog and CLI.
+- **PERF-001**: indexed unread query, 3.5× faster.
+- **UX-008**: toasts moved to top center.
+- **UX-009**: top bar no longer wraps, found while adding the Verdict button.
+
+Verified with `npm test` (17 suites), the UI test (new: Inbox lists held mail; verdict flow), the layout probe at 1366/1280 and the perf bench. What remains is by design: an agent you allow to run any command runs as you (SEC-004 residual).

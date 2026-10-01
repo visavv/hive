@@ -188,7 +188,7 @@ export interface ElicitationAsk {
 export type BackendEvent =
   | { event: "ready"; kinds: KindView[]; presets: PresetView[]; cwd: string; layout: Layout; db: string }
   | { event: "agent"; agent: string; e: SessionEvent | { type: "prompt"; text: string; queued?: boolean } }
-  | { event: "agents"; agents: AgentView[]; others?: OtherAgent[]; groups?: GroupView[]; mailScope?: "open" | "linked" }
+  | { event: "agents"; agents: AgentView[]; others?: OtherAgent[]; groups?: GroupView[]; mailScope?: "open" | "linked"; heldTotal?: number; guardAllowAll?: boolean }
   | { event: "jobs"; jobs: JobView[] }
   | { event: "permission"; ask: PermissionAsk }
   | { event: "permission_done"; reqId: string; outcome?: string }
@@ -275,6 +275,8 @@ export interface Methods {
   releaseMail: (p: { id: number; body?: string }) => void;
   dropMail: (p: { id: number }) => void;
   setScope: (p: { scope: "open" | "linked" }) => void;
+  setGuard: (p: { on: boolean }) => void;
+  heldMail: (p: Record<string, never>) => MailView[];
   saveSkill: (p: { name: string; description?: string; body: string; overwrite?: boolean }) => { path: string; params: string[] };
   usage: (p: Record<string, never>) => import("../core/budget.js").UsageSummary;
   setBudget: (p: { key: string; value: string }) => import("../core/budget.js").UsageSummary;

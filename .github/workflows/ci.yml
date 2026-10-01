@@ -25,6 +25,14 @@ jobs:
       - run: npm run build
       - name: doctor (adapters spawn and answer initialize)
         run: node dist/cli/index.js doctor claude codex mock
+      - name: Windows installer script (what you run at home)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File scripts/install-windows.ps1 -SkipPrereqs -NoPull -NoLaunch -Project "$env:GITHUB_WORKSPACE"
+      - name: hive is on PATH after install
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: hive.cmd doctor mock
       - name: UI e2e (Windows)
         if: runner.os == 'Windows'
         run: npm run test:ui

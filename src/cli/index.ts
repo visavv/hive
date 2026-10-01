@@ -127,6 +127,11 @@ const { values, positionals } = parseArgs({
   },
 });
 const [cmd, ...rest] = positionals;
+// SEC-004: allow-all outside a worktree is the riskiest setup; say so (once, on stderr).
+if (values.policy === "allow-all" && !values.worktree && ["run", "chat", "loop", "every", "watch", "once", "start"].includes(cmd ?? ""))
+  process.stderr.write(
+    "\x1b[33mnote: --policy allow-all without --worktree lets the agent run any command as you and change any file you can (your checkout, hive's settings). Prefer --worktree or --as coder.\x1b[0m\n",
+  );
 // One hive per repo, kept outside the workspace (see core/home.ts).
 values.db = resolve(values.db ?? defaultDb(values.cwd ?? process.cwd()));
 

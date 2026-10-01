@@ -279,6 +279,8 @@ export class HiveDb {
     const msgCols = new Set((this.db.prepare(`PRAGMA table_info(messages)`).all() as { name: string }[]).map((c) => c.name));
     if (!msgCols.has("held")) this.db.exec(`ALTER TABLE messages ADD COLUMN held TEXT`);
     if (!msgCols.has("via")) this.db.exec(`ALTER TABLE messages ADD COLUMN via TEXT`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS messages_held ON messages(held) WHERE held IS NOT NULL`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS messages_via ON messages(via, ts) WHERE via IS NOT NULL`);
     this.db.exec(`CREATE TABLE IF NOT EXISTS verdicts (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, state TEXT NOT NULL)`);
     this.db.exec(`CREATE TABLE IF NOT EXISTS group_settings (grp TEXT PRIMARY KEY, mode TEXT NOT NULL DEFAULT 'direct', max_per_hour INTEGER)`);
   }
@@ -371,6 +373,13 @@ export class HiveDb {
   mailScope(): MailScope {
     return this.getSetting("mail.scope") === "linked" ? "linked" : "open";
   }
+  /** Hold mail from unlinked agents to allow-all agents (default on). */
+  guardAllowAll(): boolean {
+    return this.getSetting("mail.guard_allow_all") !== "off";
+  }
+  setGuardAllowAll(on: boolean) {
+    this.setSetting("mail.guard_allow_all", on ? null : "off");
+  }
   setMailScope(scope: MailScope) {
     this.setSetting("mail.scope", scope === "linked" ? "linked" : null);
   }
@@ -415,8 +424,14 @@ export class HiveDb {
       return this.throughGroup(g);
     }
     const shared = mine.filter((g) => g.members.includes(to));
-    if (!shared.length)
-      return linked ? { ok: false, reason: `You aren't linked with ${to}; only the human links agents. Your groups: ${list}. Ask the owner if you need ${to}.` } : { ok: true };
+    if (!shared.length) {
+      if (linked) return { ok: false, reason: `You aren't linked with ${to}; only the human links agents. Your groups: ${list}. Ask the owner if you need ${to}.` };
+      // An agent that may run anything only takes orders from agents you linked it with:
+      // mail from anyone else waits for you (a peer can't steer it into running commands).
+      if (this.guardAllowAll() && this.getAgent(to)?.policy === "allow-all")
+        return { ok: true, held: `${to} can run anything and isn't linked with ${from}; waiting for your review` };
+      return { ok: true };
+    }
     // The most permissive shared group wins: a direct group under its cap delivers now.
     const routes = shared.map((g) => this.throughGroup(g.name));
     return routes.find((r) => r.ok && !r.held) ?? routes[0];
@@ -452,14 +467,20 @@ export class HiveDb {
   groupMessages(grp: string, limit = 200): Message[] {
     const members = this.groupMembers(grp);
     const ph = members.map(() => "?").join(",") || "''";
+    // Union of indexed lookups rather than one OR across the table.
     return (
       this.db
         .prepare(
-          `SELECT * FROM messages WHERE to_agent=? OR via=? OR (from_agent IN (${ph}) AND to_agent IN (${ph}) AND to_agent<>from_agent) ORDER BY id DESC LIMIT ?`,
+          `SELECT * FROM messages WHERE id IN (
+             SELECT id FROM messages WHERE to_agent=?
+             UNION SELECT id FROM messages WHERE via=?
+             UNION SELECT id FROM messages WHERE to_agent IN (${ph}) AND from_agent IN (${ph}) AND to_agent<>from_agent
+           ) ORDER BY id DESC LIMIT ?`,
         )
         .all("@" + grp, grp, ...members, ...members, limit) as Message[]
     ).reverse();
   }
+
   /**
    * Messages for `agent`: direct ones plus broadcasts from others. read_at is
    * per-agent for broadcasts (message_reads), shared for direct messages.
@@ -478,16 +499,23 @@ export class HiveDb {
     return this.unreadRows(agent).length;
   }
   private unreadRows(agent: string): { from_agent: string; subject: string; to_agent: string }[] {
+    // Two indexed halves instead of one OR over the whole table: direct mail
+    // (to_agent=me, read_at IS NULL) and shared mail ("*" or "@group", a to_agent range).
     return this.db
       .prepare(
-        `SELECT m.from_agent, m.subject, m.to_agent FROM messages m
-         LEFT JOIN message_reads r ON r.message_id=m.id AND r.agent=@agent
-         WHERE (m.to_agent=@agent OR ${BCAST}) AND m.from_agent<>@agent AND m.held IS NULL
-           AND (CASE WHEN ${SHARED} THEN r.read_at ELSE m.read_at END) IS NULL
-         ORDER BY m.id`,
+        `SELECT id, from_agent, subject, to_agent FROM (
+           SELECT m.id, m.from_agent, m.subject, m.to_agent FROM messages m
+            WHERE m.to_agent=@agent AND m.read_at IS NULL AND m.held IS NULL AND m.from_agent<>@agent
+           UNION ALL
+           SELECT m.id, m.from_agent, m.subject, m.to_agent FROM messages m
+            LEFT JOIN message_reads r ON r.message_id=m.id AND r.agent=@agent
+            WHERE (m.to_agent='*' OR (m.to_agent >= '@' AND m.to_agent < 'A')) AND ${BCAST}
+              AND r.read_at IS NULL AND m.held IS NULL AND m.from_agent<>@agent
+         ) ORDER BY id`,
       )
       .all({ agent }) as { from_agent: string; subject: string; to_agent: string }[];
   }
+
   /** Unread mail grouped by sender, for the wake-up prompt. */
   unreadSummary(agent: string): { from: string; count: number; subjects: string[] }[] {
     const by = new Map<string, { from: string; count: number; subjects: string[] }>();

@@ -140,7 +140,10 @@ class Store {
   linkRequest: string[] | null = null;
   /** Group chat open for this group. */
   groupOpen: string | null = null;
-  private heldTotal = -1;
+  /** Messages waiting for your review (any group, or guarded mail to allow-all agents). */
+  heldTotal = 0;
+  private heldSeen = -1;
+  guardAllowAll = true;
   requestLink(members: string[]) {
     this.linkRequest = members;
     this.changed();
@@ -194,16 +197,16 @@ class Store {
       case "agents": {
         this.agents = new Map(ev.agents.map((a) => [a.name, a]));
         this.others = ev.others ?? [];
-        if (ev.groups) {
-          this.groups = ev.groups;
-          const held = ev.groups.reduce((n, g) => n + g.held, 0);
-          if (this.heldTotal >= 0 && held > this.heldTotal) {
-            const g = ev.groups.find((x) => x.held > 0);
-            this.toast(`Waiting for you: a message in @${g?.name} needs your review`);
-            notifyAttention(`@${g?.name}`, "an agent message is waiting for your review", "needs you");
+        if (ev.groups) this.groups = ev.groups;
+        if (ev.heldTotal !== undefined) {
+          if (this.heldSeen >= 0 && ev.heldTotal > this.heldSeen) {
+            this.toast("Waiting for you: an agent message needs your review (✉ Hive → Inbox)");
+            notifyAttention("hive", "an agent message is waiting for your review", "needs you");
           }
-          this.heldTotal = held;
+          this.heldSeen = ev.heldTotal;
+          this.heldTotal = ev.heldTotal;
         }
+        if (ev.guardAllowAll !== undefined) this.guardAllowAll = ev.guardAllowAll;
         if (ev.mailScope) this.mailScope = ev.mailScope;
         break;
       }

@@ -7,7 +7,7 @@ import type { Report } from "../../core/report.js";
 import { rpc } from "./bridge.js";
 import { store, useStore } from "./store.js";
 import { fmtIdle } from "./format.js";
-import { PauseIcon } from "./Links.js";
+import { HeldList, PauseIcon } from "./Links.js";
 
 type Tab = "report" | "inbox" | "board" | "mail" | "usage" | "accounts";
 type Usage = Awaited<ReturnType<typeof rpc<"usage">>>;
@@ -21,11 +21,12 @@ const SINCE: [string, number][] = [
 ];
 
 export function Drawer({ onClose, initialTab }: { onClose: () => void; initialTab?: Tab }) {
-  const [tab, setTab] = useState<Tab>(initialTab ?? (store.ownerUnread ? "inbox" : "report"));
+  const [tab, setTab] = useState<Tab>(initialTab ?? (store.ownerUnread || store.heldTotal ? "inbox" : "report"));
   const [data, setData] = useState<HiveData | null>(null);
   const [report, setReport] = useState<Report | null>(null);
   const [since, setSince] = useState(12 * 3_600_000);
   const unread = useStore((s) => s.ownerUnread);
+  const held = useStore((s) => s.heldTotal);
   const refresh = () => {
     void rpc("hiveData", {}).then(setData).catch((e) => store.toast(e.message, "error"));
     void rpc("report", { sinceMs: since }).then(setReport).catch((e) => store.toast(e.message, "error"));
@@ -48,7 +49,7 @@ export function Drawer({ onClose, initialTab }: { onClose: () => void; initialTa
         <div className="seg">
           {(["report", "inbox", "board", "mail", "usage", "accounts"] as Tab[]).map((t) => (
             <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>
-              {t === "report" ? "Since you left" : t === "inbox" ? `Inbox${unread ? ` (${unread})` : ""}` : t === "board" ? "Blackboard" : t === "usage" ? "Usage" : t === "accounts" ? "Accounts" : "All mail"}
+              {t === "report" ? "Since you left" : t === "inbox" ? `Inbox${unread + held ? ` (${unread + held})` : ""}` : t === "board" ? "Blackboard" : t === "usage" ? "Usage" : t === "accounts" ? "Accounts" : "All mail"}
             </button>
           ))}
         </div>
@@ -72,6 +73,7 @@ export function Drawer({ onClose, initialTab }: { onClose: () => void; initialTa
         )}
         {tab === "inbox" && (
           <>
+            <HeldList />
             {!inbox.length && <div className="dim pad">No mail. Agents write here with hive_send to "owner".</div>}
             {inbox.map((m) => (
               <Mail key={m.id} m={m} />

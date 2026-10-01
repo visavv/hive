@@ -283,7 +283,7 @@ function pushAgents() {
         where: status !== "asleep" && a.owner ? `another hive process (${a.owner.split("@")[0]})` : undefined,
       };
     });
-  send({ event: "agents", agents: [...hub.sessions.values()].map(view), others, groups: groupViews(), mailScope: hub.db.mailScope() });
+  send({ event: "agents", agents: [...hub.sessions.values()].map(view), others, groups: groupViews(), mailScope: hub.db.mailScope(), heldTotal: hub.db.heldMessages().length, guardAllowAll: hub.db.guardAllowAll() });
 }
 
 function groupViews(): GroupView[] {
@@ -648,6 +648,13 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
   dropMail({ id }) {
     if (!hub.db.dropMessage(id)) throw new Error(`#${id} isn't waiting any more`);
     schedulePush();
+  },
+  setGuard({ on }) {
+    hub.db.setGuardAllowAll(on);
+    schedulePush();
+  },
+  heldMail() {
+    return hub.db.heldMessages();
   },
   setScope({ scope }) {
     hub.db.setMailScope(scope);

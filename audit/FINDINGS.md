@@ -6,15 +6,15 @@ Severity: Critical / High / Medium / Low / Opportunity. Confidence: High = repro
 
 ## Summary
 
-Passes: 1 (2026-09-30, commit e5d0908); 2 and 3 (2026-10-01, commits a4f18dc → this commit). Fixes were authorized in pass 2 ("now fix audit gaps"), so each finding records what changed and which test verifies it. A finding is "fixed" only after a test or a hands-on re-check passed on the fixed code.
+Passes: 1 (2026-09-30, commit e5d0908); 2 and 3 (2026-10-01, commits a4f18dc → dbd173d); 4 = fix round for the remaining items (2026-10-01). Fixes were authorized in pass 2 ("now fix audit gaps"), so each finding records what changed and which test verifies it. A finding is "fixed" only after a test or a hands-on re-check passed on the fixed code.
 
 | ID | Title | Sev. | Conf. | Found | Status (pass 3) | Verified by |
 |---|---|---|---|---|---|---|
 | SEC-001 | A repo's skill file can request `allow-all` | Medium | High | 1 | **fixed**: only built-in skills may run allow-all; others run as `ask`, and the CLI says so | test/fixes.ts |
 | SEC-002 | Symlinks escape folder confinement (API agent file tools, media inputs, skill output) | Medium | High | 1 | **fixed**: realpath-based `confine()` | test/fixes.ts (symlink, new file under symlink, `..` false positive) |
 | COST-001 | No default token cap for pay-per-token agents | Medium | Medium | 1 | **fixed**: `daily_tokens_api` default 2M per API provider for automatic work; `daily_tokens.<p>=0` turns it off | test/fixes.ts |
-| SEC-003 | Peer mail / follow-ups can drive an `allow-all` agent | Medium | Medium | 1 | **mitigated**: outside content wrapped as untrusted data; trust policy in every briefing and wake-up; only-linked scope and review mode exist. Residual: models can still be persuaded; IDEA-001 open | test/links.ts, test/api.ts, test/fixes.ts |
-| SEC-004 | `allow-all` agents run as you and can edit hive's own database/settings (insert "owner" mail, unpause budgets) | Medium | Medium | 3 | **open (documented)**: inherent to running agents unsandboxed. Mitigations: worktrees, Codex sandbox, keep allow-all for trusted agents | code reading |
+| SEC-003 | Peer mail / follow-ups can drive an `allow-all` agent | Medium | Medium | 1 | **fixed (pass 4)**: untrusted wrapping + trust policy (pass 2), and now mail from an unlinked agent to an allow-all agent is **held for your review** by default (Inbox: Release / Edit / Drop / Link & release); linked agents talk directly | test/links.ts (guard), UI test (Inbox lists held mail) |
+| SEC-004 | `allow-all` agents run as you and can edit hive's own database/settings (insert "owner" mail, unpause budgets) | Medium | Medium | 3 | **mitigated (pass 4)**: warnings when choosing allow-all without a worktree (Add Agent dialog, CLI); peer mail to allow-all agents held (SEC-003). Residual, by design: an agent you let run any command can still do anything you can; only an OS sandbox would stop that | UI dialog, CLI note |
 | BUG-001 | Skill output check fooled by a prefix-sharing sibling folder | Low | High | 1 | **fixed** | test/fixes.ts |
 | BUG-002 | Failed media calls counted against the cap | Low | High | 1 | **fixed**: counted only on success; media shown as its own row | test/media.ts |
 | BUG-003 | Deleting a group strands its held messages (invisible in the UI, never delivered) | Medium | High | 2 | **fixed**: delete refused until held mail is released or dropped (UI toast, CLI hint) | test/fixes.ts; UI probe (evidence/probe2-after-fixes.txt) |
@@ -28,16 +28,17 @@ Passes: 1 (2026-09-30, commit e5d0908); 2 and 3 (2026-10-01, commits a4f18dc →
 | A11Y-001 | Dialogs don't keep keyboard focus (Tab reaches the page behind) | Medium | High | 3 | **fixed**: focus trap + focus restore in Modal | UI probe: 0 escapes in 25 Tabs (was 20) |
 | A11Y-002 | Toasts not announced to screen readers | Low | High | 3 | **fixed**: `role=status aria-live=polite`; errors `role=alert` | UI probe |
 | PRIV-001 | Mail, API-agent conversations and caption cache kept forever | Low | High | 2 | **fixed**: read mail >90 days pruned (unread/held kept); api-sessions and caption cache files >30 days deleted | test/fixes.ts |
-| PERF-001 | Unread counts scan messages (~2.4 ms per agent at 20k messages; pushed every second) | Low | High | 3 | **mitigated** by PRIV-001 pruning; index work deferred | evidence/perf-bench.txt |
+| PERF-001 | Unread counts scan messages (~2.4 ms per agent at 20k messages; pushed every second) | Low | High | 3 | **fixed (pass 4)**: unread query split into indexed halves (0.67 ms, 3.5× faster); partial indexes for held/via; group chat query as a union of indexed lookups | evidence/perf-bench.txt → perf-bench-after.txt |
 | UX-007 | Desktop entry: a `%` in the project path breaks the launcher | Low | Medium | 3 | **fixed**: `%` escaped as `%%` | code reading |
-| UX-008 | Toasts sit over the bottom-left composer for 4 s | Low | High | 3 | open | screenshots |
-| IDEA-001 | Trusted senders / per-agent accept list | Opportunity | — | 1 | proposed | — |
+| UX-008 | Toasts sit over the bottom-left composer for 4 s | Low | High | 3 | **fixed (pass 4)**: top-center under the bar, click-through | UI test |
+| UX-009 | Top bar labels wrapped onto two lines at ≤1600 px after the Verdict button was added | Low | High | 4 | **fixed**: no-wrap; lower-priority items collapse by window width | probe at 1366/1280 (topbar 40 px, nothing clipped) |
+| IDEA-001 | Trusted senders / per-agent accept list | Opportunity | — | 1 | **done as**: links = trusted senders (allow-all guard + only-linked scope + review mode) | test/links.ts |
 | IDEA-002 | USD estimates for API providers | Opportunity | — | 1 | proposed | — |
 | IDEA-003 | Per-pane mute; "ready" pushed to chat bridges | Opportunity | — | 1 | proposed | — |
 | IDEA-004 | Prompt-engineer "use this prompt" round trip | Opportunity | — | 1 | proposed | — |
 | IDEA-005 | Chain on "agent finished" (fan-out/fan-in), as Maestro Cue does | Opportunity | — | 3 | proposed | docs/COMPARISON.md |
 | IDEA-006 | Copy `.env` / untracked files into new worktrees (`.worktreeinclude`) | Opportunity | — | 3 | proposed | docs/COMPARISON.md |
-| IDEA-007 | Best-of-n: one skill on several models, compared blind | Opportunity | — | 3 | proposed | docs/COMPARISON.md |
+| IDEA-007 | Best-of-n: one skill on several models, compared blind | Opportunity | — | 3 | **done**: verdict mode (docs/VERDICT.md) | test/verdict.ts, UI test |
 
 Disproved: pass 1 suspected "Ctrl+9 doesn't scroll in vertical layout". The cause was UX-001; Ctrl+9 works.
 
