@@ -8,7 +8,7 @@ params:
   - name: transcript
     type: file
     required: true
-    description: transcript (.txt, .srt or .vtt)
+    description: transcript (.txt/.srt/.vtt) or a YouTube link
   - name: working_title
     type: text
     description: the title you have now, if any

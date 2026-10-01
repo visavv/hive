@@ -96,6 +96,7 @@ export function SkillsDialog({ onClose, initial }: { onClose: () => void; initia
   const [err, setErr] = useState("");
   const [filter, setFilter] = useState("");
   const prefill = useRef(initial);
+  const [busy, setBusy] = useState(false);
   useEffect(() => {
     void rpc("skills", {}).then((l) => {
       setList(l);
@@ -114,7 +115,9 @@ export function SkillsDialog({ onClose, initial }: { onClose: () => void; initia
     setKind(sk?.agent ?? "claude");
   }, [name, list.length]);
   const run = async () => {
-    if (!sk) return;
+    if (!sk || busy) return;
+    setBusy(true);
+    setErr("");
     try {
       const params: Record<string, string> = {};
       for (const [k, v] of Object.entries(vals)) if (v.trim()) params[k] = v;
@@ -124,6 +127,8 @@ export function SkillsDialog({ onClose, initial }: { onClose: () => void; initia
       onClose();
     } catch (e: any) {
       setErr(e.message);
+    } finally {
+      setBusy(false);
     }
   };
   const shown = list.filter((x) => !filter || (x.name + x.description).toLowerCase().includes(filter.toLowerCase()));
@@ -192,8 +197,8 @@ export function SkillsDialog({ onClose, initial }: { onClose: () => void; initia
               <button type="button" className="ghost" onClick={onClose}>
                 Cancel
               </button>
-              <button type="submit" className="primary">
-                Run
+              <button type="submit" className="primary" disabled={busy}>
+                {busy ? (Object.values(vals).some((v) => /youtu\.?be/.test(v)) ? "Fetching captions…" : "Starting…") : "Run"}
               </button>
             </div>
           </form>
