@@ -299,7 +299,24 @@ try {
   await page.locator(".modal textarea").fill("hunt bugs");
   await page.locator(".modal label:has-text('Times') input").fill("2");
   await page.locator(".modal button[type=submit]").click();
-  await page.locator(".job-list li.ended", { hasText: "done" }).waitFor({ timeout: 40_000 }); // two runs; slow 2-core CI runners need the room
+  await page
+    .locator(".job-list li.ended", { hasText: "done" })
+    .waitFor({ timeout: 40_000 }) // two runs; slow 2-core CI runners need the room
+    .catch(async (e) => {
+      // say why: the scheduler's view from the hive db, and what the sidebar shows
+      const { default: Database } = await import("better-sqlite3");
+      const db = new Database(join(projectDir(dir), "hive.db"), { readonly: true });
+      const q = (sql: string) => JSON.stringify(db.prepare(sql).all());
+      console.error(`[job not done after 40 s] now=${Date.now()}
+  jobs: ${q("SELECT id, agent, kind, remaining, every_ms, next_run, enabled FROM jobs")}
+  runs: ${q("SELECT * FROM job_runs")}
+  agents: ${q("SELECT name, status, auto_since, lease_until, owner FROM agents")}
+  budget: ${q("SELECT * FROM settings WHERE key LIKE 'budget%' OR key LIKE 'learn%'")}
+  sidebar: ${(await page.locator(".job-list").innerText().catch(() => "?")).replace(/\s+/g, " ").slice(0, 300)}
+  beta: ${(await pane(page, "beta").locator(".transcript").innerText().catch(() => "?")).replace(/\s+/g, " ").slice(-400)}`);
+      db.close();
+      throw e;
+    });
   assert(true, "job scheduled from a pane runs and shows as done in the sidebar");
   await page.locator(".job-list li.ended", { hasText: "done" }).click();
   await page.locator(".modal .rep-job", { hasText: "run 2" }).waitFor({ timeout: 5000 });
