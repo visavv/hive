@@ -7,7 +7,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import type * as schema from "@agentclientprotocol/sdk";
-import { groupSpawn, killTree, resolveEnv, spawnSpec, type AgentDef } from "./agents.js";
+import { agentEnv, groupSpawn, killTree, spawnSpec, type AgentDef } from "./agents.js";
 
 export interface ProbeResult {
   id: string;
@@ -52,7 +52,7 @@ export async function probe(def: AgentDef, timeoutMs = 90_000, authWaitMs = 8000
   const spec = spawnSpec(def);
   const t0 = Date.now();
   const proc = spawn(spec.command, spec.args, {
-    env: { ...process.env, ...resolveEnv(def) },
+    env: agentEnv(def),
     stdio: ["pipe", "pipe", "pipe"],
     shell: spec.shell,
     windowsHide: true,
