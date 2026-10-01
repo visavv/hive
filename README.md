@@ -137,7 +137,17 @@ Architecture: Electron main is a relay; the hub runs in a system-Node child proc
 | reviewer | allow-reads | no | — |
 | security | allow-reads | no | watch ≥50 changed lines |
 | scout | allow-reads | no | every 10m |
+| teacher | allow-reads | no | — (explains code to you; see [Learn while you build](#learn-while-you-build)) |
 | bughunter | allow-all | yes | loop 5× |
+
+## Learn while you build
+
+Read the code your agents write, and have an agent explain it. Details for beginners: [docs/LEARN.md](docs/LEARN.md).
+
+- **Code view** (Ctrl+P, or Ctrl+K → "Open file…" / "Browse code", or click a file path in a tool card or diff): file tree of the focused agent's folder (its worktree if it has one; switch folders at the top), syntax highlighting, M/N marks for modified and new files, and a **Changes** tab with the agent's branch against its base. Read-only.
+- **Ask about code:** select lines (drag, or click / Shift+click line numbers) → Explain, Why like this?, Simpler?, Quiz me or Ask…. The question goes to your **teacher** with the file, line range and code; its answer appears next to the code.
+- **Teacher** (Ctrl+K → "Start a teacher", or the `teacher` preset): reads code, never changes it; short paragraphs tied to exact lines, jargon defined, one quiz question when asked; new terms go on your board as cards labelled `glossary`.
+- **Explain every change** (toggle per agent in the code view or Ctrl+K): after each turn of that agent that changes files, the teacher explains the diff (trimmed to 8 KB, at most once per agent every 2 minutes). It's automatic work, so it costs tokens and your spending guards apply.
 
 ## Scheduler
 
