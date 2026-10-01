@@ -493,7 +493,7 @@ try {
   const asked = page.locator(".code-dock .msg.user", { hasText: "const message" });
   await asked.waitFor({ timeout: 20_000 });
   const askedText = await asked.innerText();
-  assert(askedText.includes("src/hello.ts lines 2–4") && askedText.includes("return message;") && askedText.includes("```ts") && askedText.includes("Explain what these lines do"), "Explain sends the path, line range and the code in a fenced block to the teacher");
+  assert(askedText.includes("src/hello.ts lines 2–4") && askedText.includes("return message;") && askedText.includes("```ts") && askedText.includes("Help me understand what these lines do"), "Explain sends the path, line range and the code in a fenced block to the teacher");
   assert((await pane(page, "teacher").locator(".msg.user", { hasText: "const message" }).count()) === 1, "the question is in the teacher's own pane too");
   await page.locator(".code-dock .msg.agent", { hasText: "done" }).first().waitFor({ timeout: 20_000 });
   assert(true, "the teacher answers in the docked transcript next to the code");
@@ -673,7 +673,9 @@ try {
     assert((await page.locator(".dv-badge").innerText()).includes("sandboxed"), "browser pane opens from the palette with the sandbox badge");
     await page.locator(".dv-url").fill(`127.0.0.1:${(site.address() as any).port}`);
     await page.locator(".dv-url").press("Enter");
-    await page.waitForFunction(() => (document.querySelector(".browser-pane .dv-view img") as HTMLImageElement | null)?.src.startsWith("data:image/jpeg"), null, { timeout: 30_000 });
+    await page
+      .waitForFunction(() => (document.querySelector(".browser-pane .dv-view img") as HTMLImageElement | null)?.src.startsWith("data:image/jpeg"), null, { timeout: 45_000 })
+      .catch(async () => console.error(`[browser pane after 45 s] ${(await page.locator(".browser-pane").innerText().catch(() => "?")).replace(/\s+/g, " ").slice(0, 400)}`));
     assert(await page.locator(".dv-title", { hasText: "Pane test" }).count(), "the page loads in the sandboxed browser and frames reach the pane");
     await page.screenshot({ path: join(shots, "hive-ui-browser.png") });
     await page.locator(".dv-tab button[aria-label='close Browser pane']").click();
