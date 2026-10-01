@@ -6,6 +6,7 @@ import { store, usePane, useStore, type Item } from "./store.js";
 import { focus } from "./focus.js";
 import { ctxPct, fmtIdle, statusLabel } from "./format.js";
 import { PromptEditor } from "./Extras.js";
+import { GroupChips, groupColor } from "./Links.js";
 
 export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
   name: string;
@@ -20,12 +21,14 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
   const hoverFocus = useStore((s) => s.layout.hoverFocus);
   const waiting = useStore((s) => s.waitingOn(name));
   const ready = useStore((s) => s.readyAt.has(name));
+  const firstGroup = useStore((s) => s.groups.find((g) => g.members.includes(name))?.name);
+  const linkColor = firstGroup ? groupColor(firstGroup) : undefined;
   // In the layout but not running (exited, closed by its job, backend restarted): stopped.
   const status = agent?.status ?? (starting ? (starting.error ? "error" : "starting") : "asleep");
 
   return (
     <section
-      className={`pane status-${status}${waiting ? " needs-you" : ""}${ready && !waiting ? " ready" : ""}`}
+      className={`pane status-${status}${waiting ? " needs-you" : ""}${ready && !waiting ? " ready" : ""}${linkColor ? " linked" : ""}`}
       data-pane={name}
       onMouseEnter={() => hoverFocus && focus.hoverStart(name)}
       onMouseLeave={() => focus.hoverEnd()}
@@ -34,6 +37,23 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
         store.clearReady(name);
       }}
       onFocusCapture={() => store.clearReady(name)}
+      onDragOver={(e) => {
+        if (e.dataTransfer.types.includes("application/x-hive-agent")) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "link";
+          e.currentTarget.classList.add("drop-target");
+        }
+      }}
+      onDragLeave={(e) => e.currentTarget.classList.remove("drop-target")}
+      onDrop={(e) => {
+        e.currentTarget.classList.remove("drop-target");
+        const from = e.dataTransfer.getData("application/x-hive-agent");
+        if (from && from !== name) {
+          e.preventDefault();
+          store.requestLink([from, name]);
+        }
+      }}
+      style={linkColor ? ({ ["--grp" as any]: linkColor } as React.CSSProperties) : undefined}
     >
       <header className="pane-head" onDoubleClick={onMaximize} title="double-click to maximize">
         <input
@@ -46,8 +66,19 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
         />
         <span className="idx">{index < 9 ? `^${index + 1}` : ""}</span>
         <span className={`dot ${status}`} title={statusLabel(status)} />
-        <strong className="pname">{name}</strong>
+        <strong
+          className="pname"
+          draggable
+          onDragStart={(e) => {
+            e.dataTransfer.setData("application/x-hive-agent", name);
+            e.dataTransfer.effectAllowed = "link";
+          }}
+          title="drag onto another pane to link them (so they can talk)"
+        >
+          {name}
+        </strong>
         <span className="kind">{agent?.kind ?? starting?.kind}</span>
+        <GroupChips agent={name} />
         {agent && <ConfigSelectors agent={agent} />}
         {ready && !waiting && (
           <span className="badge ready" role="status" title="finished — click or focus the pane to clear">
@@ -65,6 +96,9 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
           {agent && (
             <button onClick={onJob} title="schedule a loop / interval / watch job">⏱</button>
           )}
+          <button onClick={() => store.requestLink([name])} title="link with another agent (or drag this pane's name onto another pane)" aria-label="link with another agent">
+            🔗
+          </button>
           {agent && (
             <button
               onClick={() => void rpc("newSession", { name }).catch((e) => store.toast(e.message, "error"))}

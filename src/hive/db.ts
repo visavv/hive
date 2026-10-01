@@ -17,7 +17,21 @@ export interface Message {
   body: string;
   thread: string | null;
   read_at: number | null;
+  /** Why it isn't delivered yet (waiting for the owner), or null. */
+  held?: string | null;
+  /** Group the message was routed through, if any. */
+  via?: string | null;
 }
+
+export type GroupMode = "direct" | "review";
+export interface GroupSettings {
+  mode: GroupMode;
+  /** Max agent-to-agent messages per hour through this group; more are held. */
+  max_per_hour: number | null;
+}
+export type Route = { ok: false; reason: string } | { ok: true; held?: string; via?: string };
+/** "open": agents can message anyone; "linked": only agents they share a group with (plus the owner). */
+export type MailScope = "open" | "linked";
 
 export interface BlackboardEntry {
   key: string;
@@ -262,6 +276,10 @@ export class HiveDb {
       if (!agentCols.has(name)) this.db.exec(`ALTER TABLE agents ADD COLUMN ${name} ${type}`);
     const runCols = new Set((this.db.prepare(`PRAGMA table_info(job_runs)`).all() as { name: string }[]).map((c) => c.name));
     if (!runCols.has("summary")) this.db.exec(`ALTER TABLE job_runs ADD COLUMN summary TEXT`);
+    const msgCols = new Set((this.db.prepare(`PRAGMA table_info(messages)`).all() as { name: string }[]).map((c) => c.name));
+    if (!msgCols.has("held")) this.db.exec(`ALTER TABLE messages ADD COLUMN held TEXT`);
+    if (!msgCols.has("via")) this.db.exec(`ALTER TABLE messages ADD COLUMN via TEXT`);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS group_settings (grp TEXT PRIMARY KEY, mode TEXT NOT NULL DEFAULT 'direct', max_per_hour INTEGER)`);
   }
 
   // ---- agents ----
@@ -339,23 +357,103 @@ export class HiveDb {
   }
 
   // ---- messages ----
-  send(from: string, to: string, subject: string, body: string, thread?: string): number {
+  send(from: string, to: string, subject: string, body: string, thread?: string, o: { held?: string; via?: string } = {}): number {
     const r = this.db
       .prepare(
-        `INSERT INTO messages (ts, from_agent, to_agent, subject, body, thread) VALUES (?,?,?,?,?,?)`,
+        `INSERT INTO messages (ts, from_agent, to_agent, subject, body, thread, held, via) VALUES (?,?,?,?,?,?,?,?)`,
       )
-      .run(Date.now(), from, to, subject, body, thread ?? null);
+      .run(Date.now(), from, to, subject, body, thread ?? null, o.held ?? null, o.via ?? null);
     return Number(r.lastInsertRowid);
+  }
+
+  // ---- the layer between agents: scope, group modes, held mail ----
+  mailScope(): MailScope {
+    return this.getSetting("mail.scope") === "linked" ? "linked" : "open";
+  }
+  setMailScope(scope: MailScope) {
+    this.setSetting("mail.scope", scope === "linked" ? "linked" : null);
+  }
+  groupSettings(grp: string): GroupSettings {
+    const r = this.db.prepare(`SELECT mode, max_per_hour FROM group_settings WHERE grp=?`).get(grp) as GroupSettings | undefined;
+    return { mode: r?.mode === "review" ? "review" : "direct", max_per_hour: r?.max_per_hour ?? null };
+  }
+  setGroupSettings(grp: string, s: Partial<GroupSettings>) {
+    const cur = this.groupSettings(grp);
+    const next = { ...cur, ...s };
+    this.db
+      .prepare(`INSERT INTO group_settings (grp, mode, max_per_hour) VALUES (?,?,?) ON CONFLICT(grp) DO UPDATE SET mode=excluded.mode, max_per_hour=excluded.max_per_hour`)
+      .run(grp, next.mode, next.max_per_hour && next.max_per_hour > 0 ? Math.floor(next.max_per_hour) : null);
+  }
+  private overCap(grp: string, max: number | null): boolean {
+    if (!max) return false;
+    const n = (
+      this.db.prepare(`SELECT COUNT(*) AS n FROM messages WHERE via=? AND from_agent<>'owner' AND held IS NULL AND ts>?`).get(grp, Date.now() - 3_600_000) as { n: number }
+    ).n;
+    return n >= max;
+  }
+  private throughGroup(grp: string): Route {
+    const s = this.groupSettings(grp);
+    if (s.mode === "review") return { ok: true, held: `waiting for the human's review in @${grp}`, via: grp };
+    if (this.overCap(grp, s.max_per_hour)) return { ok: true, held: `@${grp} reached its limit of ${s.max_per_hour} agent messages per hour`, via: grp };
+    return { ok: true, via: grp };
+  }
+  /**
+   * May `from` message `to`, and is it delivered now or held for the owner?
+   * The owner is never restricted, and agents can always reach the owner.
+   */
+  route(from: string, to: string): Route {
+    if (from === "owner" || to === "owner") return { ok: true };
+    const linked = this.mailScope() === "linked";
+    const mine = this.groups().filter((g) => g.members.includes(from));
+    const list = mine.map((g) => "@" + g.name).join(", ") || "none";
+    if (to === "*") return linked ? { ok: false, reason: `Agents here only talk to agents they're linked with (your groups: ${list}). Use @group, or hive_send to "owner".` } : { ok: true };
+    if (to.startsWith("@")) {
+      const g = to.slice(1);
+      const members = this.groupMembers(g);
+      if (linked && !members.includes(from)) return { ok: false, reason: `You're not in ${to}. Your groups: ${list}.` };
+      return this.throughGroup(g);
+    }
+    const shared = mine.filter((g) => g.members.includes(to));
+    if (!shared.length)
+      return linked ? { ok: false, reason: `You aren't linked with ${to}; only the human links agents. Your groups: ${list}. Ask the owner if you need ${to}.` } : { ok: true };
+    // The most permissive shared group wins: a direct group under its cap delivers now.
+    const routes = shared.map((g) => this.throughGroup(g.name));
+    return routes.find((r) => r.ok && !r.held) ?? routes[0];
+  }
+  heldMessages(): Message[] {
+    return this.db.prepare(`SELECT * FROM messages WHERE held IS NOT NULL ORDER BY id`).all() as Message[];
+  }
+  /** Deliver a held message now (optionally edited). */
+  releaseMessage(id: number, body?: string): boolean {
+    const r = this.db
+      .prepare(`UPDATE messages SET held=NULL, ts=?, body=COALESCE(?, body) WHERE id=? AND held IS NOT NULL`)
+      .run(Date.now(), body ?? null, id);
+    return r.changes > 0;
+  }
+  dropMessage(id: number): boolean {
+    return this.db.prepare(`DELETE FROM messages WHERE id=? AND held IS NOT NULL`).run(id).changes > 0;
+  }
+  /** Conversation of a group: mail to @grp, mail routed through it, and mail between its members. */
+  groupMessages(grp: string, limit = 200): Message[] {
+    const members = this.groupMembers(grp);
+    const ph = members.map(() => "?").join(",") || "''";
+    return (
+      this.db
+        .prepare(
+          `SELECT * FROM messages WHERE to_agent=? OR via=? OR (from_agent IN (${ph}) AND to_agent IN (${ph}) AND to_agent<>from_agent) ORDER BY id DESC LIMIT ?`,
+        )
+        .all("@" + grp, grp, ...members, ...members, limit) as Message[]
+    ).reverse();
   }
   /**
    * Messages for `agent`: direct ones plus broadcasts from others. read_at is
    * per-agent for broadcasts (message_reads), shared for direct messages.
    */
   inbox(agent: string, unreadOnly = true, limit = 50): Message[] {
-    const base = `SELECT m.id, m.ts, m.from_agent, m.to_agent, m.subject, m.body, m.thread,
+    const base = `SELECT m.id, m.ts, m.from_agent, m.to_agent, m.subject, m.body, m.thread, m.via,
         CASE WHEN ${SHARED} THEN r.read_at ELSE m.read_at END AS read_at
       FROM messages m LEFT JOIN message_reads r ON r.message_id=m.id AND r.agent=@agent
-      WHERE (m.to_agent=@agent OR ${BCAST}) AND m.from_agent<>@agent`;
+      WHERE (m.to_agent=@agent OR ${BCAST}) AND m.from_agent<>@agent AND m.held IS NULL`;
     const sql = unreadOnly
       ? `${base} AND (CASE WHEN ${SHARED} THEN r.read_at ELSE m.read_at END) IS NULL ORDER BY m.id LIMIT @limit`
       : `${base} ORDER BY m.id DESC LIMIT @limit`;
@@ -369,7 +467,7 @@ export class HiveDb {
       .prepare(
         `SELECT m.from_agent, m.subject, m.to_agent FROM messages m
          LEFT JOIN message_reads r ON r.message_id=m.id AND r.agent=@agent
-         WHERE (m.to_agent=@agent OR ${BCAST}) AND m.from_agent<>@agent
+         WHERE (m.to_agent=@agent OR ${BCAST}) AND m.from_agent<>@agent AND m.held IS NULL
            AND (CASE WHEN ${SHARED} THEN r.read_at ELSE m.read_at END) IS NULL
          ORDER BY m.id`,
       )
@@ -475,6 +573,7 @@ export class HiveDb {
   }
   deleteGroup(grp: string) {
     this.db.prepare(`DELETE FROM group_members WHERE grp=?`).run(grp);
+    this.db.prepare(`DELETE FROM group_settings WHERE grp=?`).run(grp);
   }
   groups(): { name: string; members: string[] }[] {
     const rows = this.db.prepare(`SELECT grp, member FROM group_members ORDER BY grp, member`).all() as { grp: string; member: string }[];

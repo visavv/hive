@@ -304,3 +304,32 @@ button.danger { border-color: #6b2f35; color: var(--red); }
 .composer .expand { align-self: flex-end; height: 30px; padding: 0 6px; color: var(--dim); }
 .save-skill { border-top: 1px solid var(--line); padding-top: 8px; }
 .hint { padding: 0 2px; }
+/* ---- links / groups ---- */
+.pane.linked { border-left: 3px solid var(--grp); }
+.pane.drop-target { outline: 2px dashed var(--accent); outline-offset: -3px; }
+.pname[draggable="true"] { cursor: grab; }
+.group-chips { display: inline-flex; gap: 3px; flex-wrap: wrap; min-width: 0; }
+.group-chip {
+  font-size: 10px; padding: 0 6px; border-radius: 8px; background: color-mix(in srgb, var(--grp) 18%, var(--bg3));
+  border: 1px solid color-mix(in srgb, var(--grp) 60%, transparent); color: var(--fg); display: inline-flex; gap: 3px; align-items: center;
+}
+.group-item { border-left: 3px solid var(--grp); }
+.gdot { width: 8px; height: 8px; border-radius: 50%; background: var(--grp); flex: none; }
+.scope-row { display: flex; align-items: center; gap: 6px; padding: 0 12px 6px; flex-wrap: wrap; }
+.seg.small button { font-size: 11px; padding: 1px 6px; }
+.link-members { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.chip { display: inline-flex; align-items: center; gap: 2px; background: var(--bg3); border: 1px solid var(--line); border-radius: 10px; padding: 0 2px 0 8px; font-size: 12px; }
+.modes { border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; display: flex; flex-direction: column; gap: 4px; }
+.modes legend { color: var(--dim); font-size: 11px; padding: 0 4px; }
+label.radio { display: flex; gap: 6px; align-items: center; }
+.group-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; border-left: 3px solid var(--grp); padding-left: 8px; }
+.group-head .cap { display: flex; align-items: center; gap: 4px; color: var(--dim); font-size: 12px; }
+.group-head .cap input { width: 64px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; }
+.group-log { flex: 1; min-height: 40vh; max-height: 60vh; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; background: var(--bg); }
+.gmsg { padding: 6px 0; border-bottom: 1px solid var(--line); }
+.gmsg.mine strong { color: var(--accent); }
+.gmsg.held { background: color-mix(in srgb, var(--amber) 8%, transparent); border-left: 3px solid var(--amber); padding-left: 8px; }
+.held-bar { display: flex; gap: 6px; align-items: center; margin-top: 4px; flex-wrap: wrap; }
+.small-editor { min-height: 90px; }
+.modal .compose { display: flex; gap: 6px; }
+.modal .compose input { flex: 1; }

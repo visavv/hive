@@ -118,6 +118,27 @@ export interface OtherAgent {
   where?: string;
 }
 
+export interface GroupView {
+  name: string;
+  members: string[];
+  mode: "direct" | "review";
+  maxPerHour: number | null;
+  /** Messages waiting for you in this group. */
+  held: number;
+}
+
+export interface MailView {
+  id: number;
+  ts: number;
+  from_agent: string;
+  to_agent: string;
+  subject: string;
+  body: string;
+  thread: string | null;
+  held?: string | null;
+  via?: string | null;
+}
+
 export interface JobView {
   id: number;
   kind: string;
@@ -154,7 +175,7 @@ export interface ElicitationAsk {
 export type BackendEvent =
   | { event: "ready"; kinds: KindView[]; presets: PresetView[]; cwd: string; layout: Layout; db: string }
   | { event: "agent"; agent: string; e: SessionEvent | { type: "prompt"; text: string; queued?: boolean } }
-  | { event: "agents"; agents: AgentView[]; others?: OtherAgent[] }
+  | { event: "agents"; agents: AgentView[]; others?: OtherAgent[]; groups?: GroupView[]; mailScope?: "open" | "linked" }
   | { event: "jobs"; jobs: JobView[] }
   | { event: "permission"; ask: PermissionAsk }
   | { event: "permission_done"; reqId: string; outcome?: string }
@@ -230,6 +251,12 @@ export interface Methods {
   }[];
   runSkill: (p: { name: string; params: Record<string, string>; kind?: string }) => { agent: string; kind: string; policy: Policy };
   groups: (p: Record<string, never>) => { name: string; members: string[] }[];
+  link: (p: { members: string[]; name?: string; mode?: "direct" | "review"; maxPerHour?: number | null; includeOwner?: boolean }) => GroupView;
+  groupChat: (p: { name: string }) => { group: GroupView; messages: MailView[] };
+  setGroup: (p: { name: string; mode?: "direct" | "review"; maxPerHour?: number | null; remove?: string; add?: string; delete?: boolean }) => GroupView | null;
+  releaseMail: (p: { id: number; body?: string }) => void;
+  dropMail: (p: { id: number }) => void;
+  setScope: (p: { scope: "open" | "linked" }) => void;
   saveSkill: (p: { name: string; description?: string; body: string; overwrite?: boolean }) => { path: string; params: string[] };
   usage: (p: Record<string, never>) => import("../core/budget.js").UsageSummary;
   setBudget: (p: { key: string; value: string }) => import("../core/budget.js").UsageSummary;

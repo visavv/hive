@@ -90,8 +90,13 @@ server.registerTool(
       return text(
         `Thread ${thread} already has ${max} messages; not sent. Stop replying in this thread. If something is unresolved, write a summary to the blackboard (hive_bb_set "owner/<topic>") for the human.`,
       );
-    const id = db.send(me, to, subject, body, t);
-    db.log(me, "send", { id, to, subject, thread: t });
+    // The layer between agents: links (groups), review mode, hourly caps.
+    const route = db.route(me!, to);
+    if (!route.ok) return text(`Not sent. ${route.reason}`);
+    const id = db.send(me, to, subject, body, t, { held: route.held, via: route.via });
+    db.log(me, "send", { id, to, subject, thread: t, held: route.held, via: route.via });
+    if (route.held)
+      return text(`#${id} is held (${route.held}). The human will release, edit or drop it. Don't resend it; carry on with other work or stop and report.`);
     const target = to === "*" || to === "owner" || to.startsWith("@") ? undefined : db.getAgent(to);
     const asleep = target && (target.status === "asleep" || target.status === "error");
     return text(`sent #${id} to ${to} (thread ${t})${asleep ? ` — ${to} is ${target!.status}; it will get this when it next runs` : ""}`);
@@ -201,8 +206,10 @@ server.registerTool(
     },
   },
   async ({ action, name, members }) => {
-    if (action === "list") return text(JSON.stringify(db.groups(), null, 2));
+    if (action === "list") return text(JSON.stringify(db.groups().map((g) => ({ ...g, ...db.groupSettings(g.name) })), null, 2));
     if (!name) return text("name is required");
+    if ((action === "create" || action === "add") && db.mailScope() === "linked")
+      return text("In this hive only the human links agents (drag panes onto each other in the UI, or hive link). Ask the owner.");
     if (action === "leave") {
       db.removeFromGroup(name, me!);
       return text(`left @${name}`);
@@ -233,6 +240,11 @@ server.registerTool(
   async ({ prompt, in_minutes, agent }) => {
     const target = db.getAgent(agent ?? me!);
     if (!target?.kind) return text(`No agent named "${agent}".`);
+    if (target.name !== me) {
+      const route = db.route(me!, target.name);
+      if (!route.ok) return text(`Not scheduled. ${route.reason}`);
+      if (route.held) return text(`Not scheduled: messages to ${target.name} need the human's approval (${route.held}). Use hive_send instead.`);
+    }
     const pending = db.listJobs(false).filter((j) => j.kind === "once" && j.prompt.startsWith(`[follow-up from ${me}]`)).length;
     if (pending >= 20) return text("You already have 20 pending follow-ups; let some run first.");
     const id = db.addJob({
