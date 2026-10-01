@@ -27,6 +27,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { hiveHome } from "../core/home.js";
 import { confine } from "../core/confine.js";
+import { withoutApiKey } from "../core/agents.js";
 import { TRUST_POLICY, untrusted } from "../core/trust.js";
 
 const env = process.env;
@@ -137,7 +138,8 @@ async function connectMcp(servers: acp.McpServer[]): Promise<Sess["mcp"]> {
   const out: Sess["mcp"] = [];
   for (const s of servers) {
     if (!("command" in s)) continue;
-    const e: Record<string, string> = { ...(process.env as Record<string, string>) };
+    // The hive MCP server never needs the API key.
+    const e = withoutApiKey(process.env);
     for (const v of s.env) e[v.name] = v.value;
     try {
       const client = new Client({ name: "hive-api-agent", version: "0" });

@@ -8,7 +8,7 @@ import { insideFolder } from "../src/hive/media.js";
 import { HiveDb } from "../src/hive/db.js";
 import { checkAutomatic } from "../src/core/budget.js";
 import { agentNameProblem } from "../src/core/names.js";
-import { customAgentDef } from "../src/core/agents.js";
+import { AGENTS, agentEnv, customAgentDef, withoutApiKey } from "../src/core/agents.js";
 import { isHiveTool } from "../src/core/session.js";
 import { TRUST_POLICY, senderTrust, untrusted } from "../src/core/trust.js";
 
@@ -134,6 +134,25 @@ db2.close();
   const t = (title: string, kind = "other", rawInput?: unknown) => isHiveTool({ sessionId: "s", toolCall: { toolCallId: "1", title, kind, rawInput }, options: [] } as any);
   assert(t("mcp__hive__hive_send") && t("hive_status") && t("hive.hive_inbox") && t("x", "other", { server: "hive", tool: "hive_send" }), "SEC-005: hive's own tool calls are still recognised");
   assert(!t("rm -rf ~ && echo hive_status", "execute") && !t("rm -rf ~ && echo hive_status") && !t("mcp__evil__hive_send") && !t("x", "other", { name: "hive_send" }) && !t("hive_status", "execute"), "SEC-005: a shell command or another server's tool naming a hive tool still asks");
+}
+
+// SEC-006: agents don't see bridge tokens, media keys or other providers' keys
+{
+  const env = {
+    PATH: "/bin", HOME: "/h", HIVE_DISCORD_TOKEN: "d", HIVE_WHATSAPP_ALLOW: "1", ELEVENLABS_API_KEY: "e", HIVE_IMAGE_KEY: "i",
+    GEMINI_API_KEY: "g", OPENROUTER_API_KEY: "o", LLAMA_API_KEY: "l", OPENAI_API_KEY: "oa", ANTHROPIC_API_KEY: "a", QWEN_API_KEY: "q", MY_PROJECT_SECRET: "keep",
+  };
+  const claude = agentEnv(AGENTS.claude, env);
+  assert(claude.PATH === "/bin" && claude.MY_PROJECT_SECRET === "keep" && claude.ANTHROPIC_API_KEY === "a", "SEC-006: an agent keeps the ordinary env and its vendor's own key");
+  assert(["HIVE_DISCORD_TOKEN", "HIVE_WHATSAPP_ALLOW", "ELEVENLABS_API_KEY", "HIVE_IMAGE_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY", "LLAMA_API_KEY", "OPENAI_API_KEY", "QWEN_API_KEY"].every((k) => !(k in claude)), "SEC-006: bridge tokens, media keys and other providers' keys are stripped");
+  const codex = agentEnv(AGENTS.codex, env);
+  assert(codex.OPENAI_API_KEY === "oa" && !("ANTHROPIC_API_KEY" in codex) && !("GEMINI_API_KEY" in codex), "SEC-006: codex keeps OPENAI_*, not other keys");
+  const gem = agentEnv(AGENTS["gemini-api"], env);
+  assert(gem.GEMINI_API_KEY === "g" && !("OPENROUTER_API_KEY" in gem) && !("OPENAI_API_KEY" in gem), "SEC-006: an API agent keeps only the key it needs");
+  const qwen = agentEnv(AGENTS.qwen, env);
+  assert(qwen.QWEN_API_KEY === "q" && qwen.OPENAI_API_KEY === "q" && !("ANTHROPIC_API_KEY" in qwen), "SEC-006: keys an agent's env references (${QWEN_API_KEY}) still reach it");
+  const child = withoutApiKey({ PATH: "/bin", HIVE_API_KEY: "g", HIVE_API_KEY_NAME: "GEMINI_API_KEY", GEMINI_API_KEY: "g", HIVE_DB: "x" });
+  assert(child.PATH === "/bin" && child.HIVE_DB === "x" && !("HIVE_API_KEY" in child) && !("GEMINI_API_KEY" in child), "SEC-006: the API agent doesn't pass its key to MCP children");
 }
 
 finish("fixes");

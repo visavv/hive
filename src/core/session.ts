@@ -20,7 +20,7 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import * as acp from "@agentclientprotocol/sdk";
 import type * as schema from "@agentclientprotocol/sdk";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { AGENTS, groupSpawn, killTree, resolveEnv, spawnSpec, type AgentDef } from "./agents.js";
+import { AGENTS, agentEnv, groupSpawn, killTree, spawnSpec, type AgentDef } from "./agents.js";
 import { nodeEntry } from "./paths.js";
 import { AUTH_STATUS_UPDATE, authLabel, type AuthStatus } from "./doctor.js";
 import { HiveDb } from "../hive/db.js";
@@ -204,9 +204,8 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
   }
 
   async start(): Promise<void> {
-    const env: NodeJS.ProcessEnv = { ...process.env, ...resolveEnv(this.def) };
-    // Media keys are only used by the hub (media.ts); agents don't need to see them.
-    for (const k of ["ELEVENLABS_API_KEY", "HIVE_IMAGE_KEY"]) if (!JSON.stringify(this.def.env ?? {}).includes(k)) delete env[k];
+    // Bridge tokens, media keys and other providers' keys stay in the hive process.
+    const env = agentEnv(this.def);
     const spec = spawnSpec(this.def);
     this.proc = spawn(spec.command, spec.args, {
       cwd: this.cwd,

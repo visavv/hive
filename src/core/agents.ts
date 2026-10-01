@@ -191,15 +191,56 @@ export function expandVars(v: string, e: NodeJS.ProcessEnv = process.env): strin
 }
 
 /** Resolved env for an agent's subprocess; unset vars are dropped. */
-export function resolveEnv(def: AgentDef): Record<string, string> {
+export function resolveEnv(def: AgentDef, e: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(def.env ?? {})) {
-    const expanded = expandVars(v);
+    const expanded = expandVars(v, e);
     if (expanded) out[k] = expanded;
   }
   // An API agent must not pick up a stale HIVE_API_* from the parent env.
   if (def.api) for (const k of Object.keys(def.env ?? {})) out[k] ??= "";
   return out;
+}
+
+// ---- secrets an agent process must not see ----
+/** Bridge tokens and media keys: only the hive process uses them. */
+const SECRET_PREFIXES = ["HIVE_DISCORD_", "HIVE_WHATSAPP_", "HIVE_IMAGE_", "ELEVENLABS_"];
+/** Provider keys (plus every API agent's keyEnv, added at call time). */
+const PROVIDER_KEYS = [
+  "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY", "AZURE_OPENAI_API_KEY",
+  "GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY", "OPENROUTER_API_KEY", "LLAMA_API_KEY", "QWEN_API_KEY", "DASHSCOPE_API_KEY",
+  "GROQ_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "XAI_API_KEY", "TOGETHER_API_KEY", "FIREWORKS_API_KEY", "COHERE_API_KEY",
+  "PERPLEXITY_API_KEY", "CEREBRAS_API_KEY", "MOONSHOT_API_KEY", "ZHIPU_API_KEY", "ZAI_API_KEY", "HF_TOKEN", "HUGGINGFACE_API_KEY", "HIVE_API_KEY",
+];
+/** A vendor CLI keeps its own provider's variables. */
+const VENDOR_KEEP: Record<string, string[]> = { claude: ["ANTHROPIC_", "CLAUDE_"], codex: ["OPENAI_", "CODEX_"], gemini: ["GEMINI_", "GOOGLE_"], qwen: ["QWEN_", "DASHSCOPE_"] };
+
+/**
+ * Environment for an agent's subprocess: the parent env minus bridge tokens,
+ * media keys and other providers' keys, plus the agent's own resolved env.
+ * Kept: what the agent names (needs, ${VAR} in its env) and its vendor's own variables.
+ */
+export function agentEnv(def: AgentDef, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const keep = new Set([def.needs, ...[...JSON.stringify(def.env ?? {}).matchAll(/\$\{(\w+)/g)].map((m) => m[1])].filter(Boolean).map((k) => k!.toUpperCase()));
+  const vendor = VENDOR_KEEP[def.id] ?? [];
+  // OpenCode is the home for API-key models: it reads providers' keys itself.
+  const keys = def.id === "opencode" ? new Set<string>() : new Set([...PROVIDER_KEYS, ...Object.values(AGENTS).map((a) => a.needs?.toUpperCase())]);
+  const out: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(base)) {
+    const K = k.toUpperCase();
+    const secret = SECRET_PREFIXES.some((p) => K.startsWith(p)) || keys.has(K);
+    if (!secret || keep.has(K) || vendor.some((p) => K.startsWith(p))) out[k] = v;
+  }
+  return { ...out, ...resolveEnv(def, base) };
+}
+
+/** An API agent's env for its MCP children: without its key (HIVE_API_KEY and the variable it came from). */
+export function withoutApiKey(base: NodeJS.ProcessEnv): Record<string, string> {
+  const key = base.HIVE_API_KEY;
+  const drop = new Set(["HIVE_API_KEY", base.HIVE_API_KEY_NAME ?? ""]);
+  const e: Record<string, string> = {};
+  for (const [k, v] of Object.entries(base)) if (v !== undefined && !drop.has(k) && !(key && v === key)) e[k] = v;
+  return e;
 }
 
 // ---- custom agents: <HIVE_HOME>/agents.json ----
