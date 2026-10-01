@@ -124,8 +124,8 @@ export async function runMux(o: MuxOptions): Promise<{ close: () => Promise<void
       // control lines from `hive attach --status / --stop`
       if (msg.mux === "status") return void sock.write(JSON.stringify({ mux: "status", clients: clients.size - 1, backend: !!backend, pid: process.pid }) + "\n");
       if (msg.mux === "stop") {
-        sock.write(JSON.stringify({ mux: "stopping" }) + "\n");
-        return void close().then(() => o.onExit?.(0));
+        // let the reply reach the client before the pipe goes away (Windows drops unflushed writes)
+        return void sock.write(JSON.stringify({ mux: "stopping" }) + "\n", () => void close().then(() => o.onExit?.(0)));
       }
       if (typeof msg.id !== "number" || !backend?.stdin?.writable) {
         if (typeof msg.id === "number") sock.write(JSON.stringify({ id: msg.id, error: "hive backend is restarting" }) + "\n");
@@ -202,6 +202,8 @@ export function control(path: string, cmd: "status" | "stop"): Promise<any> {
     s.once("error", rej);
     s.once("connect", () => s.write(JSON.stringify({ mux: cmd }) + "\n"));
     s.on("error", () => {});
+    // the mux closing the connection after "stop" counts as the answer too
+    s.once("close", () => res(cmd === "stop" ? { mux: "stopping" } : { mux: "gone" }));
     const rl = createInterface({ input: s });
     rl.on("error", () => {});
     rl.on("line", (l) => {

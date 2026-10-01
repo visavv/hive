@@ -50,6 +50,7 @@ export async function daemonStatus(cwd: string): Promise<string> {
   const path = socketPath(cwd);
   if (!(await isLive(path))) return "not running";
   const s = await control(path, "status");
+  if (s.mux !== "status") return "not running";
   return `running (pid ${s.pid}, ${s.clients} client${s.clients === 1 ? "" : "s"} attached)`;
 }
 
