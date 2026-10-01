@@ -57,7 +57,7 @@ import { POLICIES, type AgentSession, type PermissionPolicy, type SessionEvent }
 import { Scheduler, parseDuration, formatDuration, describeSchedule as schedule, type JobEvent } from "../core/scheduler.js";
 import { probe, installed } from "../core/doctor.js";
 import { ROLES, type RolePreset } from "../core/roles.js";
-import { defaultDb } from "../core/home.js";
+import { defaultDb, lastProject, pickProject, rememberProject } from "../core/home.js";
 import { BB_PREFIX, BRANCHES } from "../core/watch.js";
 import { buildReport, renderReport } from "../core/report.js";
 import { RECIPES, applyRecipe } from "../core/recipes.js";
@@ -597,8 +597,15 @@ const fgOwner = `fg-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
 // ---- commands ----
 
 async function main() {
-  if (values.help || !cmd || cmd === "help") {
+  if (values.help || cmd === "help") {
     console.log(USAGE);
+    return;
+  }
+  // Just `hive` (or the desktop launcher): open the app on this folder / the last project, and give the terminal back.
+  if (!cmd) {
+    const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
+    const dir = values.cwd ? resolve(values.cwd) : pickProject(process.cwd(), { hiveRoot: repoRoot, last: lastProject() });
+    await openUi({ cwd: dir, detach: true });
     return;
   }
   switch (cmd) {
@@ -1034,30 +1041,7 @@ async function main() {
     }
 
     case "ui": {
-      // Electron's npm package exports the path of its binary.
-      const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
-      const main = join(repoRoot, "dist-ui", "main.cjs");
-      const build = join(repoRoot, "scripts", "build-ui.mjs");
-      if (existsSync(build)) {
-        const b = spawnSync(process.execPath, [build], { cwd: repoRoot, encoding: "utf8" });
-        if (b.status !== 0) die(`UI build failed:\n${b.stderr}`);
-      } else if (!existsSync(main)) die(`UI not built: ${main} missing`);
-      let electronBin: string;
-      try {
-        electronBin = ensureElectron();
-      } catch (e: any) {
-        die(`electron is not available: ${e?.message ?? e} (run npm install in the hive checkout)`);
-      }
-      const cwd = resolve(values.cwd ?? process.cwd());
-      const args = [main, "--cwd", cwd, ...(values.db !== resolve(defaultDb(cwd)) ? ["--db", values.db!] : [])];
-      // the backend on another machine (docs/CLOUD.md), or a local daemon that outlives the window
-      if (values.remote) args.push("--remote", values.remote, "--remote-cwd", values["remote-cwd"] ?? ".");
-      if (values.attach) args.push("--attach");
-      // Chromium refuses to run as root with its sandbox on Linux.
-      if (process.platform === "linux" && process.getuid?.() === 0) args.push("--no-sandbox");
-      console.log(dim(values.remote ? `opening hive on ${values.remote}:${values["remote-cwd"] ?? "~"}` : `opening hive for ${cwd}`));
-      const child = spawn(electronBin, args, { stdio: "inherit", env: { ...process.env, HIVE_NODE: process.env.HIVE_NODE ?? process.execPath } });
-      await new Promise<void>((res) => child.on("exit", () => res()));
+      await openUi({ cwd: resolve(values.cwd ?? process.cwd()), detach: false });
       return;
     }
 
@@ -1459,7 +1443,7 @@ async function main() {
             "Comment=Local AI agents side by side",
             `Exec=${argv.map(q).join(" ")}`,
             `Path=${dir}`,
-            "Icon=utilities-terminal",
+            `Icon=${fileURLToPath(new URL("../../assets/hive.png", import.meta.url))}`,
             "Terminal=false",
             "Categories=Development;",
             "StartupWMClass=hive",
@@ -1469,9 +1453,9 @@ async function main() {
         console.log(`added ${file}\nIt shows up in your app menu as "${label}" (log out/in if it doesn't appear right away).`);
       } else if (process.platform === "win32") {
         const lnk = join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), "Microsoft", "Windows", "Start Menu", "Programs", `${label.replace(/[<>:"/\\|?*]/g, "-")}.lnk`);
-        const ps = `$s=(New-Object -ComObject WScript.Shell).CreateShortcut($env:HIVE_LNK);$s.TargetPath=$env:HIVE_T;$s.Arguments=$env:HIVE_A;$s.WorkingDirectory=$env:HIVE_D;$s.WindowStyle=7;$s.Save()`;
+        const ps = `$s=(New-Object -ComObject WScript.Shell).CreateShortcut($env:HIVE_LNK);$s.TargetPath=$env:HIVE_T;$s.Arguments=$env:HIVE_A;$s.WorkingDirectory=$env:HIVE_D;$s.IconLocation=$env:HIVE_I;$s.WindowStyle=7;$s.Save()`;
         const r = spawnSync("powershell", ["-NoProfile", "-Command", ps], {
-          env: { ...process.env, HIVE_LNK: lnk, HIVE_T: argv[0], HIVE_A: argv.slice(1).map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(" "), HIVE_D: dir },
+          env: { ...process.env, HIVE_LNK: lnk, HIVE_T: argv[0], HIVE_A: argv.slice(1).map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(" "), HIVE_D: dir, HIVE_I: fileURLToPath(new URL("../../assets/hive.ico", import.meta.url)) + ",0" },
           encoding: "utf8",
           windowsHide: true,
         });
@@ -1733,6 +1717,51 @@ async function main() {
     default:
       die(`unknown command "${cmd}"\n\n${USAGE}`);
   }
+}
+
+/**
+ * Start the desktop app. `cwd` undefined = ask for a folder (first run). `detach` gives the terminal
+ * back right away (bare `hive`, the launcher); `hive ui` stays attached so you see its logs.
+ * HIVE_LAUNCH_DRY=<file> writes the command to that file instead of starting it (tests).
+ */
+async function openUi(o: { cwd?: string; detach: boolean }) {
+  // Electron's npm package exports the path of its binary.
+  const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
+  const main = join(repoRoot, "dist-ui", "main.cjs");
+  const build = join(repoRoot, "scripts", "build-ui.mjs");
+  const dry = process.env.HIVE_LAUNCH_DRY;
+  if (existsSync(build) && !dry) {
+    const b = spawnSync(process.execPath, [build], { cwd: repoRoot, encoding: "utf8" });
+    if (b.status !== 0) die(`UI build failed:\n${b.stderr}`);
+  } else if (!existsSync(main) && !dry) die(`UI not built: ${main} missing`);
+  let electronBin = "electron";
+  if (!dry)
+    try {
+      electronBin = ensureElectron();
+    } catch (e: any) {
+      die(`electron is not available: ${e?.message ?? e} (run npm install in the hive checkout)`);
+    }
+  const args = [main, ...(o.cwd ? ["--cwd", o.cwd] : ["--pick"])];
+  if (o.cwd && values.db !== resolve(defaultDb(o.cwd))) args.push("--db", values.db!);
+  // the backend on another machine (docs/CLOUD.md), or a local daemon that outlives the window
+  if (values.remote) args.push("--remote", values.remote, "--remote-cwd", values["remote-cwd"] ?? ".");
+  if (values.attach) args.push("--attach");
+  // Chromium refuses to run as root with its sandbox on Linux.
+  if (process.platform === "linux" && process.getuid?.() === 0) args.push("--no-sandbox");
+  if (o.cwd && !values.remote) rememberProject(o.cwd);
+  if (dry) {
+    writeFileSync(dry, [electronBin, ...args].join("\n") + "\n");
+    return;
+  }
+  console.log(dim(values.remote ? `opening hive on ${values.remote}:${values["remote-cwd"] ?? "~"}` : o.cwd ? `opening hive for ${o.cwd}` : "opening hive — pick a project folder"));
+  const env = { ...process.env, HIVE_NODE: process.env.HIVE_NODE ?? process.execPath };
+  if (o.detach) {
+    const child = spawn(electronBin, args, { stdio: "ignore", detached: true, env, windowsHide: false });
+    child.unref();
+    return;
+  }
+  const child = spawn(electronBin, args, { stdio: "inherit", env });
+  await new Promise<void>((res) => child.on("exit", () => res()));
 }
 
 /** Interactive chat: type while the agent works (prompts queue), Ctrl-C cancels a turn, twice to quit. */

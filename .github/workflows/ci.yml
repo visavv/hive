@@ -33,6 +33,21 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: hive.cmd doctor mock
+      - name: hive.exe launcher and bare `hive` open the app (dry run)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          if (-not (Test-Path hive.exe)) { throw "hive.exe was not built" }
+          if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\hive.lnk")) { throw "no Start-menu shortcut" }
+          $proj = New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\myproject"
+          $env:HIVE_LAUNCH_DRY = "$env:RUNNER_TEMP\launch-exe.txt"
+          Start-Process -FilePath "$env:GITHUB_WORKSPACE\hive.exe" -WorkingDirectory $proj -Wait
+          $exe = Get-Content $env:HIVE_LAUNCH_DRY -Raw; Write-Host $exe
+          if ($exe -notmatch "main.cjs" -or $exe -notmatch "--cwd") { throw "hive.exe didn't open the app on the project" }
+          $env:HIVE_LAUNCH_DRY = "$env:RUNNER_TEMP\launch-cmd.txt"
+          Push-Location $proj; hive.cmd; Pop-Location
+          $cmd = Get-Content $env:HIVE_LAUNCH_DRY -Raw; Write-Host $cmd
+          if ($cmd -notmatch "myproject") { throw "bare 'hive' didn't open the app" }
       - name: remote-access setup (dry run)
         shell: bash
         run: |
