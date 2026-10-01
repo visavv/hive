@@ -9,6 +9,7 @@ import { GroupChat, GroupsSection, LinkDialog, PauseIcon } from "./Links.js";
 import { VerdictWindow } from "./Verdict.js";
 import { StatsDialog } from "./Stats.js";
 import { KanbanView } from "./Kanban.js";
+import { installVoice, MicButton, useVoiceTarget, voiceActions, VoiceLayer } from "./Voice.js";
 
 export const THEMES: { id: NonNullable<Layout["theme"]>; label: string; hint: string; tone: "dark" | "light" }[] = [
   { id: "dark", label: "Dark", hint: "neutral grays, periwinkle accent", tone: "dark" },
@@ -102,6 +103,7 @@ function boot() {
     if (up) void sync();
   });
   onFocusLast(() => focus.last());
+  installVoice();
 }
 
 export function App() {
@@ -235,6 +237,7 @@ export function App() {
     { id: "hover", label: `Hover to focus panes: ${layout.hoverFocus ? "turn off" : "turn on"}`, hint: "for Handy / voice typing", run: () => saveLayout({ hoverFocus: !layout.hoverFocus }) },
     { id: "ping", label: `Finish chime: ${layout.ping === false ? "turn on" : "turn off"}`, run: () => saveLayout({ ping: layout.ping === false }) },
     { id: "zoomin", label: "Zoom in / out / reset", keys: "Ctrl+= / Ctrl+- / Ctrl+0", run: () => {} },
+    ...voiceActions(names),
   ];
 
   if (!ready) return <div className="boot">starting hive…</div>;
@@ -318,6 +321,7 @@ export function App() {
         />
       )}
       <VerdictWindow />
+      <VoiceLayer />
       {palette && <Palette actions={actions} onClose={() => setPalette(false)} />}
       {groupOpen && <GroupChat key={groupOpen} name={groupOpen} onClose={() => store.openGroup(null)} />}
       {(dialog === "skills" || skillReq) && (
@@ -379,8 +383,9 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onPalett
   const layout = useStore((s) => s.layout);
   const [text, setText] = useState("");
   const targets = names.filter((n) => selected.has(n) && store.agents.has(n));
-  const send = () => {
-    const t = text.trim();
+  const bcRef = useRef<HTMLInputElement>(null);
+  const send = (raw = text) => {
+    const t = raw.trim();
     if (!t) return;
     const to = targets.length ? targets : names.filter((n) => store.agents.has(n));
     if (!to.length) return store.toast("no running agents to broadcast to", "error");
@@ -388,6 +393,7 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onPalett
     store.toast(`sent to ${to.join(", ")}`);
     setText("");
   };
+  useVoiceTarget("@broadcast", { el: () => bcRef.current, setText, send });
   const cols = columns;
   const setCols = (n: number) => saveLayout(vertical ? { vcolumns: n } : { columns: n, widths: undefined });
   const readyNames = useStore((s) => names.filter((n) => s.readyAt.has(n)));
@@ -397,6 +403,7 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onPalett
       <span className="brand">hive</span>
       <div className="broadcast">
         <input
+          ref={bcRef}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && send()}
@@ -404,7 +411,8 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onPalett
             targets.length ? `broadcast to ${targets.join(", ")}…` : `broadcast to all ${names.length} agents… (tick pane boxes to pick)`
           }
         />
-        <button onClick={send} disabled={!text.trim()}>Send</button>
+        <MicButton target="@broadcast" />
+        <button onClick={() => send()} disabled={!text.trim()}>Send</button>
         {selected.size > 0 && (
           <button className="ghost" onClick={() => setSelected(new Set())} title="clear selection">
             ✕ {selected.size}

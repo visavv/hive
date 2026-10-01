@@ -9,6 +9,7 @@ import { store, useStore } from "./store.js";
 import { fmtIdle } from "./format.js";
 import { useOverlay } from "./focus.js";
 import { HeldList, PauseIcon } from "./Links.js";
+import { VoiceAccounts } from "./Voice.js";
 
 type Tab = "report" | "inbox" | "board" | "mail" | "usage" | "accounts";
 type Usage = Awaited<ReturnType<typeof rpc<"usage">>>;
@@ -225,6 +226,7 @@ export function AccountsView() {
           ))}
         </section>
       ))}
+      <VoiceAccounts />
     </div>
   );
 }

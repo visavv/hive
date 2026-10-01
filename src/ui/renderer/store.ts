@@ -369,6 +369,7 @@ class Store {
       case "turn_end":
         this.push(name, { k: "turn", stopReason: e.stopReason, tokens: e.usage?.totalTokens, ts: Date.now() });
         this.turnEnded(name, e.stopReason);
+        for (const f of turnEndHooks) f(name, e.stopReason);
         return true;
       case "session":
         // Tool ids restart per session in some agents.
@@ -427,6 +428,13 @@ class Store {
     this.ready = true;
     this.changed();
   }
+}
+
+/** Called after a pane's agent finishes a turn (voice: speak the reply). */
+const turnEndHooks = new Set<(name: string, stopReason: string) => void>();
+export function onTurnEnd(fn: (name: string, stopReason: string) => void) {
+  turnEndHooks.add(fn);
+  return () => void turnEndHooks.delete(fn);
 }
 
 export const store = new Store();
