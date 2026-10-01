@@ -17,6 +17,9 @@
   hive watch <agent> --bb ideas/raw/ "prompt"   fire when agents post blackboard entries under a prefix
       watch options: --min-lines N (or min new entries)  --max-wait 30m (any change after T)  --cooldown 10m (at most every T)
   hive groups · hive group create|add|rm|delete <name> [members…]   mail "@name" reaches all members
+  hive link <a> <b> [--name g] [--review]   let agents talk (a group with you in it); --review: you approve each message
+  hive group mode <name> direct|review [--times N]   review = messages wait for you; N = max agent messages per hour
+  hive scope open|linked                  linked: agents only reach agents they're linked with · hive held · hive release|drop <id>
   hive recipe list · hive recipe apply <id> [--agent claude] [--alt codex]   a ready-made team (review-loop, solid-code, idea-pipeline, studio)
   hive skill list · hive skill run <name> k=v … · hive skill new <name> [--describe "…"]   reusable prompts with parameters
  *   hive once <agent> [--in 20m | --at 2026-10-01T09:00] "prompt"
@@ -108,6 +111,8 @@ const { values, positionals } = parseArgs({
     context: { type: "string" },
     voice: { type: "string" },
     voices: { type: "boolean", default: false },
+    review: { type: "boolean", default: false },
+    body: { type: "string" },
     size: { type: "string" },
     edit: { type: "string" },
     mask: { type: "string" },
@@ -145,6 +150,9 @@ const USAGE = `hive — local multi-agent harness
   hive watch <agent> --bb ideas/raw/ "prompt"   fire when agents post blackboard entries under a prefix
       watch options: --min-lines N (or min new entries)  --max-wait 30m (any change after T)  --cooldown 10m (at most every T)
   hive groups · hive group create|add|rm|delete <name> [members…]   mail "@name" reaches all members
+  hive link <a> <b> [--name g] [--review]   let agents talk (a group with you in it); --review: you approve each message
+  hive group mode <name> direct|review [--times N]   review = messages wait for you; N = max agent messages per hour
+  hive scope open|linked                  linked: agents only reach agents they're linked with · hive held · hive release|drop <id>
   hive recipe list · hive recipe apply <id> [--agent claude] [--alt codex]   a ready-made team (review-loop, solid-code, idea-pipeline, studio)
   hive skill list · hive skill run <name> k=v … · hive skill new <name> [--describe "…"]   reusable prompts with parameters
   hive once <agent> [--in 20m | --at 2026-10-01T09:00] "prompt"
@@ -1080,11 +1088,65 @@ async function main() {
       return;
     }
 
+    case "link": {
+      // hive link a b [c…] [--name grp] [--review] : put agents (and you) in a group so they can talk.
+      const members = rest;
+      if (members.length < 2) die('usage: hive link <agent> <agent> [more…] [--name group] [--review]');
+      const db = new HiveDb(values.db!);
+      const unknown = members.filter((m) => !db.getAgent(m));
+      if (unknown.length) die(`unknown agents: ${unknown.join(", ")}`);
+      const name = values.name ?? members.join("-").slice(0, 40);
+      if (!/^[\w.-]{1,40}$/.test(name)) die(`invalid group name "${name}" (use --name)`);
+      db.addToGroup(name, [...members, "owner"]);
+      if (values.review) db.setGroupSettings(name, { mode: "review" });
+      console.log(`linked: @${name} = ${db.groupMembers(name).join(", ")} (${db.groupSettings(name).mode})`);
+      db.close();
+      return;
+    }
+
+    case "scope": {
+      const db = new HiveDb(values.db!);
+      const v = rest[0];
+      if (v) {
+        if (v !== "open" && v !== "linked") die("usage: hive scope open|linked");
+        db.setMailScope(v);
+      }
+      console.log(db.mailScope() === "linked" ? "linked: agents only message agents they share a group with (and you)" : "open: agents can message any agent");
+      db.close();
+      return;
+    }
+
+    case "held": {
+      const db = new HiveDb(values.db!);
+      const rows = db.heldMessages();
+      if (!rows.length) console.log(dim("nothing waiting for you"));
+      for (const m of rows) console.log(`#${m.id} ${cyan(m.from_agent)} → ${m.to_agent}  ${m.subject}\n   ${dim(m.held ?? "")}\n   ${m.body.slice(0, 300).replace(/\n/g, "\n   ")}`);
+      if (rows.length) console.log(dim("\nhive release <id> [--body \"edited text\"] · hive drop <id>"));
+      db.close();
+      return;
+    }
+
+    case "release":
+    case "drop": {
+      const id = Number(rest[0]);
+      if (!Number.isInteger(id)) die(`usage: hive ${cmd} <id>${cmd === "release" ? ' [--body "edited text"]' : ""}`);
+      const db = new HiveDb(values.db!);
+      const ok = cmd === "release" ? db.releaseMessage(id, values.body) : db.dropMessage(id);
+      if (!ok) die(`#${id} isn't a held message (hive held)`);
+      console.log(cmd === "release" ? `released #${id}` : `dropped #${id}`);
+      db.close();
+      return;
+    }
+
     case "groups": {
       const db = new HiveDb(values.db!);
       const gs = db.groups();
       if (!gs.length) console.log(dim("no groups (hive group create <name> <agents…>)"));
-      for (const g of gs) console.log(`${cyan("@" + g.name)}  ${g.members.join(", ")}`);
+      for (const g of gs) {
+        const st = db.groupSettings(g.name);
+        console.log(`${cyan("@" + g.name)}  ${g.members.join(", ")}  ${dim(`${st.mode}${st.max_per_hour ? `, max ${st.max_per_hour}/h` : ""}`)}`);
+      }
+      console.log(dim(`agents can message: ${db.mailScope() === "linked" ? "only agents they're linked with" : "anyone"}  (hive scope open|linked)`));
       db.close();
       return;
     }
@@ -1101,7 +1163,15 @@ async function main() {
         db.addToGroup(name, members);
       } else if (sub === "rm") for (const m of members) db.removeFromGroup(name, m);
       else if (sub === "delete") db.deleteGroup(name);
-      else die(`unknown group subcommand "${sub}"`);
+      else if (sub === "mode") {
+        const mode = members[0];
+        if (mode !== "direct" && mode !== "review") die("usage: hive group mode <name> direct|review [--times N  (max agent messages per hour)]");
+        db.setGroupSettings(name, { mode, ...(values.times ? { max_per_hour: positiveInt(values.times, "--times") } : {}) });
+        const st = db.groupSettings(name);
+        console.log(`@${name}: ${st.mode}${st.max_per_hour ? `, max ${st.max_per_hour} agent messages/hour` : ""}`);
+        db.close();
+        return;
+      } else die(`unknown group subcommand "${sub}"`);
       console.log(`@${name}: ${db.groupMembers(name).join(", ") || "(deleted)"}`);
       db.close();
       return;

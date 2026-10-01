@@ -126,6 +126,21 @@ class Store {
 
   /** Open the Skills dialog on a skill with some values filled in. */
   skillRequest: { name: string; vals: Record<string, string> } | null = null;
+  groups: import("../protocol.js").GroupView[] = [];
+  mailScope: "open" | "linked" = "open";
+  /** Link dialog open with these agents preselected. */
+  linkRequest: string[] | null = null;
+  /** Group chat open for this group. */
+  groupOpen: string | null = null;
+  private heldTotal = -1;
+  requestLink(members: string[]) {
+    this.linkRequest = members;
+    this.changed();
+  }
+  openGroup(name: string | null) {
+    this.groupOpen = name;
+    this.changed();
+  }
   requestSkill(name: string, vals: Record<string, string>) {
     this.skillRequest = { name, vals };
     this.changed();
@@ -168,10 +183,22 @@ class Store {
     switch (ev.event) {
       case "ready":
         break; // App fetches the full state (getState) on ready
-      case "agents":
+      case "agents": {
         this.agents = new Map(ev.agents.map((a) => [a.name, a]));
         this.others = ev.others ?? [];
+        if (ev.groups) {
+          this.groups = ev.groups;
+          const held = ev.groups.reduce((n, g) => n + g.held, 0);
+          if (this.heldTotal >= 0 && held > this.heldTotal) {
+            const g = ev.groups.find((x) => x.held > 0);
+            this.toast(`⏸ a message in @${g?.name} is waiting for your review`);
+            notifyAttention(`@${g?.name}`, "an agent message is waiting for your review", "needs you");
+          }
+          this.heldTotal = held;
+        }
+        if (ev.mailScope) this.mailScope = ev.mailScope;
         break;
+      }
       case "jobs":
         this.jobs = ev.jobs;
         break;

@@ -4,6 +4,7 @@ import { connect, hello, onEvent, onFocusLast, rpc } from "./bridge.js";
 import { ping, store, useStore } from "./store.js";
 import { Pane } from "./Pane.js";
 import { Drawer } from "./Drawer.js";
+import { GroupChat, GroupsSection, LinkDialog } from "./Links.js";
 import { RecipesDialog, SkillsDialog } from "./Extras.js";
 import { focus } from "./focus.js";
 import { ctxPct, fmtIdle, parseDuration, statusLabel, suggestName } from "./format.js";
@@ -85,6 +86,8 @@ export function App() {
   const [dialog, setDialog] = useState<"" | "recipes" | "skills">("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const skillReq = useStore((s) => s.skillRequest);
+  const linkReq = useStore((s) => s.linkRequest);
+  const groupOpen = useStore((s) => s.groupOpen);
 
   const names = layout.panes.map((p) => p.name);
   const visible = layout.maximized && names.includes(layout.maximized) ? [layout.maximized] : names;
@@ -208,6 +211,16 @@ export function App() {
       {jobFor && <JobDialog agent={jobFor} onClose={() => setJobFor(null)} />}
       {drawer && <Drawer key={drawer} initialTab={drawer === "usage" ? "usage" : undefined} onClose={() => setDrawer(false)} />}
       {dialog === "recipes" && <RecipesDialog onClose={() => setDialog("")} />}
+      {linkReq && (
+        <LinkDialog
+          members={linkReq}
+          onClose={() => {
+            store.linkRequest = null;
+            store.changed();
+          }}
+        />
+      )}
+      {groupOpen && <GroupChat key={groupOpen} name={groupOpen} onClose={() => store.openGroup(null)} />}
       {(dialog === "skills" || skillReq) && (
         <SkillsDialog
           key={skillReq ? `req-${skillReq.name}` : "skills"}
@@ -494,6 +507,7 @@ function Sidebar({ names, onAdd }: { names: string[]; onAdd: () => void }) {
         })}
         {names.length === 0 && <li className="dim pad">no agents yet</li>}
       </ul>
+      <GroupsSection />
       <OtherAgents names={names} />
       <Worktrees />
       <div className="side-head">

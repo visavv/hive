@@ -25,7 +25,7 @@ import { findSkill, listSkills, renderSkill, skillFromPrompt, userSkillsDir } fr
 import { runSkill, skillAgentName } from "../core/skill-run.js";
 import { BB_PREFIX, BRANCHES } from "../core/watch.js";
 import { setBudget, usageSummary } from "../core/budget.js";
-import type { AgentView, BackendEvent, ElicitationAsk, JobView, Layout, Methods, PermissionAsk, Request } from "./protocol.js";
+import type { AgentView, BackendEvent, ElicitationAsk, GroupView, JobView, Layout, Methods, PermissionAsk, Request } from "./protocol.js";
 
 // stdout is the protocol channel: keep stray logging off it.
 const out = process.stdout.write.bind(process.stdout);
@@ -280,8 +280,18 @@ function pushAgents() {
         where: status !== "asleep" && a.owner ? `another hive process (${a.owner.split("@")[0]})` : undefined,
       };
     });
-  send({ event: "agents", agents: [...hub.sessions.values()].map(view), others });
+  send({ event: "agents", agents: [...hub.sessions.values()].map(view), others, groups: groupViews(), mailScope: hub.db.mailScope() });
 }
+
+function groupViews(): GroupView[] {
+  const held = hub.db.heldMessages();
+  return hub.db.groups().map((g) => {
+    const st = hub.db.groupSettings(g.name);
+    const n = held.filter((m) => m.via === g.name || m.to_agent === "@" + g.name).length;
+    return { name: g.name, members: g.members, mode: st.mode, maxPerHour: st.max_per_hour, held: n };
+  });
+}
+const groupView = (name: string) => groupViews().find((g) => g.name === name);
 
 let lastOwnerUnread = -1;
 function pushOwnerMail(force = false) {
@@ -541,6 +551,48 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
   },
   usage() {
     return usageSummary(hub.db);
+  },
+  link({ members, name, mode, maxPerHour, includeOwner }) {
+    const ms = [...new Set(members)].filter(Boolean);
+    if (ms.length < 2) throw new Error("link at least two agents");
+    for (const m of ms) if (!hub.db.getAgent(m)) throw new Error(`no agent "${m}"`);
+    const g = (name?.trim() || ms.join("-")).slice(0, 40);
+    if (!/^[\w.-]{1,40}$/.test(g)) throw new Error("group name: letters, digits, _ . - (max 40)");
+    hub.db.addToGroup(g, includeOwner === false ? ms : [...ms, "owner"]);
+    if (mode || maxPerHour !== undefined) hub.db.setGroupSettings(g, { ...(mode ? { mode } : {}), ...(maxPerHour !== undefined ? { max_per_hour: maxPerHour } : {}) });
+    schedulePush();
+    return groupView(g)!;
+  },
+  groupChat({ name }) {
+    const group = groupView(name);
+    if (!group) throw new Error(`no group "${name}"`);
+    return { group, messages: hub.db.groupMessages(name, 300) };
+  },
+  setGroup({ name, mode, maxPerHour, remove, add, delete: del }) {
+    if (!hub.db.groupMembers(name).length) throw new Error(`no group "${name}"`);
+    if (del) hub.db.deleteGroup(name);
+    else {
+      if (mode || maxPerHour !== undefined) hub.db.setGroupSettings(name, { ...(mode ? { mode } : {}), ...(maxPerHour !== undefined ? { max_per_hour: maxPerHour } : {}) });
+      if (remove) hub.db.removeFromGroup(name, remove);
+      if (add) {
+        if (add !== "owner" && !hub.db.getAgent(add)) throw new Error(`no agent "${add}"`);
+        hub.db.addToGroup(name, [add]);
+      }
+    }
+    schedulePush();
+    return groupView(name) ?? null;
+  },
+  releaseMail({ id, body }) {
+    if (!hub.db.releaseMessage(id, body?.trim() ? body : undefined)) throw new Error(`#${id} isn't waiting any more`);
+    schedulePush();
+  },
+  dropMail({ id }) {
+    if (!hub.db.dropMessage(id)) throw new Error(`#${id} isn't waiting any more`);
+    schedulePush();
+  },
+  setScope({ scope }) {
+    hub.db.setMailScope(scope);
+    schedulePush();
   },
   saveSkill({ name, description, body, overwrite }) {
     const { text, params } = skillFromPrompt(need(name, "name").trim(), description ?? "", need(body, "prompt"));

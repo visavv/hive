@@ -294,6 +294,29 @@ try {
   await page.setViewportSize({ width: 1600, height: 950 }).catch(() => {});
   await page.locator(".app:not(.vertical)").waitFor({ timeout: 5000 });
 
+  // link by drag and drop: alpha's name onto beta's pane → review group → held message → release
+  await pane(page, "alpha").locator(".pname").dragTo(pane(page, "beta").locator(".transcript, .pane-sub").first());
+  const ld = page.locator(".modal", { hasText: "Link agents" });
+  await ld.waitFor({ timeout: 5000 });
+  await ld.locator("label.radio", { hasText: "Review" }).locator("input").check();
+  await ld.locator("button[type=submit]").click();
+  await pane(page, "beta").locator(".group-chip", { hasText: "@alpha-beta" }).waitFor({ timeout: 5000 });
+  assert(await pane(page, "alpha").locator(".group-chip", { hasText: "@alpha-beta" }).count() === 1, "dragging one pane onto another links them (group chip on both)");
+  await pane(page, "alpha").locator("textarea").fill("send beta: please check the login flow");
+  await pane(page, "alpha").locator("textarea").press("Enter");
+  await pane(page, "beta").locator(".group-chip .badge").waitFor({ timeout: 10_000 });
+  assert(true, "a message between linked agents in review mode waits for you (badge)");
+  await pane(page, "beta").locator(".group-chip").click();
+  const gc = page.locator(".modal.wide", { hasText: "@alpha-beta" });
+  await gc.locator(".gmsg.held", { hasText: "please check the login flow" }).waitFor({ timeout: 5000 });
+  await page.screenshot({ path: join(shots, "hive-ui-group-chat.png") });
+  await gc.locator(".gmsg.held button", { hasText: "Release" }).click();
+  await gc.locator(".gmsg.held").waitFor({ state: "detached", timeout: 5000 });
+  await page.keyboard.press("Escape");
+  await pane(page, "beta").locator(".msg.agent", { hasText: "Got mail from alpha" }).waitFor({ timeout: 15_000 });
+  assert(true, "released from the group chat: the other agent gets it and acts");
+  await page.screenshot({ path: join(shots, "hive-ui-linked.png") });
+
   await page.screenshot({ path: join(shots, "hive-ui.png") });
   const layout = JSON.parse(readFileSync(join(projectDir(dir), "ui.json"), "utf8"));
   assert(layout.panes.length === 2 && layout.columns === 2, "layout persisted to .hive/ui.json");
