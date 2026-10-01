@@ -179,16 +179,18 @@ export function SkillsDialog({ onClose, initial }: { onClose: () => void; initia
                 ) : p.type === "file" ? (
                   <span className="file-row">
                     <input value={vals[p.name] ?? ""} onChange={(e) => setVals({ ...vals, [p.name]: e.target.value })} placeholder={p.description ?? "path to a file"} />
-                    <button
-                      type="button"
-                      onClick={() =>
-                        void window.hiveBridge.pickFile?.().then((f) => {
-                          if (f) setVals((v) => ({ ...v, [p.name]: f }));
-                        })
-                      }
-                    >
-                      Browse…
-                    </button>
+                    {window.hiveBridge.pickFile && ( // the browser build (hive web) can't pick a server path: type it
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void window.hiveBridge.pickFile?.().then((f) => {
+                            if (f) setVals((v) => ({ ...v, [p.name]: f }));
+                          })
+                        }
+                      >
+                        Browse…
+                      </button>
+                    )}
                   </span>
                 ) : p.type === "number" ? (
                   <input type="number" value={vals[p.name] ?? ""} placeholder={p.default ?? ""} onChange={(e) => setVals({ ...vals, [p.name]: e.target.value })} />
