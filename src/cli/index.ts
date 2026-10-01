@@ -117,6 +117,11 @@ const OPTIONS = {
   review: { type: "boolean", default: false },
   agents: { type: "string" },
   by: { type: "string" },
+  remote: { type: "string" },
+  "remote-cwd": { type: "string" },
+  attach: { type: "boolean", default: false },
+  stop: { type: "boolean", default: false },
+  status: { type: "boolean", default: false },
   days: { type: "string" },
   vendor: { type: "string" },
   category: { type: "string" },
@@ -208,6 +213,8 @@ const USAGE = `hive — local multi-agent harness
   hive tts "text" [--voice ID] [--out name]           ElevenLabs voice-over → out/media/*.mp3  (hive tts --voices lists voices)
   hive image "prompt" [--size 1536x1024] [--edit img.png [--mask m.png]]   generate / edit an image → out/media/*.png
   hive usage · hive budget [set k=v …]    tokens per provider, limit windows + resets · spending guards
+  hive ui --remote you@server --remote-cwd ~/code/app   the app with its agents on another machine (docs/CLOUD.md)
+  hive daemon · hive attach [--status|--stop]   keep a project's hive running; connect to it (the app does this over SSH)
   hive stats [--by vendor|model|category|project|day|agent] [--days 30] [--vendor X] [--model M] [--category review] [--in-project NAME]
                                           where your tokens went, across all projects (kept for good)
   hive inbox [--all]                      mail agents sent to you ("owner")
@@ -892,9 +899,12 @@ async function main() {
       }
       const cwd = resolve(values.cwd ?? process.cwd());
       const args = [main, "--cwd", cwd, ...(values.db !== resolve(defaultDb(cwd)) ? ["--db", values.db!] : [])];
+      // the backend on another machine (docs/CLOUD.md), or a local daemon that outlives the window
+      if (values.remote) args.push("--remote", values.remote, "--remote-cwd", values["remote-cwd"] ?? ".");
+      if (values.attach) args.push("--attach");
       // Chromium refuses to run as root with its sandbox on Linux.
       if (process.platform === "linux" && process.getuid?.() === 0) args.push("--no-sandbox");
-      console.log(dim(`opening hive for ${cwd}`));
+      console.log(dim(values.remote ? `opening hive on ${values.remote}:${values["remote-cwd"] ?? "~"}` : `opening hive for ${cwd}`));
       const child = spawn(electronBin, args, { stdio: "inherit", env: { ...process.env, HIVE_NODE: process.env.HIVE_NODE ?? process.execPath } });
       await new Promise<void>((res) => child.on("exit", () => res()));
       return;
@@ -1086,6 +1096,24 @@ async function main() {
       return;
     }
 
+    case "daemon": {
+      // Keep this project's hive running in the foreground (systemd: hive-daemon@…); clients use `hive attach`.
+      const { runDaemon } = await import("../ui/attach.js");
+      await runDaemon(resolve(values.cwd ?? process.cwd()));
+      await new Promise(() => {}); // until SIGTERM
+      return;
+    }
+
+    case "attach": {
+      const a = await import("../ui/attach.js");
+      const cwd = resolve(values.cwd ?? process.cwd());
+      if (values.status) return void console.log(await a.daemonStatus(cwd));
+      if (values.stop) return void console.log((await a.stopDaemon(cwd)) ? "stopped" : "not running");
+      if (process.stdin.isTTY) die("hive attach speaks the app protocol on stdin/stdout; open the app with `hive ui --remote host --remote-cwd dir`, or use --status / --stop");
+      await a.attach(cwd);
+      return;
+    }
+
     case "stats": {
       const { stats, facets } = await import("../core/ledger.js");
       const by = (values.by ?? "vendor") as import("../core/ledger.js").LedgerDim;
@@ -1170,7 +1198,7 @@ async function main() {
       const label = values.name ?? `hive — ${basename(dir)}`;
       const slug = basename(dir).replace(/[^\w.-]+/g, "_").toLowerCase() || "project";
       const cli = nodeEntry("cli/index");
-      const argv = [cli.command, ...cli.args, "ui", "--cwd", dir];
+      const argv = [cli.command, ...cli.args, "ui", "--cwd", dir, ...(values.remote ? ["--remote", values.remote, "--remote-cwd", values["remote-cwd"] ?? "."] : []), ...(values.attach ? ["--attach"] : [])];
       if (process.platform === "linux") {
         const appsDir = join(process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"), "applications");
         mkdirSync(appsDir, { recursive: true });

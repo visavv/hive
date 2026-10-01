@@ -112,7 +112,9 @@ export async function runMux(o: MuxOptions): Promise<{ close: () => Promise<void
     clients.add(client);
     log(`client ${client.id} attached (${clients.size} now)`);
     if (readyLine) sock.write(readyLine + "\n");
-    createInterface({ input: sock }).on("line", (line) => {
+    const rl = createInterface({ input: sock });
+    rl.on("error", () => {}); // a client vanishing (ECONNRESET) is handled by "close" below
+    rl.on("line", (line) => {
       let msg: any;
       try {
         msg = JSON.parse(line);
@@ -199,7 +201,10 @@ export function control(path: string, cmd: "status" | "stop"): Promise<any> {
     const s = createConnection(path);
     s.once("error", rej);
     s.once("connect", () => s.write(JSON.stringify({ mux: cmd }) + "\n"));
-    createInterface({ input: s }).on("line", (l) => {
+    s.on("error", () => {});
+    const rl = createInterface({ input: s });
+    rl.on("error", () => {});
+    rl.on("line", (l) => {
       try {
         const m = JSON.parse(l);
         if (m.mux) {

@@ -6,6 +6,7 @@
 #   bash scripts/setup-remote.sh --project ~/code/app  # which project `hive-tui` opens
 #   bash scripts/setup-remote.sh --ssh-only-tailscale  # also: SSH reachable only over Tailscale
 #   bash scripts/setup-remote.sh --discord             # also: systemd service for the Discord bridge
+#   bash scripts/setup-remote.sh --daemon              # also: keep the project's hive running (docs/CLOUD.md)
 #   bash scripts/setup-remote.sh --dry-run             # print what it would do
 #
 # Nothing here opens a port on your router. hive itself still listens on nothing.
@@ -15,6 +16,7 @@ PROJECT="${HOME}/code"
 ME="${USER:-$(id -un)}"
 LOCK=0
 DISCORD=0
+DAEMON=0
 DRY=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -23,8 +25,9 @@ while [ $# -gt 0 ]; do
       PROJECT="$2"; shift 2 ;;
     --ssh-only-tailscale) LOCK=1; shift ;;
     --discord) DISCORD=1; shift ;;
+    --daemon) DAEMON=1; shift ;;
     --dry-run) DRY=1; shift ;;
-    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -130,6 +133,36 @@ if [ "$DRY" = 1 ]; then echo "+ append mouse/scrollback settings to ~/.tmux.conf
   printf '\n# hive: touch scrolling, more history, no Esc delay (Esc cancels a turn)\nset -g mouse on\nset -g history-limit 20000\nset -sg escape-time 10\n' >>"$HOME/.tmux.conf"
 fi
 case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) echo "Add ~/.local/bin to PATH (e.g. in ~/.bashrc): export PATH=\"\$HOME/.local/bin:\$PATH\"" ;; esac
+
+if [ "$DAEMON" = 1 ]; then
+  say "hive daemon service for $PROJECT"
+  # one unit per project; the desktop app and phones attach to it over SSH (hive ui --remote / hive attach)
+  SLUG="$(basename "$PROJECT" | tr -c 'A-Za-z0-9_.-' '_' | sed 's/_*$//')"
+  DUNIT="/etc/systemd/system/hive-daemon-${SLUG}.service"
+  HIVE_CMD="$(command -v hive || echo "$(command -v node) $HOME/hive/dist/cli/index.js")"
+  if [ "$DRY" = 1 ]; then echo "+ write $DUNIT"; else
+    sudo tee "$DUNIT" >/dev/null <<EOF
+[Unit]
+Description=hive for $PROJECT
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=$ME
+WorkingDirectory=$PROJECT
+EnvironmentFile=-$HOME/hive.env
+ExecStart=$HIVE_CMD daemon --cwd $PROJECT
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  fi
+  run sudo systemctl daemon-reload
+  run sudo systemctl enable --now "hive-daemon-${SLUG}"
+  echo "Connect from the desktop: hive ui --remote $ME@<this machine> --remote-cwd $PROJECT"
+fi
 
 if [ "$DISCORD" = 1 ]; then
   say "Discord bridge service"

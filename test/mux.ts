@@ -78,4 +78,23 @@ assert(dup, "a second mux for the same project refuses to start");
 a.sock.destroy();
 await mux.close();
 assert(!(await isLive(mux.path)), "closing the mux stops the backend and removes the socket");
+// the real thing: `hive attach` starts the daemon on demand, the real backend answers, status / stop work
+{
+  const { ensureDaemon, daemonStatus, stopDaemon } = await import("../src/ui/attach.js");
+  const path = await ensureDaemon(dir);
+  const sock = createConnection(path);
+  const lines: any[] = [];
+  createInterface({ input: sock }).on("line", (l) => lines.push(JSON.parse(l))).on("error", () => {});
+  sock.on("error", () => {});
+  await new Promise((r) => sock.once("connect", r));
+  await until(() => lines.some((l) => l.event === "ready"), 20_000, "real backend ready");
+  sock.write(JSON.stringify({ id: 1, method: "usage", params: {} }) + "\n");
+  await until(() => lines.some((l) => l.id === 1), 10_000, "usage reply");
+  assert(!lines.find((l) => l.id === 1).error && Array.isArray(lines.find((l) => l.id === 1).result.providers), "hive daemon runs the real backend; an attached client calls it");
+  assert(/running \(pid \d+, 1 client attached\)/.test(await daemonStatus(dir)), "attach --status reports the daemon and its clients");
+  sock.destroy();
+  assert(await stopDaemon(dir), "attach --stop stops it");
+  for (let i = 0; i < 50 && (await daemonStatus(dir)) !== "not running"; i++) await sleep(200);
+  assert((await daemonStatus(dir)) === "not running", "after --stop nothing is listening");
+}
 finish("mux");
