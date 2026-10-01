@@ -10,6 +10,7 @@ import { ensureWorktree } from "./worktree.js";
 import { AGENTS, killGroup } from "./agents.js";
 import { ROLES } from "./roles.js";
 import { checkAutomatic, notifyOnce } from "./budget.js";
+import { agentNameProblem } from "./names.js";
 import { mediaKinds, runMedia } from "../hive/media.js";
 import { existsSync } from "node:fs";
 
@@ -101,9 +102,8 @@ export class Hub {
 
   async add(o: AddOptions): Promise<AgentSession> {
     // Names become branch names (hive/<name>), paths and mail addresses.
-    if (!/^[\w.-]{1,40}$/.test(o.name) || o.name.startsWith(".") || o.name.startsWith("-"))
-      throw new Error(`invalid agent name "${o.name}" (letters, digits, _ . -; max 40)`);
-    if (o.name === "owner") throw new Error(`"owner" is reserved for the human`);
+    const problem = agentNameProblem(o.name);
+    if (problem) throw new Error(`invalid agent name "${o.name}": ${problem}`);
     if (this.sessions.has(o.name) || this.starting.has(o.name)) throw new Error(`agent "${o.name}" already running`);
     const p = this.start(o);
     this.starting.set(o.name, p);

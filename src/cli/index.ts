@@ -60,7 +60,7 @@ import { defaultDb } from "../core/home.js";
 import { BB_PREFIX, BRANCHES } from "../core/watch.js";
 import { buildReport, renderReport } from "../core/report.js";
 import { RECIPES, applyRecipe } from "../core/recipes.js";
-import { findSkill, listSkills, parseSkill, projectSkillsDir, skillTemplate, userSkillsDir } from "../core/skills.js";
+import { findSkill, listSkills, parseSkill, projectSkillsDir, skillPolicy, skillTemplate, userSkillsDir } from "../core/skills.js";
 import { runSkill, writeSkill } from "../core/skill-run.js";
 import { createBridges } from "../bridges/index.js";
 import { BUDGET_KEYS, setBudget, usageSummary } from "../core/budget.js";
@@ -947,7 +947,7 @@ async function main() {
       if (!name) die(`usage: hive skill ${sub} <name>`);
       if (sub === "show") {
         const sk = findSkill(cwd, name);
-        console.log(`${cyan(sk.name)} — ${sk.description}\n${dim(sk.path)}\nagent: ${sk.agent ?? "claude"} · policy: ${sk.policy}${sk.output ? ` · saves to ${sk.output}` : ""}\nparams:`);
+        console.log(`${cyan(sk.name)} — ${sk.description}\n${dim(sk.path)}\nagent: ${sk.agent ?? "claude"} · policy: ${skillPolicy(sk)}${skillPolicy(sk) !== sk.policy ? ` (file asks for ${sk.policy}; only built-in skills may)` : ""}${sk.output ? ` · saves to ${sk.output}` : ""}\nparams:`);
         for (const p of sk.params) console.log(`  ${p.name}${p.required ? "*" : ""} (${p.type}${p.choices ? `: ${p.choices.join("|")}` : ""}${p.default ? `, default ${p.default}` : ""})${p.description ? dim(` — ${p.description}`) : ""}`);
         return;
       }

@@ -8,13 +8,21 @@
  *   reserve_pct             stop automatic work when a subscription window
  *                           (e.g. Claude's 5-hour limit) is this full   (default: 85)
  *   max_concurrent          automatic runs at the same time        (default: 3)
+ *   daily_tokens_api        per pay-per-token API provider (gemini-api, openrouter…)
+ *                           without its own daily_tokens.<provider>   (default: 2,000,000)
  *   media_daily             image/voice API calls per day          (default: 40)
  *   paused                  "1" stops all automatic work           (default: off)
  */
 import type { HiveDb } from "../hive/db.js";
+import { AGENTS } from "./agents.js";
 
-export const BUDGET_KEYS = ["daily_tokens", "reserve_pct", "max_concurrent", "media_daily", "paused"] as const;
-const DEFAULTS: Record<string, string> = { reserve_pct: "85", max_concurrent: "3", media_daily: "40" };
+export const BUDGET_KEYS = ["daily_tokens", "daily_tokens_api", "reserve_pct", "max_concurrent", "media_daily", "paused"] as const;
+const DEFAULTS: Record<string, string> = { reserve_pct: "85", max_concurrent: "3", media_daily: "40", daily_tokens_api: "2000000" };
+
+/** Pay-per-token providers get a default daily cap for automatic work (an overnight loop can't run up a bill). */
+function isApiProvider(provider: string): boolean {
+  return !!AGENTS[provider]?.api;
+}
 
 export function budgetSetting(db: HiveDb, key: string): string | undefined {
   return db.getSetting(`budget.${key}`) ?? DEFAULTS[key];
@@ -44,7 +52,9 @@ export function checkAutomatic(db: HiveDb, provider: string, now = Date.now()): 
   const total = usage.reduce((n, u) => n + (u.tokens ?? 0), 0);
   const daily = Number(budgetSetting(db, "daily_tokens") ?? "");
   if (daily > 0 && total >= daily) return { ok: false, reason: `daily token budget reached (${total.toLocaleString()} / ${daily.toLocaleString()})`, until: tomorrow };
-  const perProv = Number(db.getSetting(`budget.daily_tokens.${provider}`) ?? "");
+  // Own cap if set ("0" = no cap); else the default API cap for pay-per-token providers.
+  const own = db.getSetting(`budget.daily_tokens.${provider}`);
+  const perProv = Number(own ?? (isApiProvider(provider) ? (budgetSetting(db, "daily_tokens_api") ?? "") : ""));
   const used = usage.find((u) => u.provider === provider)?.tokens ?? 0;
   if (perProv > 0 && used >= perProv) return { ok: false, reason: `${provider} daily token budget reached (${used.toLocaleString()} / ${perProv.toLocaleString()})`, until: tomorrow };
   const reserve = Number(budgetSetting(db, "reserve_pct") ?? "85");
@@ -77,6 +87,8 @@ export interface UsageSummary {
     guard: Guard;
   }[];
   budget: Record<string, string>;
+  /** Media API calls today vs the daily cap. */
+  media: { today: number; cap: number };
 }
 
 export function usageSummary(db: HiveDb, now = Date.now()): UsageSummary {
@@ -84,7 +96,8 @@ export function usageSummary(db: HiveDb, now = Date.now()): UsageSummary {
   const d1 = db.usageSince(startOfToday(now));
   const d7 = db.usageSince(now - 7 * 86_400_000);
   const limits = db.limits();
-  const names = new Set([...d7.map((u) => u.provider), ...limits.map((l) => l.provider)]);
+  const names = new Set([...d7.map((u) => u.provider), ...limits.map((l) => l.provider)].filter((p) => !p.startsWith("media:")));
+  const mediaToday = d1.filter((u) => u.provider.startsWith("media:")).reduce((n, u) => n + u.turns, 0);
   const budget: Record<string, string> = {};
   for (const k of BUDGET_KEYS) {
     const v = budgetSetting(db, k);
@@ -93,6 +106,7 @@ export function usageSummary(db: HiveDb, now = Date.now()): UsageSummary {
   for (const [k, v] of Object.entries(db.settings("budget.daily_tokens."))) budget[k.slice(7)] = v;
   return {
     budget,
+    media: { today: mediaToday, cap: Number(budgetSetting(db, "media_daily") ?? "40") },
     providers: [...names].sort().map((p) => ({
       provider: p,
       h5: h5.find((u) => u.provider === p)?.tokens ?? 0,
