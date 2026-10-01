@@ -35,6 +35,9 @@ import { ExplainWatcher } from "../core/learn.js";
 import { confine } from "../core/confine.js";
 import { checkAutomatic, concurrencyGuard, notifyOnce } from "../core/budget.js";
 import type { AccountView, AgentView, BackendEvent, DeviceKind, DeviceMethods, ElicitationAsk, GroupView, JobView, Layout, Methods, PermissionAsk, Request } from "./protocol.js";
+import { speakFor, sttStatus, transcribeFor } from "../hive/voice.js";
+import { ttsAvailable, voices as listVoices } from "../hive/media.js";
+import { projectRoot } from "../core/home.js";
 
 // stdout is the protocol channel: keep stray logging off it.
 const out = process.stdout.write.bind(process.stdout);
@@ -899,6 +902,21 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
   markOwnerRead() {
     hub.db.markRead(hub.db.inbox("owner", true, 500).map((m) => m.id), "owner");
     pushOwnerMail(true);
+  },
+  // ---- voice (src/hive/voice.ts) ----
+  transcribe({ audio, mime, seconds, agent }) {
+    const cwd = (agent && hub.sessions.get(agent)?.cwd) || defaultCwd;
+    return transcribeFor(hub.db, { audio, mime, seconds, agent, project: projectRoot(cwd) });
+  },
+  speak({ agent, text, voice }) {
+    const cwd = hub.sessions.get(agent)?.cwd || defaultCwd;
+    return speakFor(hub.db, { agent: need(agent, "agent"), text, voice: voice || undefined, project: projectRoot(cwd) });
+  },
+  voiceStatus() {
+    return { stt: sttStatus(), tts: ttsAvailable() };
+  },
+  voiceList() {
+    return listVoices();
   },
 };
 

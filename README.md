@@ -22,6 +22,7 @@ Design goals, in order:
 | Skills | prompts with parameters (YouTube titles/descriptions/chapters from a transcript **or a YouTube link**, code review, prompt-engineer) |
 | Media | ElevenLabs voice-over, image generate/edit (keys stay in the hive process) |
 | Devices | a sandboxed browser (its own Chromium profile, never your logins) and an Android emulator/phone pane over adb; you watch and click, agents test web and Android apps with `hive_browser_*` / `hive_android_*` ([docs/DEVICES.md](docs/DEVICES.md)) |
+| Voice | dictation on every prompt box (mic button or hold Ctrl+Shift+Space; local Whisper, OpenAI or ElevenLabs), each agent can answer out loud in its own voice, "Talk with &lt;agent&gt;" conversation mode ([docs/VOICE.md](docs/VOICE.md)) |
 | Board & stats | Kanban board for notes and projects (agents and automations add cards; `hive board`), token ledger by provider / model / task / project (`hive stats`) |
 | Safety & cost | per-agent permission policies, worktrees, untrusted-content labelling, usage + limit windows with reset times, daily budgets, pause switch |
 | Terminal | `hive tui`: the pane grid in your terminal, starting with a four-agent squad (planner, coder, reviewer, tester); `/add`, `/rm`, `/link`, `/group` ([docs/TUI.md](docs/TUI.md)) |
