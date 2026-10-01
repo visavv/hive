@@ -4,11 +4,12 @@
  * permission policies, usage, model picker, errors, cancel, resume, agents.json.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Hub } from "../src/core/hub.js";
 import { AGENTS, customAgentDef, expandVars, loadCustomAgents, readCustomAgents, saveCustomAgent } from "../src/core/agents.js";
 import { assert, finish, freshDir, sleep } from "./util.js";
+import { fitContext, listTree, type Msg } from "../src/api/helpers.js";
 
 const dir = freshDir(".hive-test-api");
 process.env.HIVE_HOME = join(dir, "home");
@@ -164,4 +165,42 @@ authFail = false;
 
 await hub.close();
 server.close();
+
+// fitContext: the kept window never starts on an orphan tool result
+{
+  const call = (id: string): Msg => ({ role: "assistant", content: null, tool_calls: [{ id, type: "function", function: { name: "read_file", arguments: "{}" } }] });
+  const h: Msg[] = [
+    { role: "system", content: "sys" },
+    { role: "user", content: "x".repeat(5000) },
+    call("a"),
+    { role: "tool", tool_call_id: "a", content: "y".repeat(5000) },
+    call("b"),
+    { role: "tool", tool_call_id: "b", content: "z".repeat(3000) },
+  ];
+  const ok = (m: Msg[]) => m.every((x, i) => x.role !== "tool" || m.slice(0, i).some((y) => y.role === "assistant" && y.tool_calls?.some((c) => c.id === x.tool_call_id)));
+  const f1 = fitContext(h, 4000);
+  assert(ok(f1) && f1.some((m) => m.role === "assistant" && m.tool_calls?.[0].id === "b") && f1.at(-1)!.role === "tool", "fitContext: trims to the last tool call with its result, not a lone tool message");
+  const f2 = fitContext(h, 1500);
+  const size = JSON.stringify(f2).length;
+  assert(ok(f2) && f2.at(-2)!.role === "assistant" && (f2.at(-1) as any).content.includes("cut to fit") && size < 2000, `fitContext: when even that is too big, the tool result is cut short (${size} chars)`);
+  assert(fitContext(h, 1e6) === h, "fitContext: a history that fits is unchanged");
+}
+
+// listTree: symlinks are listed, not followed; a dangling one doesn't break the listing
+{
+  const t = freshDir(join(dir, "tree"));
+  mkdirSync(join(t, "sub"));
+  writeFileSync(join(t, "sub", "a.txt"), "a");
+  let links = true;
+  try {
+    symlinkSync(join(t, "nowhere"), join(t, "dangling"));
+    symlinkSync(dir, join(t, "out"), "junction");
+  } catch {
+    links = false;
+  }
+  const ls = listTree(t);
+  assert(ls.includes("sub/a.txt"), "listTree lists files");
+  if (links) assert(/^dangling@$/m.test(ls) && /^out@$/m.test(ls) && !ls.includes("out/"), "listTree: symlinks are marked and not walked; a dangling one is fine");
+}
+
 finish("api");
