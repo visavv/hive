@@ -15,6 +15,7 @@ import { hiveHome } from "./home.js";
 import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { mediaKinds, runMedia } from "../hive/media.js";
 import { storeMcp, storedMcp } from "./mcp-extra.js";
+import { startTwitchWatcher } from "../hive/twitch.js";
 
 export interface HubOptions {
   hiveDb: string;
@@ -80,9 +81,12 @@ export class Hub {
       this.mediaTimer = setInterval(() => void this.mediaTick(), 300);
       this.mediaTimer.unref?.();
     }
+    if (opts.wakeSleeping) this.twitch = startTwitchWatcher(this.db);
   }
 
   private mediaTimer?: NodeJS.Timeout;
+  /** Twitch VOD/clip polling (creator: hive twitch watch --detach / recipe twitch-clips); serve and the app only. */
+  private twitch?: { stop: () => void };
   private mediaBusy = 0;
   private async mediaTick() {
     if (!this.db.db.open || this.mediaBusy >= 2) return;
@@ -292,6 +296,7 @@ export class Hub {
     if (this.timer) clearInterval(this.timer);
     clearInterval(this.leaseTimer);
     if (this.mediaTimer) clearInterval(this.mediaTimer);
+    this.twitch?.stop();
     this.timer = undefined;
     await Promise.all([...this.sessions.values()].map((s) => s.close()));
     if (this.db.db.open) for (const n of this.sessions.keys()) this.db.releaseAgent(n, this.id);
