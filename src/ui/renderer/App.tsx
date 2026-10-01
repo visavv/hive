@@ -116,7 +116,7 @@ export function App() {
   const toasts = useStore((s) => s.toasts);
   const [adding, setAdding] = useState(false);
   const [jobFor, setJobFor] = useState<string | null>(null);
-  const [drawer, setDrawer] = useState<false | "default" | "usage">(false);
+  const [drawer, setDrawer] = useState<false | "default" | "usage" | "learn">(false);
   const [dialog, setDialog] = useState<"" | "recipes" | "skills" | "stats" | "board">("");
   const [palette, setPalette] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -233,6 +233,7 @@ export function App() {
     { id: "link", label: "Link agents so they can talk", run: () => store.requestLink([]) },
     { id: "inbox", label: "Inbox and messages waiting for review", keys: "Ctrl+I", run: () => setDrawer("default") },
     { id: "usage", label: "Usage, limits and spending guards", run: () => setDrawer("usage") },
+    { id: "learn", label: "Memory and learning: what hive knows about you, skills it suggests", run: () => setDrawer("learn") },
     { id: "stats", label: "Token stats: by provider, model, task, project", hint: "all projects, kept for good", run: () => setDialog("stats") },
     { id: "broadcast", label: "Message all agents", keys: "Ctrl+Shift+B", run: () => setTimeout(() => document.querySelector<HTMLInputElement>(".broadcast input")?.focus(), 0) },
     { id: "sidebar", label: "Toggle sidebar", keys: "Ctrl+B", run: () => toggleSidebar() },
@@ -331,7 +332,7 @@ export function App() {
       )}
       {adding && <AddAgentDialog onClose={() => setAdding(false)} />}
       {jobFor && <JobDialog agent={jobFor} onClose={() => setJobFor(null)} />}
-      {drawer && <Drawer key={drawer} initialTab={drawer === "usage" ? "usage" : undefined} onClose={() => setDrawer(false)} />}
+      {drawer && <Drawer key={drawer} initialTab={drawer === "usage" ? "usage" : drawer === "learn" ? "learn" : undefined} onClose={() => setDrawer(false)} />}
       {dialog === "recipes" && <RecipesDialog onClose={() => setDialog("")} />}
       {dialog === "stats" && <StatsDialog onClose={() => setDialog("")} />}
       {linkReq && (
@@ -404,6 +405,7 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onPalett
 }) {
   const unread = useStore((s) => s.ownerUnread);
   const held = useStore((s) => s.heldTotal);
+  const learn = useStore((s) => s.learnPending);
   const layout = useStore((s) => s.layout);
   const [text, setText] = useState("");
   const targets = names.filter((n) => selected.has(n) && store.agents.has(n));
@@ -483,9 +485,9 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onPalett
       <button className="ghost" onClick={onBoard} title="Kanban board (Ctrl+J)">
         <IconColumns /> <span className="bl">Board</span>
       </button>
-      <button className={`hive-btn${unread || held ? " has-mail" : ""}`} onClick={onHive} title={`report, inbox, blackboard, mail (Ctrl+I)${held ? ` · ${held} message${held === 1 ? "" : "s"} waiting for your review` : ""}`}>
+      <button className={`hive-btn${unread || held || learn ? " has-mail" : ""}`} onClick={onHive} title={`report, inbox, blackboard, mail, learning (Ctrl+I)${held ? ` · ${held} message${held === 1 ? "" : "s"} waiting for your review` : ""}${learn ? ` · ${learn} thing${learn === 1 ? "" : "s"} hive learned, waiting for your OK` : ""}`}>
         <IconInbox /> <span className="bl">Hive</span>
-        {unread + held ? <span className="count">{unread + held}</span> : null}
+        {unread + held + learn ? <span className="count">{unread + held + learn}</span> : null}
       </button>
       <button className="primary" onClick={onAdd} title="add agent (Ctrl+N)">
         <IconPlus /> Agent
