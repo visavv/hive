@@ -22,6 +22,37 @@ export interface PaneSpec {
   preset?: string;
   /** Run in its own git worktree (.hive/worktrees/<name>). */
   worktree?: boolean;
+  /** Voice settings of this pane (UI only; the backend ignores them in addAgent). */
+  voice?: PaneVoice;
+}
+
+// ---- voice (docs/VOICE.md) ----
+
+export interface PaneVoice {
+  /** ElevenLabs voice id for spoken replies (default: ELEVENLABS_VOICE). */
+  id?: string;
+  /** Its display name, for menus. */
+  name?: string;
+  /** Speak a short summary when the agent finishes a turn. */
+  speak?: boolean;
+  /** Conversation mode: speak replies + send after dictation (+ listen again when hands-free). */
+  talk?: boolean;
+}
+
+export interface VoiceSettings {
+  /** Send the prompt as soon as dictated text is inserted. */
+  sendAfter?: boolean;
+  /** Push-to-talk key (hold to talk, tap to toggle). */
+  pttKey?: "ctrl+shift+space" | "ctrl+space" | "alt+shift+space" | "f9" | "off";
+  /** Speak turns hive started (jobs, mail) when that pane is focused (default on). */
+  speakAuto?: boolean;
+  /** Conversation mode listens again after a reply, until ~1.5 s of silence (default on). */
+  handsFree?: boolean;
+}
+
+export interface VoiceStatusView {
+  stt: import("../hive/voice.js").SttStatus;
+  tts: boolean;
 }
 
 export interface KindView {
@@ -74,6 +105,7 @@ export interface Layout {
   ping?: boolean;
   theme?: "dark" | "light" | "oled" | "midnight" | "forest" | "ember" | "rose" | "paper";
   density?: "compact" | "comfortable" | "spacious";
+  voice?: VoiceSettings;
 }
 
 export interface ConfigOptionView {
@@ -294,6 +326,13 @@ export interface Methods {
   cardMove: (p: { id: number; col: import("../hive/kanban.js").Column; before?: number | null }) => import("../hive/kanban.js").Card;
   cardUpdate: (p: { id: number; title?: string; body?: string; project?: string; labels?: string[] }) => import("../hive/kanban.js").Card;
   cardRemove: (p: { id: number }) => boolean;
+  // ---- voice ----
+  /** Speech-to-text of a dictation clip (base64 audio) by the configured provider. */
+  transcribe: (p: { audio: string; mime: string; seconds?: number; agent?: string }) => { text: string; provider: string };
+  /** A short spoken summary of `text` (an agent's reply) as base64 mp3; audio null when there is nothing to say. */
+  speak: (p: { agent: string; text: string; voice?: string }) => { audio: string | null; mime?: string; spoken: string };
+  voiceStatus: (p: Record<string, never>) => VoiceStatusView;
+  voiceList: (p: Record<string, never>) => { id: string; name: string; labels?: string }[];
 }
 
 export type MethodName = keyof Methods;
