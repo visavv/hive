@@ -28,6 +28,7 @@ import { HiveDb } from "../hive/db.js";
 import { TRUST_POLICY } from "./trust.js";
 import * as ledger from "./ledger.js";
 import { projectRoot } from "./home.js";
+import { BUDGET_RECHECK_MS, budgetRev } from "./budget.js";
 
 export type PermissionPolicy = "ask" | "allow-reads" | "allow-all" | "reject-all";
 export const POLICIES: PermissionPolicy[] = ["ask", "allow-reads", "allow-all", "reject-all"];
@@ -376,7 +377,7 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
   /** If idle and mail is waiting, deliver it. Returns true if a turn ran. */
   async poke(): Promise<boolean> {
     if (this.busy || this.closed) return false;
-    if (!this.queue.length && (Date.now() < this.nextWakeAt || this.db.unreadCount(this.name) === 0)) return false;
+    if (!this.queue.length && ((Date.now() < this.nextWakeAt && !this.budgetChanged()) || this.db.unreadCount(this.name) === 0)) return false;
     await this.drain();
     return true;
   }
@@ -512,6 +513,13 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
   private replayingId?: string;
   /** Mail delivery waits until this time (backoff after failures / ignored mail / budget). */
   private nextWakeAt = 0;
+  /** budgetRev() when mail was last held back by the budget (undefined: not held). */
+  private budgetHeldRev?: string;
+  /** Mail is held by the budget and the owner changed a budget setting since. */
+  private budgetChanged(): boolean {
+    return this.budgetHeldRev !== undefined && this.budgetHeldRev !== budgetRev(this.db);
+  }
+  private heldWhy?: string;
   private failStreak = 0;
   /** Consecutive wake-ups that didn't reduce unread mail. */
   private ignoredStreak = 0;
@@ -582,15 +590,24 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
         await this.runTurn(queued);
         continue;
       }
-      if (Date.now() < this.nextWakeAt) break;
+      // Held by the budget: a budget change (setBudget) re-checks at once.
+      if (Date.now() < this.nextWakeAt && !this.budgetChanged()) break;
+      this.budgetHeldRev = undefined;
       if (this.db.unreadCount(this.name) === 0) break;
       const guard = this.opts.autoGuard?.();
       if (guard && !guard.ok) {
         // Budget / subscription reserve: mail waits (what you type still runs).
-        this.nextWakeAt = guard.until ?? Date.now() + 10 * 60_000;
-        this.emitEv({ type: "notice", text: `mail delivery held: ${guard.reason}` });
+        // Re-check every minute rather than sleeping until `until` (often "tomorrow"):
+        // the owner may raise the budget, or the window may reset early.
+        this.nextWakeAt = Math.min(guard.until ?? Infinity, Date.now() + BUDGET_RECHECK_MS);
+        this.budgetHeldRev = budgetRev(this.db);
+        // Once per reason (it re-checks every minute).
+        const why = guard.reason.replace(/[\d,]+/g, "#");
+        if (why !== this.heldWhy) this.emitEv({ type: "notice", text: `mail delivery held: ${guard.reason}` });
+        this.heldWhy = why;
         break;
       }
+      this.heldWhy = undefined;
       const next = this.mailWake();
       if (!next) break;
       const before = this.db.unreadCount(this.name);
