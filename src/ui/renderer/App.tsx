@@ -233,6 +233,14 @@ export function App() {
     { id: "link", label: "Link agents so they can talk", run: () => store.requestLink([]) },
     { id: "inbox", label: "Inbox and messages waiting for review", keys: "Ctrl+I", run: () => setDrawer("default") },
     { id: "usage", label: "Usage, limits and spending guards", run: () => setDrawer("usage") },
+    {
+      id: "git-init",
+      label: "Make this folder a git project (agents can then get their own branches)",
+      run: () =>
+        void rpc("gitInit", {})
+          .then((r) => store.toast(r.result === "already" ? `${r.cwd} is already a git project` : `${r.cwd} is now a git project — restart an agent (or add one with a worktree) to give it its own branch`))
+          .catch((e) => store.toast(e.message, "error")),
+    },
     { id: "learn", label: "Memory and learning: what hive knows about you, skills it suggests", run: () => setDrawer("learn") },
     { id: "stats", label: "Token stats: by provider, model, task, project", hint: "all projects, kept for good", run: () => setDialog("stats") },
     { id: "broadcast", label: "Message all agents", keys: "Ctrl+Shift+B", run: () => setTimeout(() => document.querySelector<HTMLInputElement>(".broadcast input")?.focus(), 0) },
@@ -298,7 +306,7 @@ export function App() {
             </p>
           </div>
         ) : (
-          <Grid names={visible} columns={maximized ? 1 : columns} widths={maximized || vertical ? undefined : layout.widths} minRow={vertical ? 360 : 220}>
+          <Grid names={visible} columns={maximized ? 1 : columns} widths={maximized ? undefined : vertical ? layout.vwidths : layout.widths} widthsKey={vertical ? "vwidths" : "widths"} minRow={vertical ? 360 : 220}>
             {visible.map((n) => (
               <Pane
                 key={n}
@@ -421,7 +429,7 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onPalett
   };
   useVoiceTarget("@broadcast", { el: () => bcRef.current, setText, send });
   const cols = columns;
-  const setCols = (n: number) => saveLayout(vertical ? { vcolumns: n } : { columns: n, widths: undefined });
+  const setCols = (n: number) => saveLayout(vertical ? { vcolumns: n, vwidths: undefined } : { columns: n, widths: undefined });
   const readyNames = useStore((s) => names.filter((n) => s.readyAt.has(n)));
   return (
     <div className="topbar">
@@ -524,7 +532,7 @@ function UsageChip({ onClick }: { onClick: () => void }) {
 
 // ---- resizable grid ----
 
-function Grid({ names, columns, widths, minRow, children }: { names: string[]; columns: number; widths?: number[]; minRow: number; children: React.ReactNode }) {
+function Grid({ names, columns, widths, widthsKey = "widths", minRow, children }: { names: string[]; columns: number; widths?: number[]; widthsKey?: "widths" | "vwidths"; minRow: number; children: React.ReactNode }) {
   const cols = Math.max(1, Math.min(columns, names.length));
   const w = widths && widths.length === cols ? widths : Array(cols).fill(1);
   const rows = Math.ceil(names.length / cols);
@@ -544,7 +552,7 @@ function Grid({ names, columns, widths, minRow, children }: { names: string[]; c
       const b = Math.max(min, start[i] + start[i + 1] - a);
       next[i] = start[i] + start[i + 1] - b;
       next[i + 1] = b;
-      store.layout = { ...store.layout, widths: next };
+      store.layout = { ...store.layout, [widthsKey]: next };
       store.changed();
     };
     const up = () => {
@@ -571,7 +579,7 @@ function Grid({ names, columns, widths, minRow, children }: { names: string[]; c
             className="col-handle"
             style={{ left: `calc(${(acc / total) * 100}% - 4px)` }}
             onPointerDown={startDrag(i)}
-            onDoubleClick={() => saveLayout({ widths: undefined })}
+            onDoubleClick={() => saveLayout({ [widthsKey]: undefined })}
             title="drag to resize · double-click to reset"
           />
         );

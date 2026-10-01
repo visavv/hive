@@ -102,6 +102,8 @@ export interface Layout {
   orientation?: "auto" | "vertical" | "horizontal";
   /** Columns / sidebar used while the layout is vertical. */
   vcolumns?: number;
+  /** Column widths in the vertical layout (kept apart from `widths`, which belong to the wide layout). */
+  vwidths?: number[];
   vsidebar?: boolean;
   /** Chime when an agent finishes (default on). */
   ping?: boolean;
@@ -288,6 +290,7 @@ export interface DeviceMethods {
 export interface Methods extends DeviceMethods {
   addAgent: (p: PaneSpec & { resume?: boolean; startJob?: boolean }) => AgentView;
   worktrees: (p: Record<string, never>) => { repo: string; base: string; worktrees: WorktreeView[] }[];
+  gitInit: (p: { cwd?: string }) => { result: "created" | "first-commit" | "already"; cwd: string };
   mergeWorktree: (p: { name: string; repo: string }) => { ok: boolean; message: string };
   removeAgent: (p: { name: string; forget?: boolean; stopJobs?: boolean }) => void;
   getState: (p: Record<string, never>) => {
