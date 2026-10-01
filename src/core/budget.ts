@@ -139,8 +139,25 @@ export function usageSummary(db: HiveDb, now = Date.now()): UsageSummary {
   };
 }
 
+/**
+ * Bumped by every setBudget, so automatic work held back by the budget (mail
+ * wake-ups waiting for "tomorrow") re-checks right away instead of waiting
+ * out its held-until time.
+ */
+export function budgetRev(db: HiveDb): string {
+  return db.getSetting("budget_rev") ?? "0";
+}
+
+/** Held-back mail re-checks the budget at least this often (budgets changed by hand, a new day). */
+export const BUDGET_RECHECK_MS = 60_000;
+
 /** Validate and store one budget setting ("" clears it). Accepts 2m / 500k / 1_000. */
 export function setBudget(db: HiveDb, key: string, val: string) {
+  storeBudget(db, key, val);
+  db.setSetting("budget_rev", String(Number(budgetRev(db)) + 1));
+}
+
+function storeBudget(db: HiveDb, key: string, val: string) {
   if (!(BUDGET_KEYS as readonly string[]).includes(key) && !/^daily_tokens\.[\w-]+$/.test(key))
     throw new Error(`unknown budget key "${key}" (keys: ${BUDGET_KEYS.join(", ")}, daily_tokens.<provider>)`);
   const v = val.trim();
