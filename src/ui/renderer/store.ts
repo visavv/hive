@@ -115,6 +115,9 @@ class Store {
   }
 
   toast(text: string, level: "info" | "error" = "info") {
+    // Same message already showing: don't stack duplicates; keep at most three.
+    if (this.toasts.some((t) => t.text === text)) return;
+    if (this.toasts.length >= 3) this.toasts.shift();
     const id = ++this.toastId;
     this.toasts.push({ id, text, level });
     setTimeout(() => {
@@ -200,7 +203,7 @@ class Store {
         if (ev.groups) this.groups = ev.groups;
         if (ev.heldTotal !== undefined) {
           if (this.heldSeen >= 0 && ev.heldTotal > this.heldSeen) {
-            this.toast("Waiting for you: an agent message needs your review (✉ Hive → Inbox)");
+            this.toast("Waiting for you: an agent message needs your review (Hive → Inbox)");
             notifyAttention("hive", "an agent message is waiting for your review", "needs you");
           }
           this.heldSeen = ev.heldTotal;
@@ -247,7 +250,7 @@ class Store {
         const prev = this.verdicts.get(ev.state.id);
         this.verdicts.set(ev.state.id, ev.state);
         if (prev && prev.status !== ev.state.status && (ev.state.status === "done" || ev.state.status === "applied" || ev.state.status === "failed")) {
-          this.toast(`⚖ verdict #${ev.state.id} ${ev.state.status === "failed" ? `failed: ${ev.state.error ?? ""}` : ev.state.status === "applied" ? "built" : "ready"}`, ev.state.status === "failed" ? "error" : "info");
+          this.toast(`Verdict #${ev.state.id} ${ev.state.status === "failed" ? `failed: ${ev.state.error ?? ""}` : ev.state.status === "applied" ? "built" : "ready"}`, ev.state.status === "failed" ? "error" : "info");
           if (this.layout.ping !== false) ping();
           notifyAttention(`verdict #${ev.state.id}`, ev.state.status, "is ready");
         }

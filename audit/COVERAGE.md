@@ -1,4 +1,4 @@
-# Coverage matrix (passes 1–3)
+# Coverage matrix (passes 1–4)
 
 Role: single local user ("owner"); agents act as semi-trusted automated users. "Code" = inspected in source; "UI/CLI" = exercised hands-on; "Test" = exercised through the automated suites run during the pass (`npm test`, `npm run test:ui` under xvfb, `test/audit-probe.ts`).
 

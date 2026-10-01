@@ -4,9 +4,10 @@ import { rpc } from "./bridge.js";
 import { renderMarkdown } from "./markdown.js";
 import { store, usePane, useStore, type Item } from "./store.js";
 import { focus } from "./focus.js";
-import { ctxPct, fmtIdle, statusLabel } from "./format.js";
+import { ctxPct, fmtIdle, statusLabel, noteLabel } from "./format.js";
 import { PromptEditor } from "./Extras.js";
 import { GroupChips, groupColor } from "./Links.js";
+import { IconClock, IconClose, IconExpand, IconLink, IconMaximize, IconRefresh, IconSend, IconStop } from "./Icons.js";
 
 export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
   name: string;
@@ -88,44 +89,43 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
         <span className="spacer" />
         {agent?.ctx && <CtxMeter used={agent.ctx.used} size={agent.ctx.size} />}
         {agent && agent.queued > 0 && <span className="badge" title="prompts queued">{agent.queued} queued</span>}
-        {agent && agent.jobs > 0 && <span className="badge job" title="scheduled jobs on this agent">⏱{agent.jobs}</span>}
+        {agent && agent.jobs > 0 && <span className="badge job" title="scheduled jobs on this agent"><IconClock size={12} /> {agent.jobs}</span>}
         <div className="pane-actions" onDoubleClick={(e) => e.stopPropagation()}>
           {agent && status === "working" && (
-            <button onClick={() => void rpc("cancel", { name })} title="cancel turn (Esc)">■</button>
+            <button onClick={() => void rpc("cancel", { name })} title="cancel turn (Esc)" aria-label="cancel turn"><IconStop /></button>
           )}
           {agent && (
-            <button onClick={onJob} title="schedule a loop / interval / watch job">⏱</button>
+            <button onClick={onJob} title="schedule a loop / interval / watch job" aria-label="schedule a job"><IconClock /></button>
           )}
           <button onClick={() => store.requestLink([name])} title="link with another agent (or drag this pane's name onto another pane)" aria-label="link with another agent">
-            🔗
+            <IconLink />
           </button>
           {agent && (
             <button
               onClick={() => void rpc("newSession", { name }).catch((e) => store.toast(e.message, "error"))}
               title="fresh session (clears context)"
             >
-              ⟲
+              <IconRefresh />
             </button>
           )}
-          <button onClick={onMaximize} title="maximize / restore">⤢</button>
-          <button className="close" onClick={() => closePane(name)} title="close pane">✕</button>
+          <button onClick={onMaximize} title="maximize / restore" aria-label="maximize"><IconMaximize /></button>
+          <button className="close" onClick={() => closePane(name)} title="close pane" aria-label="close pane"><IconClose /></button>
         </div>
       </header>
       {agent && (
-        <div className="pane-sub" title={agent.cwd}>
+        <div
+          className="pane-sub"
+          title={[agent.cwd, agent.branch && `branch ${agent.branch}`, agent.role, `permissions: ${agent.policy}`, agent.auth].filter(Boolean).join("\n")}
+        >
           {agent.branch?.startsWith("hive/") ? (
-            <span className="branch" title={agent.cwd}>⎇ {agent.branch}</span>
+            <span className="where branch">{agent.branch}</span>
           ) : (
-            <span>
-              {shortPath(agent.cwd)}
-              {agent.branch ? ` ⎇ ${agent.branch}` : ""}
-            </span>
+            <span className="where">{agent.cwd.split(/[\\/]/).filter(Boolean).pop() ?? agent.cwd}</span>
           )}
-          {agent.role && <span>· {agent.role}</span>}
-          <span>· {agent.policy}</span>
-          {agent.auth && <span className={agent.auth.startsWith("not logged in") ? "warn" : ""}>· {agent.auth}</span>}
+          <span className={`pol pol-${agent.policy}`}>{POLICY_LABEL[agent.policy] ?? agent.policy}</span>
+          {agent.auth?.startsWith("not logged in") && <span className="warn">not signed in</span>}
           <span className="spacer" />
-          <span className="note">{agent.note}</span>
+          <span className="note">{noteLabel(agent.note)}</span>
           {status === "idle" && <span>idle {fmtIdle(agent.idleMs)}</span>}
         </div>
       )}
@@ -146,6 +146,37 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
     </section>
   );
 }
+
+/** One-line label for prompts hive generated, or undefined for what you typed. */
+function autoPromptLabel(t: string): string | undefined {
+  let m = t.match(/^You have (\d+) unread hive messages?: (.*?)\. Call hive_inbox/);
+  if (m) return `Mail · ${m[2].replace(/ \(.*?\)/g, "").slice(0, 80)}`;
+  m = t.match(/^\[hive job #(\d+), (\w+)(?:: ([^\]]+))?\]/);
+  if (m) return `Job #${m[1]} · ${m[2]}${m[3] ? ` · ${m[3]}` : ""}`;
+  m = t.match(/^\[follow-up from ([\w.-]+)\]/);
+  if (m) return `Follow-up from ${m[1]}`;
+  if (t.includes("You are agent \"") && t.includes("local multi-agent hive")) return "Briefing";
+  return undefined;
+}
+
+const HIVE_QUIET: Record<string, string> = {
+  hive_inbox: "checked mail",
+  hive_status: "updated status",
+  hive_agents: "looked up agents",
+  hive_bb_get: "read the board",
+  hive_bb_list: "read the board",
+  hive_bb_set: "wrote to the board",
+  hive_thread: "read a thread",
+};
+function hiveToolLine(title: string, status: string): string | undefined {
+  const t = title.replace(/^mcp__hive__/, "").trim();
+  const send = t.match(/^hive_send\s*(?:→\s*(\S+))?/);
+  if (send) return `${status === "failed" ? "couldn't send" : "sent mail"}${send[1] ? ` to ${send[1]}` : ""}`;
+  const k = Object.keys(HIVE_QUIET).find((x) => t === x || t.startsWith(x + " "));
+  return k ? HIVE_QUIET[k] + (status === "failed" ? " (failed)" : "") : undefined;
+}
+
+const POLICY_LABEL: Record<string, string> = { ask: "asks first", "allow-reads": "reads freely", "allow-all": "full access", "reject-all": "chat only" };
 
 function closePane(name: string) {
   const jobs = store.agents.get(name)?.jobs ?? 0;
@@ -246,8 +277,18 @@ const Transcript = memo(function Transcript({ name }: { name: string }) {
 
 const ItemView = memo(function ItemView({ item, name }: { item: Item; rev: number; name: string }) {
   switch (item.k) {
-    case "user":
-      return <div className={`msg user${item.text.startsWith("You have ") || item.text.startsWith("[hive job") ? " auto" : ""}`}>{item.text}</div>;
+    case "user": {
+      // Prompts hive wrote (mail wake-ups, job runs, follow-ups) collapse to one quiet line.
+      const auto = autoPromptLabel(item.text);
+      if (auto)
+        return (
+          <details className="sys">
+            <summary>{auto}</summary>
+            <div className="sys-body">{item.text}</div>
+          </details>
+        );
+      return <div className="msg user">{item.text}</div>;
+    }
     case "agent":
       return <div className="msg agent md" dangerouslySetInnerHTML={{ __html: renderMarkdown(item.text) }} />;
     case "thought":
@@ -257,8 +298,12 @@ const ItemView = memo(function ItemView({ item, name }: { item: Item; rev: numbe
           <div>{item.text}</div>
         </details>
       );
-    case "tool":
+    case "tool": {
+      // hive's own bookkeeping tools (mail, status, board) get one muted line, not a card.
+      const quiet = hiveToolLine(item.title, item.status);
+      if (quiet) return <div className={`tool-line ${item.status}`}>{quiet}</div>;
       return <ToolCard item={item} />;
+    }
     case "plan":
       return (
         <ul className="plan">
@@ -541,10 +586,10 @@ function Composer({ name, agent }: { name: string; agent?: AgentView }) {
         }}
       />
       <button className="ghost expand" onClick={() => setEditing(true)} disabled={!agent} title="open the big editor for long prompts (Ctrl+E)" aria-label="open prompt editor">
-        ⤢
+        <IconExpand />
       </button>
       <button className="send" onClick={() => send()} disabled={!agent || !text.trim()} title="send (Enter)">
-        ➤
+        <IconSend />
       </button>
     </div>
   );

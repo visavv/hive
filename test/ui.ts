@@ -92,8 +92,9 @@ try {
   await perm.locator("button", { hasText: "Allow" }).click();
   await pane(page, "alpha").locator(".msg.agent", { hasText: "edit allowed" }).waitFor({ timeout: 10_000 });
   assert(true, "permission answered from the pane; agent continued");
-  const cards = await pane(page, "alpha").locator(".tool").allInnerTexts();
-  assert(cards.length > 0 && cards.every((c) => c.includes("✓")), "tool calls render as one card each, updated in place");
+  // hive's own bookkeeping (checking mail) is one quiet line per call, updated in place — not a card
+  const lines = await pane(page, "alpha").locator(".tool-line").allInnerTexts();
+  assert(lines.length > 0 && lines.every((c) => c.includes("checked mail")) && (await pane(page, "alpha").locator(".tool").count()) === 0, "hive's own tool calls show as quiet one-liners, updated in place");
   await pane(page, "alpha").locator(".ctx").waitFor({ timeout: 5000 });
   assert(/\d+%/.test(await pane(page, "alpha").locator(".ctx").innerText()), "ctx % meter shown in pane header");
   assert(await pane(page, "alpha").locator(".cfg select").count(), "model selector from configOptions shown");
@@ -211,12 +212,12 @@ try {
   // hive drawer: mail to the owner, report, blackboard, send as owner
   await pane(page, "alpha").locator("textarea").fill("tellowner: overnight run finished; bb ideas/dark-mode=add a dark mode toggle");
   await pane(page, "alpha").locator("textarea").press("Enter");
-  await page.locator(".hive-btn .badge").waitFor({ timeout: 10_000 });
+  await page.locator(".hive-btn .count").waitFor({ timeout: 10_000 });
   assert(true, "owner mail shows a badge on the Hive button");
   await page.keyboard.press("Control+I");
   await page.locator(".drawer .mail", { hasText: "overnight run finished" }).waitFor({ timeout: 5000 });
   assert(true, "inbox tab lists mail agents sent to the owner");
-  await page.locator(".hive-btn .badge").waitFor({ state: "detached", timeout: 5000 });
+  await page.locator(".hive-btn .count").waitFor({ state: "detached", timeout: 5000 });
   assert(true, "opening the inbox marks it read");
   await page.locator(".drawer .seg button", { hasText: "Since you left" }).click();
   await page.locator(".drawer .rep-job", { hasText: "loop" }).waitFor({ timeout: 5000 });
@@ -227,7 +228,7 @@ try {
   await page.locator(".drawer .compose select").selectOption("beta");
   await page.locator(".drawer .compose input").fill("please look at the auth module");
   await page.locator(".drawer .compose input").press("Enter");
-  await pane(page, "beta").locator(".msg.user", { hasText: "1 from owner" }).waitFor({ timeout: 10_000 });
+  await pane(page, "beta").locator(".sys", { hasText: "1 from owner" }).waitFor({ timeout: 10_000 });
   assert(true, "mail sent as owner wakes the agent");
   await page.screenshot({ path: join(shots, "hive-ui-drawer.png") });
   await page.keyboard.press("Escape");

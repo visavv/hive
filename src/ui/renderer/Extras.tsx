@@ -4,6 +4,7 @@ import { rpc } from "./bridge.js";
 import { store, useStore } from "./store.js";
 import { Modal, openPane } from "./App.js";
 import { focus } from "./focus.js";
+import { IconScale, IconSpark } from "./Icons.js";
 
 type RecipeList = Awaited<ReturnType<typeof rpc<"recipes">>>;
 type SkillList = Awaited<ReturnType<typeof rpc<"skills">>>;
@@ -294,7 +295,7 @@ export function PromptEditor({ agent, initial, onClose, onSend }: { agent: strin
             store.requestSkill("prompt-engineer", { goal: text });
           }}
         >
-          ✦ Improve with prompt-engineer
+          <IconSpark /> Improve with prompt-engineer
         </button>
         <button
           type="button"
@@ -306,7 +307,7 @@ export function PromptEditor({ agent, initial, onClose, onSend }: { agent: strin
             store.openVerdict({ prompt: text });
           }}
         >
-          ⚖ Verdict…
+          <IconScale /> Verdict…
         </button>
         <button type="button" className="ghost" disabled={!text.trim()} onClick={() => setSaving(true)} title="reuse this prompt later from Skills (Ctrl+K)">
           Save as skill…

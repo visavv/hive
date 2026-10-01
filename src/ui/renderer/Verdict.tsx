@@ -42,7 +42,7 @@ function VerdictSetup({ initial }: { initial: string }) {
     }
   };
   return (
-    <Modal title="⚖ Verdict: several agents, one judge" onClose={() => store.openVerdict(null)} wide>
+    <Modal title="Verdict: several agents, one judge" onClose={() => store.openVerdict(null)} wide>
       <p className="dim small">
         Each agent you pick solves the same prompt at the same time{mode === "code" ? ", in its own git worktree" : ""}. Then the judge compares the results without knowing who wrote which, finds bugs, and decides what to take from each. It costs
         one turn per agent plus one for the judge.
@@ -125,11 +125,11 @@ function VerdictView({ id }: { id: number }) {
     if (!live) void rpc("verdicts", {}).then((l) => setLoaded(l.find((v) => v.id === id)));
   }, [id]);
   const v = live ?? loaded;
-  if (!v) return <Modal title={`⚖ Verdict #${id}`} onClose={() => store.openVerdict(null)}>loading…</Modal>;
+  if (!v) return <Modal title={`Verdict #${id}`} onClose={() => store.openVerdict(null)}>loading…</Modal>;
   const working = v.status === "running" || v.status === "judging" || v.status === "applying";
   const base = label || v.base || "";
   return (
-    <Modal title={`⚖ Verdict #${v.id}`} onClose={() => store.openVerdict(null)} wide>
+    <Modal title={`Verdict #${v.id}`} onClose={() => store.openVerdict(null)} wide>
       <div className="dim small verdict-task">{v.prompt.slice(0, 400)}</div>
       <div className="verdict-contenders" aria-live="polite">
         {v.contenders.map((c) => (
