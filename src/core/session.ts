@@ -26,6 +26,7 @@ import { nodeEntry } from "./paths.js";
 import { AUTH_STATUS_UPDATE, authLabel, type AuthStatus } from "./doctor.js";
 import { HiveDb } from "../hive/db.js";
 import { TRUST_POLICY } from "./trust.js";
+import { TEAM_POLICY } from "./team.js";
 import * as ledger from "./ledger.js";
 import { projectRoot } from "./home.js";
 import { BUDGET_RECHECK_MS, budgetRev } from "./budget.js";
@@ -793,6 +794,7 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
       `Mail is delivered to you automatically ("You have N unread hive messages…"): don't check hive_inbox or set hive_status for an ordinary message from the owner — just answer it. Use hive tools only when the task needs them.`,
       `Never wait or poll for replies inside a turn; send, finish your own work, and the hub will wake you when mail arrives.`,
       `To reach the human, hive_send to "owner" — only for decisions you need, finished work worth their attention, or blockers.`,
+      TEAM_POLICY,
       TRUST_POLICY,
       memoryBriefing(this.cwd),
       this.opts.briefing ?? "",

@@ -26,7 +26,7 @@ export const THEMES: { id: NonNullable<Layout["theme"]>; label: string; hint: st
 ];
 import { Palette, type PaletteAction } from "./Palette.js";
 import { agentState, rollup, STATE_LABEL, StatePill } from "./state.js";
-import { IconBell, IconBellOff, IconColumns, IconInbox, IconMenu, IconPlus, IconRows, IconScale, IconSearch, IconSpark, IconTeam } from "./Icons.js";
+import { IconBell, IconBellOff, IconColumns, IconInbox, IconLink, IconMenu, IconPlus, IconRows, IconScale, IconSearch, IconSpark, IconTeam } from "./Icons.js";
 import { RecipesDialog, SkillsDialog } from "./Extras.js";
 import { focus, onActivate, overlays, useOverlay } from "./focus.js";
 import { ctxPct, fmtIdle, parseDuration, statusLabel, suggestName, noteLabel } from "./format.js";
@@ -261,10 +261,12 @@ export function App() {
     ...voiceActions(names),
   ];
 
+  // the Hive panel docks beside the panes by default (they make room); it floats on phones and in the vertical layout
+  const docked = !mobile && !vertical && layout.dockDrawer !== false;
   if (!ready) return <div className="boot">starting hive…</div>;
 
   return (
-    <div className={`app${sidebar ? "" : " nosidebar"}${vertical ? " vertical" : ""}${mobile ? " mobile" : ""}`}>
+    <div className={`app${sidebar ? "" : " nosidebar"}${vertical ? " vertical" : ""}${mobile ? " mobile" : ""}${drawer && docked ? " drawer-docked" : ""}`}>
       {!mobile && <TopBar
         names={names}
         selected={selected}
@@ -306,7 +308,7 @@ export function App() {
             </p>
           </div>
         ) : (
-          <Grid names={visible} columns={maximized ? 1 : columns} widths={maximized ? undefined : vertical ? layout.vwidths : layout.widths} widthsKey={vertical ? "vwidths" : "widths"} minRow={vertical ? 360 : 220}>
+          <Grid names={visible} columns={maximized ? 1 : columns} widths={maximized ? undefined : vertical ? layout.vwidths : layout.widths} widthsKey={vertical ? "vwidths" : "widths"} heights={maximized ? undefined : vertical ? layout.vheights : layout.heights} heightsKey={vertical ? "vheights" : "heights"} minRow={vertical ? 360 : 220}>
             {visible.map((n) => (
               <Pane
                 key={n}
@@ -340,7 +342,15 @@ export function App() {
       )}
       {adding && <AddAgentDialog onClose={() => setAdding(false)} />}
       {jobFor && <JobDialog agent={jobFor} onClose={() => setJobFor(null)} />}
-      {drawer && <Drawer key={drawer} initialTab={drawer === "usage" ? "usage" : drawer === "learn" ? "learn" : undefined} onClose={() => setDrawer(false)} />}
+      {drawer && (
+        <Drawer
+          key={drawer}
+          initialTab={drawer === "usage" ? "usage" : drawer === "learn" ? "learn" : undefined}
+          onClose={() => setDrawer(false)}
+          docked={docked}
+          onDock={mobile ? undefined : (d) => saveLayout({ dockDrawer: d })}
+        />
+      )}
       {dialog === "recipes" && <RecipesDialog onClose={() => setDialog("")} />}
       {dialog === "stats" && <StatsDialog onClose={() => setDialog("")} />}
       {linkReq && (
@@ -423,8 +433,10 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onPalett
     if (!t) return;
     const to = targets.length ? targets : names.filter((n) => store.agents.has(n));
     if (!to.length) return store.toast("no running agents to broadcast to", "error");
-    void rpc("broadcast", { names: to, text: t });
-    store.toast(`sent to ${to.join(", ")}`);
+    const mode = layout.broadcastMode ?? "team";
+    rpc("broadcast", { names: to, text: t, mode })
+      .then(({ lead }) => store.toast(lead ? `team task: ${lead} leads and hands out parts to ${to.filter((n) => n !== lead).join(", ")}` : `sent to ${to.join(", ")}`))
+      .catch((e) => store.toast(e.message, "error"));
     setText("");
   };
   useVoiceTarget("@broadcast", { el: () => bcRef.current, setText, send });
@@ -446,7 +458,19 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onPalett
           }
         />
         <MicButton target="@broadcast" />
+        <button
+          className={`ghost bc-mode${(layout.broadcastMode ?? "team") === "team" ? " on" : ""}`}
+          onClick={() => saveLayout({ broadcastMode: (layout.broadcastMode ?? "team") === "team" ? "each" : "team" })}
+          title={(layout.broadcastMode ?? "team") === "team" ? "Team: one agent leads, plans and hands each the part that fits their role; the rest wait for it. Click for 'each' (same message to everyone)." : "Each: the same message to every agent. Click for 'team' (one lead plans and hands out parts)."}
+        >
+          {(layout.broadcastMode ?? "team") === "team" ? "Team" : "Each"}
+        </button>
         <button onClick={() => send()} disabled={!text.trim()}>Send</button>
+        {targets.length >= 2 && (
+          <button className="ghost group-sel" onClick={() => store.requestLink(targets)} title={`link ${targets.join(", ")} into a group so they can talk and review each other`}>
+            <IconLink size={14} /> Group {targets.length}
+          </button>
+        )}
         {selected.size > 0 && (
           <button className="ghost" onClick={() => setSelected(new Set())} title="clear selection">
             ✕ {selected.size}
@@ -532,27 +556,32 @@ function UsageChip({ onClick }: { onClick: () => void }) {
 
 // ---- resizable grid ----
 
-function Grid({ names, columns, widths, widthsKey = "widths", minRow, children }: { names: string[]; columns: number; widths?: number[]; widthsKey?: "widths" | "vwidths"; minRow: number; children: React.ReactNode }) {
+function Grid({ names, columns, widths, widthsKey = "widths", heights, heightsKey = "heights", minRow, children }: { names: string[]; columns: number; widths?: number[]; widthsKey?: "widths" | "vwidths"; heights?: number[]; heightsKey?: "heights" | "vheights"; minRow: number; children: React.ReactNode }) {
   const cols = Math.max(1, Math.min(columns, names.length));
   const w = widths && widths.length === cols ? widths : Array(cols).fill(1);
   const rows = Math.ceil(names.length / cols);
+  const h = heights && heights.length === rows ? heights : Array(rows).fill(1);
   const ref = useRef<HTMLDivElement>(null);
-  const total = w.reduce((a, b) => a + b, 0);
-  const startDrag = (i: number) => (e: React.PointerEvent) => {
+  const totalW = w.reduce((a, b) => a + b, 0);
+  const totalH = h.reduce((a, b) => a + b, 0);
+  // Drag the line between track i and i+1 (columns: x / widths, rows: y / heights).
+  const startDrag = (axis: "x" | "y", i: number) => (e: React.PointerEvent) => {
     e.preventDefault();
-    const el = ref.current!;
-    const rect = el.getBoundingClientRect();
-    const start = [...w];
-    const x0 = e.clientX;
+    const rect = ref.current!.getBoundingClientRect();
+    const start = axis === "x" ? [...w] : [...h];
+    const total = axis === "x" ? totalW : totalH;
+    const key = axis === "x" ? widthsKey : heightsKey;
+    const p0 = axis === "x" ? e.clientX : e.clientY;
+    const span = axis === "x" ? rect.width : rect.height;
     const move = (ev: PointerEvent) => {
-      const dfr = ((ev.clientX - x0) / rect.width) * total;
+      const dfr = (((axis === "x" ? ev.clientX : ev.clientY) - p0) / span) * total;
       const next = [...start];
       const min = total * 0.08;
       const a = Math.max(min, start[i] + dfr);
       const b = Math.max(min, start[i] + start[i + 1] - a);
       next[i] = start[i] + start[i + 1] - b;
       next[i + 1] = b;
-      store.layout = { ...store.layout, [widthsKey]: next };
+      store.layout = { ...store.layout, [key]: next };
       store.changed();
     };
     const up = () => {
@@ -563,23 +592,37 @@ function Grid({ names, columns, widths, widthsKey = "widths", minRow, children }
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
   };
-  let acc = 0;
+  let accW = 0;
+  let accH = 0;
   return (
     <div
       className="grid"
       ref={ref}
-      style={{ gridTemplateColumns: w.map((x) => `minmax(0, ${x}fr)`).join(" "), gridTemplateRows: `repeat(${rows}, minmax(${minRow}px, 1fr))` }}
+      style={{ gridTemplateColumns: w.map((x) => `minmax(0, ${x}fr)`).join(" "), gridTemplateRows: h.map((x) => `minmax(${minRow}px, ${x}fr)`).join(" ") }}
     >
       {children}
       {w.slice(0, -1).map((x, i) => {
-        acc += x;
+        accW += x;
         return (
           <div
-            key={i}
+            key={"c" + i}
             className="col-handle"
-            style={{ left: `calc(${(acc / total) * 100}% - 4px)` }}
-            onPointerDown={startDrag(i)}
+            style={{ left: `calc(${(accW / totalW) * 100}% - 4px)` }}
+            onPointerDown={startDrag("x", i)}
             onDoubleClick={() => saveLayout({ [widthsKey]: undefined })}
+            title="drag to resize · double-click to reset"
+          />
+        );
+      })}
+      {h.slice(0, -1).map((x, i) => {
+        accH += x;
+        return (
+          <div
+            key={"r" + i}
+            className="row-handle"
+            style={{ top: `calc(${(accH / totalH) * 100}% - 4px)` }}
+            onPointerDown={startDrag("y", i)}
+            onDoubleClick={() => saveLayout({ [heightsKey]: undefined })}
             title="drag to resize · double-click to reset"
           />
         );
@@ -894,6 +937,13 @@ function AddAgentDialog({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     rpc("mcpServers", {}).then(setMcpList, () => setMcpList([]));
   }, []);
+  // models: what this kind offered before (remembered), else type one; empty = the agent's default
+  const [model, setModel] = useState("");
+  const [models, setModels] = useState<{ value: string; name: string }[]>([]);
+  useEffect(() => {
+    setModel("");
+    rpc("kindModels", { kind }).then(setModels, () => setModels([]));
+  }, [kind]);
   const preset = presets.find((p) => p.id === presetId);
   const pickPreset = (id: string) => {
     setPresetId(id);
@@ -910,7 +960,7 @@ function AddAgentDialog({ onClose }: { onClose: () => void }) {
     if (taken.has(n)) return setErr(`"${n}" is already open`);
     onClose();
     void openPane(
-      { name: n, kind, cwd: cwd.trim() || store.cwd, role: role.trim(), policy, worktree, preset: presetId || undefined, ...(mcp.length ? { mcp } : {}) },
+      { name: n, kind, cwd: cwd.trim() || store.cwd, role: role.trim(), policy, worktree, preset: presetId || undefined, ...(mcp.length ? { mcp } : {}), ...(model.trim() ? { model: model.trim() } : {}) },
       true,
       !!preset?.job && startJob,
     );
@@ -946,6 +996,21 @@ function AddAgentDialog({ onClose }: { onClose: () => void }) {
             </div>
           );
         })()}
+        <label>
+          <span>Model</span>
+          {models.length ? (
+            <select className="add-model" value={model} onChange={(e) => setModel(e.target.value)}>
+              <option value="">default</option>
+              {models.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input className="add-model" value={model} onChange={(e) => setModel(e.target.value)} placeholder="default (or type a model name; the list fills in once this agent has run)" />
+          )}
+        </label>
         <label>
           <span>Name</span>
           <input value={name} onChange={(e) => setName(e.target.value)} />

@@ -22,7 +22,8 @@ import { AGENTS } from "../core/agents.js";
 import { POLICIES, type AgentSession, type SessionEvent } from "../core/session.js";
 import { Scheduler, describeSchedule, formatDuration } from "../core/scheduler.js";
 import { ROLES } from "../core/roles.js";
-import { defaultDb } from "../core/home.js";
+import { leadPrompt, pickLead, waitNotice } from "../core/team.js";
+import { defaultDb, hiveHome } from "../core/home.js";
 import { initRepo, listWorktrees, mergeWorktree } from "../core/worktree.js";
 import { buildReport } from "../core/report.js";
 import { RECIPES, applyRecipe } from "../core/recipes.js";
@@ -237,6 +238,45 @@ const scheduler = new Scheduler({
 });
 
 const policies = new Map<string, AgentView["policy"]>();
+
+// Models each kind of agent has offered, remembered across runs so Add agent can offer them before the agent starts.
+const modelsFile = () => join(hiveHome(), "models.json");
+let modelsSeen: Record<string, { value: string; name: string }[]> | undefined;
+function knownModels() {
+  if (!modelsSeen) {
+    try {
+      modelsSeen = JSON.parse(readFileSync(modelsFile(), "utf8"));
+    } catch {
+      modelsSeen = {};
+    }
+  }
+  return modelsSeen!;
+}
+function rememberModels(kind: string, opts: { value: string; name: string }[] | undefined) {
+  if (!opts?.length) return;
+  const all = knownModels();
+  const next = opts.map((o) => ({ value: String(o.value), name: String(o.name ?? o.value) }));
+  if (JSON.stringify(all[kind]) === JSON.stringify(next)) return;
+  all[kind] = next;
+  try {
+    mkdirSync(dirname(modelsFile()), { recursive: true });
+    writeFileSync(modelsFile(), JSON.stringify(all, null, 2));
+  } catch {
+    /* only a convenience */
+  }
+}
+/** Switch a fresh session to the model asked for in Add agent (by value or name, any case). */
+async function applyModel(s: AgentSession, want: string) {
+  const o = s.configOptions.find((c: any) => c.category === "model" || c.id === "model") as any;
+  const flat = (o?.options ?? []).flatMap((g: any) => (g.options ? g.options : [g]));
+  const w = want.trim().toLowerCase();
+  const hit = flat.find((x: any) => String(x.value).toLowerCase() === w) ?? flat.find((x: any) => String(x.name ?? "").toLowerCase() === w);
+  if (!o || !hit) {
+    send({ event: "error", text: `${s.name}: model "${want}" isn't offered by ${s.def.label}${flat.length ? ` (try: ${flat.slice(0, 6).map((x: any) => x.name ?? x.value).join(", ")})` : ""}; using its default` });
+    return;
+  }
+  if (o.currentValue !== hit.value) await s.setConfigOption(o.id, hit.value);
+}
 /**
  * Git branch per agent folder, refreshed in the background (at most every 30s)
  * so the 1s agent push never blocks streaming on a git process.
@@ -264,6 +304,8 @@ function logError(where: string, e: unknown) {
 function view(s: AgentSession): AgentView {
   const row = hub.db.getAgent(s.name);
   const status = s.isClosed ? "asleep" : ((row?.status ?? "idle") as AgentView["status"]);
+  const model = s.configOptions.find((c: any) => c.category === "model" || c.id === "model") as any;
+  rememberModels(s.def.id, model?.options?.flatMap((g: any) => (g.options ? g.options : [g])));
   return {
     name: s.name,
     kind: s.def.id,
@@ -634,6 +676,7 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
   ...deviceHandlers,
   // ---- creator ----
   mcpServers: () => mcpServerList(),
+  kindModels: ({ kind }) => knownModels()[kind] ?? [],
   async addAgent(p) {
     const name = need(p.name, "name").trim();
     if (!/^[\w.-]{1,40}$/.test(name)) throw new Error(`name must be letters, digits, _ . - (got "${name}")`);
@@ -657,6 +700,7 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
       resume: p.resume ?? true,
       mcp: p.mcp ? parseMcpNames(p.mcp) : undefined,
     });
+    if (p.model?.trim()) await applyModel(s, p.model).catch((e) => send({ event: "error", text: `${name}: couldn't switch model: ${e?.message ?? e}` }));
     if (p.startJob && r?.job) {
       const j = r.job;
       hub.db.addJob({
@@ -713,8 +757,18 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
     void s.prompt(need(text, "text")).catch((e) => send({ event: "error", text: `${name}: ${e?.message ?? e}` }));
     schedulePush();
   },
-  broadcast({ names, text }) {
-    for (const n of names) handlers.prompt({ name: n, text });
+  broadcast({ names, text, mode }) {
+    const task = need(text, "text");
+    // "each": the same message to everyone. "team" (default for 2+): one lead plans and hands out parts.
+    if (mode === "each" || names.length < 2) {
+      for (const n of names) handlers.prompt({ name: n, text: task });
+      return { lead: null };
+    }
+    const team = names.map((n) => session(n)).map((s) => ({ name: s.name, role: s.role, policy: policies.get(s.name) }));
+    const lead = pickLead(team)!;
+    for (const m of team) if (m.name !== lead.name) session(m.name).note(waitNotice(task, lead));
+    handlers.prompt({ name: lead.name, text: leadPrompt(task, lead, team) });
+    return { lead: lead.name };
   },
   async cancel({ name }) {
     await session(name).cancel();

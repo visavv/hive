@@ -7,7 +7,7 @@ import type { Report } from "../../core/report.js";
 import { rpc } from "./bridge.js";
 import { store, useStore } from "./store.js";
 import { fmtIdle } from "./format.js";
-import { useOverlay } from "./focus.js";
+import { overlays, useOverlay } from "./focus.js";
 import { HeldList, PauseIcon } from "./Links.js";
 import { VoiceAccounts } from "./Voice.js";
 
@@ -22,7 +22,7 @@ const SINCE: [string, number][] = [
   ["7d", 7 * 86_400_000],
 ];
 
-export function Drawer({ onClose, initialTab }: { onClose: () => void; initialTab?: Tab }) {
+export function Drawer({ onClose, initialTab, docked, onDock }: { onClose: () => void; initialTab?: Tab; docked?: boolean; onDock?: (docked: boolean) => void }) {
   const [tab, setTab] = useState<Tab>(initialTab ?? (store.ownerUnread || store.heldTotal ? "inbox" : store.learnPending ? "learn" : "report"));
   const [data, setData] = useState<HiveData | null>(null);
   const [report, setReport] = useState<Report | null>(null);
@@ -40,7 +40,21 @@ export function Drawer({ onClose, initialTab }: { onClose: () => void; initialTa
   }, [tab, unread]);
   // Esc closes the drawer only (never the turn of the pane you came from): take
   // focus while open, give it back on close.
-  useOverlay("drawer", onClose);
+  useOverlay("drawer", onClose, !docked);
+  // docked: Esc closes it while you're in it (or nowhere in particular), never from inside a pane
+  useEffect(() => {
+    if (!docked) return;
+    const k = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || overlays.top) return;
+      const a = document.activeElement;
+      if (a && a !== document.body && !ref.current?.contains(a)) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      onClose();
+    };
+    window.addEventListener("keydown", k, true);
+    return () => window.removeEventListener("keydown", k, true);
+  }, [docked, onClose]);
   const ref = useRef<HTMLElement>(null);
   useEffect(() => {
     const before = document.activeElement as HTMLElement | null;
@@ -52,7 +66,12 @@ export function Drawer({ onClose, initialTab }: { onClose: () => void; initialTa
 
   const inbox = data?.messages.filter((m) => m.to_agent === "owner") ?? [];
   return (
-    <aside ref={ref} tabIndex={-1} className="drawer modal" aria-label="Hive">
+    <aside
+      ref={ref}
+      tabIndex={-1}
+      className={`drawer modal${docked ? " docked" : ""}`}
+      aria-label="Hive"
+    >
       <div className="drawer-head">
         <strong>Hive</strong>
         <div className="seg">
@@ -64,6 +83,11 @@ export function Drawer({ onClose, initialTab }: { onClose: () => void; initialTa
         </div>
         <span className="spacer" />
         <button className="ghost" onClick={refresh} title="refresh">↻</button>
+        {onDock && (
+          <button className={`ghost dock-btn${docked ? " on" : ""}`} onClick={() => onDock(!docked)} title={docked ? "float over the panes instead" : "dock beside the panes (they make room)"} aria-label={docked ? "undock panel" : "dock panel"}>
+            {docked ? "⇱" : "⇥"}
+          </button>
+        )}
         <button className="ghost" onClick={onClose} title="close (Esc)">✕</button>
       </div>
       <div className="drawer-body">

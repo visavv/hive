@@ -82,6 +82,11 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
           {name}
         </strong>
         <span className="kind">{agent?.kind ?? starting?.kind}</span>
+        {agent?.role && (
+          <span className="role-badge" title={`role: ${agent.role}`}>
+            {roleLabel(agent.role)}
+          </span>
+        )}
         <GroupChips agent={name} />
         <span className="spacer" />
         {agent?.ctx && <CtxMeter used={agent.ctx.used} size={agent.ctx.size} />}
@@ -152,6 +157,7 @@ function autoPromptLabel(t: string): string | undefined {
   if (m) return `Mail · ${m[2].replace(/ \(.*?\)/g, "").slice(0, 80)}`;
   m = t.match(/^\[hive job #(\d+), (\w+)(?:: ([^\]]+))?\]/);
   if (m) return `Job #${m[1]} · ${m[2]}${m[3] ? ` · ${m[3]}` : ""}`;
+  if (t.startsWith("[team broadcast from the owner — you lead]")) return `Team task · you lead · ${(t.match(/\nTask: ([^\n]*)/)?.[1] ?? "").slice(0, 70)}`;
   m = t.match(/^\[follow-up from ([\w.-]+)\]/);
   if (m) return `Follow-up from ${m[1]}`;
   if (t.includes("You are agent \"") && t.includes("local multi-agent hive")) return "Briefing";
@@ -173,6 +179,12 @@ function hiveToolLine(title: string, status: string): string | undefined {
   if (send) return `${status === "failed" ? "couldn't send" : "sent mail"}${send[1] ? ` to ${send[1]}` : ""}`;
   const k = Object.keys(HIVE_QUIET).find((x) => t === x || t.startsWith(x + " "));
   return k ? HIVE_QUIET[k] + (status === "failed" ? " (failed)" : "") : undefined;
+}
+
+/** A pane-header label for an agent's role: its first clause, short ("Code reviewer: checks…" → "Code reviewer"). */
+export function roleLabel(role: string): string {
+  const first = role.split(/[:.;,(—–\n]| - /)[0].trim() || role.trim();
+  return first.length > 28 ? first.slice(0, 27).trimEnd() + "…" : first;
 }
 
 const POLICY_LABEL: Record<string, string> = { ask: "asks first", "allow-reads": "reads freely", "allow-all": "full access", "reject-all": "chat only" };
@@ -601,7 +613,13 @@ function Composer({ name, agent }: { name: string; agent?: AgentView }) {
   const [improving, setImproving] = useState(false);
   const [undo, setUndo] = useState<string | null>(null);
   const improve = (draft = text) => {
-    if (!agent || improving || !draft.trim()) return;
+    if (!agent || improving) return;
+    if (!draft.trim()) {
+      // an empty box: say what ✦ does instead of looking dead
+      ref.current?.focus();
+      store.toast("✦ improve: type a rough idea first (e.g. \"fix the login bug\"), then press ✦ and hive writes it out as a full prompt for this agent");
+      return;
+    }
     setImproving(true);
     rpc("improvePrompt", { name, draft })
       .then(({ prompt }) => {
@@ -745,7 +763,7 @@ function Composer({ name, agent }: { name: string; agent?: AgentView }) {
       <button
         className={`ghost improve${improving ? " busy" : ""}`}
         onClick={() => improve()}
-        disabled={!agent || improving || !text.trim()}
+        disabled={!agent || improving}
         title="improve: turn this rough idea into a full prompt for this agent, then edit and send it here (Ctrl+Shift+Enter, or start with /improve)"
         aria-label="improve prompt"
       >

@@ -25,7 +25,7 @@ export const ROLES: Record<string, RolePreset> = {
     policy: "ask",
     worktree: true,
     briefing:
-      "You are a coding agent working in your own git worktree on branch hive/<your name>. Commit in small, working steps with clear messages. When you finish something reviewable, commit it and hive_send a short summary (what changed, how to test) to a reviewer agent if one exists; the reviewer reads your branch with hive_diff.",
+      "You are a coding agent working in your own git worktree on branch hive/<your name>. Commit in small, working steps with clear messages. When you finish something reviewable, commit it and hive_send a short summary (what changed, how to test) to a reviewer agent if one exists; the reviewer reads your branch with hive_diff. When a scout or another agent sends you improvement ideas, don't build them yet: list them a line each and ask the owner which to do (end your turn with the question).",
   },
   reviewer: {
     id: "reviewer",
@@ -57,7 +57,7 @@ export const ROLES: Record<string, RolePreset> = {
     policy: "allow-reads",
     worktree: false,
     briefing:
-      "You look for improvements: missing features, rough edges, confusing UX, dead code, missing tests. Do not edit files. Write each idea once to the blackboard as 'ideas/<slug>' (check hive_bb_list('ideas/') first to avoid duplicates) with a one-paragraph rationale and the files involved.",
+      "You look for improvements: missing features, rough edges, confusing UX, dead code, missing tests. Do not edit files. Write each idea once to the blackboard as 'ideas/<slug>' (check hive_bb_list('ideas/') first to avoid duplicates) with a one-paragraph rationale and the files involved. When a run finds something new and a coder agent exists (hive_agents), hive_send it the new ideas, numbered, a line each with the files involved, so it can ask the owner which to build.",
     job: {
       kind: "interval",
       every_ms: 10 * 60_000,
