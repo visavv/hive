@@ -2,6 +2,8 @@
 
 Local multi-agent harness. One process, any number of coding agents (Claude Code, Codex, Qwen, OpenCode, Gemini, …), all driven through the [Agent Client Protocol](https://agentclientprotocol.com), all able to message each other, with loops, schedules and file watchers that run 24/7.
 
+![A squad of four agents: planner, coder, reviewer, tester](docs/screenshots/03-squad.png)
+
 Design goals, in order:
 
 1. **Your subscriptions keep working.** Every agent is the vendor's own binary behind its official ACP adapter. Auth, sandboxing and permission prompts are the vendor's; hive never re-implements the agent loop.
@@ -24,6 +26,24 @@ Design goals, in order:
 | Platforms | Windows ([docs/WINDOWS.md](docs/WINDOWS.md), one-script install), Linux/Fedora ([docs/LINUX.md](docs/LINUX.md)), Ubuntu server + chat bridges ([docs/BRIDGES.md](docs/BRIDGES.md)) |
 
 How it compares with Maestro, Agent Deck, Zed, Claude Code teams and others: [docs/COMPARISON.md](docs/COMPARISON.md). Audit records: [audit/](audit/).
+
+## Screenshots
+
+<sub>Demo session with scripted agents on a sample repo (no model output); regenerate with `xvfb-run -a npx tsx test/showcase.ts`.</sub>
+
+| | |
+|---|---|
+| ![Command palette](docs/screenshots/04-palette.png) **Ctrl+K palette:** every agent with its state, every action with its shortcut | ![One agent maximized](docs/screenshots/05-focus-coder.png) **Focus an agent (Ctrl+M):** file reads, diffs, test runs, a permission prompt answered inline |
+| ![Code review](docs/screenshots/06-review.png) **Reviewer:** finished turns fold their tool calls into "Worked for …" so the answer is what you read | ![Group chat](docs/screenshots/07-group-chat.png) **Group chat:** what linked agents said to each other; review-each-message mode holds mail for you |
+| ![Hive drawer](docs/screenshots/08-hive-drawer.png) **Since you left:** what needs you, job runs, blackboard changes | ![Usage and spending guards](docs/screenshots/09-usage.png) **Usage:** limit windows, daily caps, pause all automatic work |
+| ![Verdict setup](docs/screenshots/10-verdict.png) **Verdict:** one prompt to several agents, a blind judge picks the best parts | ![Recipes](docs/screenshots/02-recipes.png) **Recipes:** ready-made teams (squad, coder + reviewer, idea pipeline, creator studio) |
+| ![Light theme](docs/screenshots/11-light.png) **Light theme and density** from the palette | ![Terminal UI](docs/screenshots/13-tui.png) **`hive tui`:** the same squad in a terminal, over SSH from your phone |
+
+<img src="docs/screenshots/12-vertical.png" width="300" align="right" alt="Vertical 9:16 layout">
+
+**Vertical monitors:** on a 9:16 screen (or a narrow window) panes stack in one column and the sidebar hides; `Auto` switches by aspect ratio.
+
+<br clear="right">
 
 ## Quick start
 

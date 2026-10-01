@@ -87,7 +87,7 @@ export class TuiController extends EventEmitter {
               : e.text.includes("local multi-agent hive")
                 ? "briefing sent"
                 : undefined;
-        this.push(p, auto ? { text: auto, style: "sys" } : { text: "› " + e.text.split("---")[0].trim(), style: "user" });
+        this.push(p, auto ? { text: auto, style: "sys" } : { text: "› " + promptPart(e.text).trim(), style: "user" });
         p.status = "working";
         p.ready = false;
         break;
@@ -568,3 +568,9 @@ const HELP = [
   "/verdict <prompt> --agents claude,codex [--text]   several agents, one judge",
   "/usage · /help · /quit",
 ];
+
+/** The prompt you typed, without a briefing hive put in front of it ("<briefing>\n\n---\n\n<prompt>"). */
+export function promptPart(text: string): string {
+  const sep = text.lastIndexOf("\n\n---\n\n");
+  return sep >= 0 && /You are agent "/.test(text.slice(0, sep)) ? text.slice(sep + 7) : text;
+}

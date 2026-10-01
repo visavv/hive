@@ -392,7 +392,7 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onPalett
       </button>
       <span className="cols" title="panes per row">
         <button className="ghost" disabled={cols <= 1} onClick={() => setCols(cols - 1)} aria-label="fewer columns">−</button>
-        {cols} cols
+        {cols} {cols === 1 ? "col" : "cols"}
         <button className="ghost" disabled={cols >= 8} onClick={() => setCols(cols + 1)} aria-label="more columns">+</button>
       </span>
       <UsageChip onClick={onUsage} />
@@ -547,11 +547,12 @@ function Sidebar({ names, onAdd, onSearch }: { names: string[]; onAdd: () => voi
                 )}
                 <span className={`state-word st-${state}`}>{STATE_LABEL[state]}</span>
               </div>
-              <div className="row2 mono-meta">
+              <div className="row2 mono-meta" title={[a?.kind ?? st?.kind, model && labelOf(model), a?.branch].filter(Boolean).join(" · ")}>
+                {/* one line; the model (longest, also in the pane header) is cut first */}
                 <span>{a?.kind ?? st?.kind}</span>
-                {model && <span>· {labelOf(model)}</span>}
-                {a?.branch?.startsWith("hive/") && <span className="branch">· {a.branch}</span>}
-                {a?.ctx && <span>· {ctxPct(a.ctx.used, a.ctx.size)}%</span>}
+                {a?.branch?.startsWith("hive/") && <span className="branch"> · {a.branch}</span>}
+                {a?.ctx && <span> · {ctxPct(a.ctx.used, a.ctx.size)}%</span>}
+                {model && <span> · {labelOf(model)}</span>}
               </div>
               {a?.note && state !== "idle" && <div className="row3" title={a.note}>{noteLabel(a.note)}</div>}
               {st?.error && <div className="row3 err">{st.error}</div>}

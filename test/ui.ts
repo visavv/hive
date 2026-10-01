@@ -47,7 +47,7 @@ async function launch(): Promise<{ app: ElectronApplication; page: Page }> {
   const app = await electron.launch({
     executablePath: electronBin,
     args: [resolve("dist-ui/main.cjs"), "--cwd", dir, ...(process.platform === "linux" ? ["--no-sandbox"] : [])],
-    env: { ...process.env, HIVE_NODE: process.execPath, HIVE_HOTKEY: "CommandOrControl+Alt+F12" } as Record<string, string>,
+    env: { ...process.env, HIVE_NODE: process.execPath, HIVE_HOTKEY: "CommandOrControl+Alt+F12", HIVE_SHOW_MOCK: "1" } as Record<string, string>,
   });
   const page = await app.firstWindow();
   page.on("pageerror", (e) => console.error("[renderer error]", e.message));
