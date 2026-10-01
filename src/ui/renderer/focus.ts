@@ -12,6 +12,8 @@ let active: string | undefined;
 let pending: { name: string; at: number } | undefined;
 const PENDING_MS = 60_000;
 const subs = new Set<() => void>();
+/** Every focus.to() request, even for a pane that isn't on screen (the phone layout shows one agent and switches to it). */
+const requests = new Set<(name: string) => void>();
 function setActiveName(name: string | undefined) {
   if (active === name) return;
   active = name;
@@ -73,6 +75,10 @@ export const focus = {
     subs.add(fn);
     return () => void subs.delete(fn);
   },
+  onRequest(fn: (name: string) => void) {
+    requests.add(fn);
+    return () => void requests.delete(fn);
+  },
   /** A pane's input just became usable: take a focus request that arrived too early. */
   ready(name: string) {
     if (pending?.name !== name) return;
@@ -82,6 +88,7 @@ export const focus = {
   },
   to(name: string | undefined) {
     if (!name) return;
+    for (const r of requests) r(name);
     const el = inputs.get(name);
     pending = undefined;
     if (!el || el.disabled) {
@@ -124,11 +131,21 @@ export const focus = {
 
 export type OverlayKind = "modal" | "drawer" | "palette";
 const stack: { kind: OverlayKind }[] = [];
+const stackSubs = new Set<() => void>();
+const stackChanged = () => stackSubs.forEach((f) => f());
 
 /** The open overlays, newest on top. Only the top one reacts to Escape or traps Tab. */
 export const overlays = {
   get top(): OverlayKind | undefined {
     return stack[stack.length - 1]?.kind;
+  },
+  get depth(): number {
+    return stack.length;
+  },
+  /** Overlay opened or closed (the phone layout maps them to Back-button history entries). */
+  subscribe(fn: () => void) {
+    stackSubs.add(fn);
+    return () => void stackSubs.delete(fn);
   },
 };
 
@@ -144,19 +161,24 @@ export function useOverlay(kind: OverlayKind, onClose: () => void): () => boolea
   useEffect(() => {
     const entry = me.current;
     stack.push(entry);
+    stackChanged();
     const k = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || stack[stack.length - 1] !== entry) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       // It unmounts on a later frame: stop counting it now, so a quick next key (Ctrl+K) isn't swallowed.
       stack.splice(stack.indexOf(entry), 1);
+      stackChanged();
       close.current();
     };
     window.addEventListener("keydown", k, true);
     return () => {
       window.removeEventListener("keydown", k, true);
       const i = stack.indexOf(entry);
-      if (i >= 0) stack.splice(i, 1);
+      if (i >= 0) {
+        stack.splice(i, 1);
+        stackChanged();
+      }
     };
   }, []);
   return () => stack[stack.length - 1] === me.current;

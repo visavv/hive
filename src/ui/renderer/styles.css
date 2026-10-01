@@ -1060,3 +1060,112 @@ button.danger { color: var(--st-error); }
 .voice-setup .voice-help { padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
 .voice-setup code, .voice-accounts code { font: 11px var(--mono); }
 .voice-accounts h3 a { font-weight: 400; margin-left: 6px; }
+/* ---- mobile ---- */
+/* Phones (Mobile.tsx, below 760px): one agent full screen, a bottom bar, sheets instead of floating dialogs.
+   Everything reads the theme tokens, so all eight themes work. Desktop above the breakpoint is untouched. */
+@media (max-width: 760px) {
+  html, body, #root { height: 100dvh; }
+  body { font-size: 15px; -webkit-tap-highlight-color: transparent; }
+  /* 16px inputs: no zoom-on-focus, and readable */
+  input, select, textarea { font-size: 16px; }
+  .app.mobile {
+    grid-template-columns: 1fr; grid-template-rows: 1fr auto; height: 100dvh;
+    padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px);
+  }
+  .app.mobile .grid-wrap { overflow: hidden; }
+  .app.mobile .grid { padding: 0; gap: 0; grid-template-rows: minmax(0, 1fr) !important; }
+  .app.mobile .col-handle { display: none; }
+  .app.mobile .pane { border-radius: 0; border-width: 0; }
+  .app.mobile .pane-head { min-height: 48px; flex-wrap: wrap; row-gap: 2px; padding: 4px 4px 4px 12px; }
+  .app.mobile .pane-head .sel, .app.mobile .pane-head .idx, .app.mobile .pane-head .group-chips { display: none; }
+  .app.mobile .pane-head .pname { font-size: 16px; }
+  .app.mobile .pane-actions button { width: 44px; height: 44px; }
+  .app.mobile .pane-actions button[aria-label="maximize"] { display: none; }
+  .app.mobile .composer { padding: 8px; gap: 8px; }
+  .app.mobile .composer textarea { min-height: 44px; max-height: 32dvh; padding: 10px 12px; border-radius: var(--r-3); }
+  .app.mobile .composer button { height: 44px; min-width: 44px; }
+  /* permission prompts: big, side by side, impossible to miss */
+  .app.mobile .ask-options { gap: 8px; }
+  .app.mobile .ask-options button { flex: 1 1 40%; min-height: 48px; font-size: 16px; font-weight: 600; border-radius: var(--r-3); }
+  .app.mobile .welcome { margin: 10vh auto; padding: 0 20px; }
+  .app.mobile .welcome-actions button { min-height: 44px; }
+  .app.mobile .welcome-tip { display: none; }
+
+  /* bottom bar: agents (scroll sideways) | Board | Inbox | Menu */
+  .mnav {
+    display: flex; align-items: stretch; gap: 2px; background: var(--bg-1); border-top: 1px solid var(--border);
+    padding: 4px 4px calc(4px + env(safe-area-inset-bottom, 0px));
+  }
+  :root[data-keyboard] .mnav { display: none; }
+  .mnav-agents { flex: 1; min-width: 0; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; scroll-snap-type: x proximity; }
+  .mnav-agents::-webkit-scrollbar { display: none; }
+  .mnav-agent {
+    --c: var(--st-idle); flex: none; display: flex; align-items: center; gap: 7px; min-height: 48px; max-width: 46vw; padding: 0 12px;
+    border-radius: var(--r-3); border: 1px solid transparent; background: transparent; color: var(--text-2); scroll-snap-align: start;
+  }
+  .mnav-agent.on { background: var(--bg-3); border-color: var(--border); color: var(--text); }
+  .mnav-agent .mnav-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 550; }
+  .mnav-agent.st-needs .st-dot { box-shadow: 0 0 0 3px color-mix(in srgb, var(--st-blocked) 30%, transparent); }
+  .mnav-add { color: var(--text-3); border-style: dashed; border-color: var(--border-strong); }
+  .mnav-btn {
+    position: relative; flex: none; width: 56px; min-height: 48px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 2px; padding: 0; font-size: 10.5px; color: var(--text-2); background: transparent; border-color: transparent; border-radius: var(--r-3);
+  }
+  .mnav-btn.on { color: var(--accent); background: var(--accent-soft); }
+  .mnav-btn .count { position: absolute; top: 3px; right: 6px; }
+
+  /* sheets: dialogs, the palette, the inbox and the board take the whole screen */
+  .modal-back { place-items: stretch; }
+  .modal, .modal.wide, .modal:has(.runs), .modal:has(.skills), .modal:has(.recipe-list) {
+    width: 100vw; max-width: none; height: 100dvh; max-height: none; border-radius: 0; border: none; overflow-y: auto;
+    padding: calc(14px + env(safe-area-inset-top, 0px)) 16px calc(16px + env(safe-area-inset-bottom, 0px));
+  }
+  .form label { grid-template-columns: 1fr; gap: 4px; }
+  .buttons button { min-height: 44px; padding: 0 18px; }
+  .drawer { inset: 0; width: auto; border-radius: 0; border: none; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+  .drawer-head { flex-wrap: wrap; }
+  .drawer-head .seg { overflow-x: auto; max-width: 100%; }
+  .drawer-head button { min-height: 40px; }
+  .pal-back { padding-top: 0; align-items: stretch; }
+  .palette { width: 100vw; max-height: none; height: 100dvh; border-radius: 0; border: none; padding-top: env(safe-area-inset-top, 0px); }
+  .pal-input { font-size: 17px; padding: 16px; }
+  .pal-item { height: 48px; }
+  .pal-foot { display: none; }
+  .toasts { top: calc(8px + env(safe-area-inset-top, 0px)); }
+
+  /* the board: one column per screen, swipe sideways between Draft / In progress / Done */
+  .kb-bar { flex-wrap: wrap; height: auto; padding: 8px 12px; row-gap: 8px; }
+  .kb-search { flex: 1; }
+  .kb-search input { width: 100%; }
+  .kb-cols.n2, .kb-cols.n3 { display: flex; gap: 0; padding: 0; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; }
+  .kb-col { flex: 0 0 100%; scroll-snap-align: start; border-radius: 0; border-width: 0 1px 0 0; }
+  .kb-card { padding: 12px 14px; }
+  .kb-editor { width: 100vw; }
+
+  /* sheet opened from Menu */
+  .msheet-back { place-items: end stretch; }
+  .msheet {
+    background: var(--bg-2); border-top: 1px solid var(--border-strong); border-radius: var(--r-4) var(--r-4) 0 0; max-height: 85dvh; overflow-y: auto;
+    padding: 6px 8px calc(8px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 2px;
+  }
+  .msheet-grip { width: 36px; height: 4px; border-radius: 2px; background: var(--border-strong); margin: 4px auto 8px; }
+  .msheet-item {
+    display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 1px; min-height: 52px; padding: 6px 12px;
+    text-align: left; background: transparent; border-color: transparent; border-radius: var(--r-3); color: var(--text);
+  }
+  .msheet-item.ghost { align-items: center; color: var(--text-2); }
+}
+
+/* hive web: connection lost (web-bridge.ts sets data-conn) */
+:root[data-web][data-conn="down"] body::after {
+  content: "reconnecting…"; position: fixed; left: 50%; transform: translateX(-50%); z-index: 70; pointer-events: none;
+  bottom: calc(76px + env(safe-area-inset-bottom, 0px)); padding: 6px 14px; border-radius: 999px; font-size: 13px;
+  background: var(--bg-3); color: var(--text-2); border: 1px solid var(--border-strong);
+}
+/* hive web: paste the link / key */
+.web-key { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 20px; background: var(--bg-0); }
+.web-key-card { width: min(420px, 100%); display: flex; flex-direction: column; gap: 12px; text-align: center; }
+.web-key-card h1 { margin: 0; font-size: 26px; color: var(--text); }
+.web-key-card p { margin: 0; color: var(--text-2); }
+.web-key-card input { min-height: 46px; font-size: 16px; padding: 0 12px; }
+.web-key-card button { min-height: 46px; font-size: 16px; }
