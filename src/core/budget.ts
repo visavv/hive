@@ -7,7 +7,8 @@
  *   daily_tokens.<provider> e.g. daily_tokens.claude               (default: unlimited)
  *   reserve_pct             stop automatic work when a subscription window
  *                           (e.g. Claude's 5-hour limit) is this full   (default: 85)
- *   max_concurrent          automatic runs at the same time        (default: 3)
+ *   max_concurrent          automatic turns at the same time: job runs and
+ *                           mail wake-ups, across hive processes   (default: 3)
  *   daily_tokens_api        per pay-per-token API provider (gemini-api, openrouter…)
  *                           without its own daily_tokens.<provider>   (default: 2,000,000)
  *   media_daily             image/voice API calls per day          (default: 40)
@@ -65,6 +66,19 @@ export function checkAutomatic(db: HiveDb, provider: string, now = Date.now()): 
     if (pct != null && reserve > 0 && pct >= reserve)
       return { ok: false, reason: `${provider} ${l.window} window at ${Math.round(pct)}% (automatic work stops at ${reserve}% to keep the rest for you)`, until: at ?? undefined };
   }
+  return { ok: true };
+}
+
+/**
+ * max_concurrent: may another automatic turn start? Counts agents in an automatic
+ * turn in any hive process on this db, plus `running` (e.g. a scheduler's jobs
+ * still starting up); `self` (the agent asking) doesn't count.
+ */
+export function concurrencyGuard(db: HiveDb, running: Iterable<string> = [], self?: string): Guard {
+  const max = Number(budgetSetting(db, "max_concurrent") ?? "3");
+  const busy = new Set([...db.autoTurns(), ...running]);
+  if (self) busy.delete(self);
+  if (max > 0 && busy.size >= max) return { ok: false, reason: `${busy.size} automatic turns already running (max_concurrent=${max})`, until: Date.now() + 30_000 };
   return { ok: true };
 }
 

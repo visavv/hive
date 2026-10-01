@@ -23,7 +23,7 @@ import type { AgentSession, PermissionPolicy, TurnResult } from "./session.js";
 import type { JobRow } from "../hive/db.js";
 import { BB_PREFIX, BRANCHES, ChangeCounter, branchChanges, branchTips, describeDiff, watchTree, type DiffStat } from "./watch.js";
 import { baseBranch, repoRoot, selfIgnoreHiveDir } from "./worktree.js";
-import { budgetSetting, checkAutomatic, notifyOnce } from "./budget.js";
+import { checkAutomatic, concurrencyGuard, notifyOnce } from "./budget.js";
 
 export interface SchedulerOptions {
   hub: Hub;
@@ -205,8 +205,8 @@ export class Scheduler {
 
   /** Budget / subscription reserve / concurrency check before automatic work. */
   private held(job: JobRow): boolean {
-    const max = Number(budgetSetting(this.db, "max_concurrent") ?? "3");
-    if (max > 0 && this.running.size >= max) return true;
+    // Mail wake-ups and other processes' jobs count too (concurrencyGuard reads the db).
+    if (!concurrencyGuard(this.db, [...this.running.keys()].map((id) => this.db.getJob(id)?.agent ?? `#${id}`), job.agent).ok) return true;
     const g = checkAutomatic(this.db, job.agent_kind);
     if (g.ok) {
       this.heldJobs.delete(job.id);

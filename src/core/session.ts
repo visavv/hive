@@ -637,6 +637,7 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
     }
     this.busy = true;
     this.automatic = automatic;
+    if (automatic) this.db.setAutoTurn(this.name, true);
     this.lastActivity = Date.now();
     this.dbStatus(this.name, "working", text.slice(0, 120));
     this.emitEv({ type: "status", status: "working", note: text.slice(0, 120) });
@@ -687,6 +688,7 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
       this.lastReply = this.replyText;
       this.emitEv({ type: "turn_end", stopReason: result.stopReason, usage: result.usage });
       if (this.db.db.open) {
+        if (this.automatic) this.db.setAutoTurn(this.name, false);
         const tokens = (result.usage as any)?.totalTokens ?? 0;
         const cost = Math.max(0, this.costTotal - this.costLogged);
         this.costLogged = this.costTotal;

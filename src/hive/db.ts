@@ -274,6 +274,7 @@ export class HiveDb {
       ["policy", "TEXT"],
       ["preset", "TEXT"],
       ["briefing", "TEXT"],
+      ["auto_since", "INTEGER"],
     ] as const)
       if (!agentCols.has(name)) this.db.exec(`ALTER TABLE agents ADD COLUMN ${name} ${type}`);
     const runCols = new Set((this.db.prepare(`PRAGMA table_info(job_runs)`).all() as { name: string }[]).map((c) => c.name));
@@ -328,6 +329,14 @@ export class HiveDb {
     if (a.status === "asleep") return a.status;
     if (!a.owner || (a.lease_until ?? 0) < Date.now()) return "asleep";
     return a.status;
+  }
+  /** An automatic turn (job run, mail wake-up) started or ended: max_concurrent counts these across processes. */
+  setAutoTurn(name: string, on: boolean) {
+    this.db.prepare(`UPDATE agents SET auto_since=? WHERE name=?`).run(on ? Date.now() : null, name);
+  }
+  /** Agents in an automatic turn right now, in a live hive process (a dead one's lease has run out). */
+  autoTurns(): string[] {
+    return (this.db.prepare(`SELECT name FROM agents WHERE auto_since IS NOT NULL AND lease_until>?`).all(Date.now()) as { name: string }[]).map((r) => r.name);
   }
   setPid(name: string, pid: number | null) {
     this.db.prepare(`UPDATE agents SET pid=? WHERE name=?`).run(pid, name);

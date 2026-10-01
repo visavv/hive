@@ -64,6 +64,17 @@ await sleep(1500);
 assert(db.jobRuns(j1).length + db.jobRuns(j2).length === 1, "max_concurrent caps automatic runs");
 db.endJob(j1, "stopped");
 db.endJob(j2, "stopped");
+await until(() => db.autoTurns().length === 0, 15_000, "slow job done");
+// …mail wake-ups count against it too
+await hub.add({ name: "mailer", agent: "mock", cwd: dir, policy: "allow-all" }); // (worker's mail stays held until tomorrow)
+db.send("owner", "mailer", "be slow", "take your time");
+await until(() => db.autoTurns().includes("mailer"), 10_000, "mail wake-up running");
+const j3 = db.addJob({ agent: "slow3", agent_kind: "mock", cwd: dir, kind: "once", prompt: "quick" });
+await sleep(1500);
+assert(db.jobRuns(j3).length === 0, "max_concurrent: a mail wake-up in progress holds a job back");
+await until(() => db.jobRuns(j3).length >= 1, 20_000, "job after the wake-up");
+assert(true, "max_concurrent: the job runs once the wake-up is done");
+db.endJob(j3, "stopped");
 
 // pause switch
 db.setSetting("budget.paused", "1");

@@ -9,7 +9,7 @@ import { dirname, join, resolve } from "node:path";
 import { ensureWorktree } from "./worktree.js";
 import { AGENTS, killGroup } from "./agents.js";
 import { ROLES } from "./roles.js";
-import { checkAutomatic, notifyOnce } from "./budget.js";
+import { checkAutomatic, concurrencyGuard, notifyOnce } from "./budget.js";
 import { agentNameProblem } from "./names.js";
 import { hiveHome } from "./home.js";
 import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
@@ -163,7 +163,8 @@ export class Hub {
       autoGuard: () => {
         const g = checkAutomatic(this.db, provider);
         if (!g.ok) notifyOnce(this.db, g);
-        return g;
+        // max_concurrent: a mail wake-up waits for a free slot (no owner mail for this one).
+        return g.ok ? concurrencyGuard(this.db, [], o.name) : g;
       },
       ...rest,
       resumeSessionId,
