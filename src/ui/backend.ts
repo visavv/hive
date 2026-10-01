@@ -26,6 +26,7 @@ import { findSkill, listSkills, prepareSkillValues, renderSkill, skillFromPrompt
 import { runSkill, skillAgentName } from "../core/skill-run.js";
 import { BB_PREFIX, BRANCHES } from "../core/watch.js";
 import { setBudget, usageSummary } from "../core/budget.js";
+import { applyVerdict, runVerdict } from "../core/verdict.js";
 import type { AccountView, AgentView, BackendEvent, ElicitationAsk, GroupView, JobView, Layout, Methods, PermissionAsk, Request } from "./protocol.js";
 
 // stdout is the protocol channel: keep stray logging off it.
@@ -266,7 +267,8 @@ function pushAgents() {
   if (!hub.db.db.open) return;
   const others = hub.db
     .listAgents()
-    .filter((a) => !hub.sessions.has(a.name) && a.kind)
+    // Verdict contenders/judges live in the verdict window, not the sidebar.
+    .filter((a) => !hub.sessions.has(a.name) && a.kind && !a.role?.startsWith("verdict #"))
     .map((a) => {
       const status = hub.db.effectiveStatus(a);
       return {
@@ -571,6 +573,38 @@ const handlers: { [K in keyof Methods]: (p: Parameters<Methods[K]>[0]) => Promis
   },
   usage() {
     return usageSummary(hub.db);
+  },
+  startVerdict({ prompt, kinds, judge, judgeModel, mode, policy }) {
+    // Runs in the background; progress arrives as "verdict" events. Resolves once it has an id.
+    return new Promise<{ id: number }>((res, rej) => {
+      let started = false;
+      void runVerdict(hub, {
+        prompt,
+        kinds,
+        judge,
+        judgeModel: judgeModel?.trim() || undefined,
+        mode,
+        policy,
+        cwd: defaultCwd,
+        onProgress: (state) => {
+          if (!started) {
+            started = true;
+            res({ id: state.id });
+          }
+          send({ event: "verdict", state });
+          schedulePush();
+        },
+      }).catch((e) => {
+        if (!started) rej(e);
+        else send({ event: "error", text: `verdict: ${e?.message ?? e}` });
+      });
+    });
+  },
+  applyVerdict({ id, label }) {
+    void applyVerdict(hub, id, { label, onProgress: (state) => send({ event: "verdict", state }) }).catch((e) => send({ event: "error", text: `apply verdict: ${e?.message ?? e}` }));
+  },
+  verdicts() {
+    return hub.db.listVerdicts(20);
   },
   async accounts({ refresh }) {
     if (!refresh && accountsCache && Date.now() - accountsCache.at < 120_000) return accountsCache.rows;

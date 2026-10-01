@@ -296,6 +296,18 @@ export function PromptEditor({ agent, initial, onClose, onSend }: { agent: strin
         >
           ✦ Improve with prompt-engineer
         </button>
+        <button
+          type="button"
+          className="ghost"
+          disabled={!text.trim()}
+          title="send this prompt to several agents at once; a judge compares and picks the best parts"
+          onClick={() => {
+            onClose(text);
+            store.openVerdict({ prompt: text });
+          }}
+        >
+          ⚖ Verdict…
+        </button>
         <button type="button" className="ghost" disabled={!text.trim()} onClick={() => setSaving(true)} title="reuse this prompt later from Skills (Ctrl+K)">
           Save as skill…
         </button>
