@@ -26,6 +26,8 @@ export interface PaneSpec {
   voice?: PaneVoice;
   /** Extra MCP servers by name from <HIVE_HOME>/mcp.json (creator: docs/MCP.md). */
   mcp?: string[];
+  /** Model to pick when the agent starts (a value or name from its model selector); empty = the agent's default. */
+  model?: string;
 }
 
 // ---- voice (docs/VOICE.md) ----
@@ -104,6 +106,13 @@ export interface Layout {
   vcolumns?: number;
   /** Column widths in the vertical layout (kept apart from `widths`, which belong to the wide layout). */
   vwidths?: number[];
+  /** Relative row heights (fr units), one per row of panes; `vheights` for the vertical layout. */
+  heights?: number[];
+  vheights?: number[];
+  /** Hive panel beside the panes (default) instead of floating over them. */
+  dockDrawer?: boolean;
+  /** Broadcast as a team (one lead plans, default) or the same message to each agent. */
+  broadcastMode?: "team" | "each";
   vsidebar?: boolean;
   /** Chime when an agent finishes (default on). */
   ping?: boolean;
@@ -135,6 +144,8 @@ export interface AgentView {
   unread: number;
   sessionId?: string;
   ctx?: { used: number; size: number };
+  /** Slash commands the agent offers ("/" menu in the composer). */
+  commands?: { name: string; description?: string; hint?: string }[];
   config: ConfigOptionView[];
   auth?: string;
   jobs: number;
@@ -301,7 +312,8 @@ export interface Methods extends DeviceMethods {
     ownerUnread: number;
   };
   prompt: (p: { name: string; text: string }) => void;
-  broadcast: (p: { names: string[]; text: string }) => void;
+  /** team (default for 2+ agents): one lead plans and hands out parts, the rest wait for its mail; each: the same message to all. */
+  broadcast: (p: { names: string[]; text: string; mode?: "team" | "each" }) => { lead: string | null };
   cancel: (p: { name: string }) => void;
   newSession: (p: { name: string }) => void;
   setConfig: (p: { name: string; configId: string; value: string | boolean }) => void;
@@ -393,6 +405,8 @@ export interface Methods extends DeviceMethods {
   // ---- creator ----
   /** Extra MCP servers configured in <HIVE_HOME>/mcp.json (Add-agent dialog checkboxes). */
   mcpServers: (p: Record<string, never>) => { name: string; command: string }[];
+  /** Models this kind of agent has offered before (remembered from earlier sessions), for the Add agent dialog. */
+  kindModels: (p: { kind: string }) => { value: string; name: string }[];
   // ---- voice ----
   /** Speech-to-text of a dictation clip (base64 audio) by the configured provider. */
   transcribe: (p: { audio: string; mime: string; seconds?: number; agent?: string }) => { text: string; provider: string };

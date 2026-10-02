@@ -182,15 +182,15 @@ await sleep(20);
 ev.emit("messages.upsert", {
   type: "notify",
   messages: [
-    { key: { remoteJid: "358401234567@s.whatsapp.net", fromMe: false }, message: { conversation: "status" } },
-    { key: { remoteJid: "358401234567@s.whatsapp.net", fromMe: true }, message: { conversation: "mine" } },
+    { key: { remoteJid: "15550100001@s.whatsapp.net", fromMe: false }, message: { conversation: "status" } },
+    { key: { remoteJid: "15550100001@s.whatsapp.net", fromMe: true }, message: { conversation: "mine" } },
     { key: { remoteJid: "12345-678@g.us", fromMe: false }, message: { conversation: "group chatter" } },
-    { key: { remoteJid: "358401234567@s.whatsapp.net", fromMe: false }, message: { extendedTextMessage: { text: "report 12h" } } },
+    { key: { remoteJid: "15550100001@s.whatsapp.net", fromMe: false }, message: { extendedTextMessage: { text: "report 12h" } } },
   ],
 });
-assert(wgot.map((g) => g.text).join(",") === "status,report 12h" && wgot[0].from === "358401234567", "whatsapp: direct messages read (plain and extended text); own messages and groups ignored");
-await wt.send("user:+358 40 123 4567", "hello");
-assert(waSent[0] === "358401234567@s.whatsapp.net:hello", "whatsapp: replies go to the normalized number");
+assert(wgot.map((g) => g.text).join(",") === "status,report 12h" && wgot[0].from === "15550100001", "whatsapp: direct messages read (plain and extended text); own messages and groups ignored");
+await wt.send("user:+1 555 010 0001", "hello");
+assert(waSent[0] === "15550100001@s.whatsapp.net:hello", "whatsapp: replies go to the normalized number");
 assert(qrShown === "QR-CODE-DATA", "whatsapp: the pairing QR is surfaced on first login");
 (wt as any).reconnects = 19;
 ev.emit("connection.update", { connection: "open" });

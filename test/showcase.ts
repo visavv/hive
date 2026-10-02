@@ -53,7 +53,7 @@ writeFileSync(
   b.move(d1.id, "doing");
   b.move(d2.id, "doing", null);
   b.move(d3.id, "doing", null);
-  for (const t of ["Set up the Proxmox VM for hive", "Sign in Claude Code on the server", "Fix OBS audio delay"]) b.move(add(t).id, "done");
+  for (const t of ["Set up the home server for hive", "Sign in Claude Code on the server", "Fix OBS audio delay"]) b.move(add(t).id, "done");
   b.close();
 }
 

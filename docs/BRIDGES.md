@@ -18,14 +18,14 @@ help
 
 hive pushes to you: mail agents send to "owner", permission prompts, job endings/failures/usage-limit pauses.
 
-## 1. Server (Ubuntu on Proxmox)
+## 1. Server (Ubuntu, at home or a VPS)
 
 ```bash
 sudo apt update && sudo apt install -y git curl build-essential
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt install -y nodejs
 sudo useradd -m -s /bin/bash hive && sudo -iu hive
 
-git clone https://github.com/visavv/hargent ~/hive && cd ~/hive
+git clone <repo-url> ~/hive && cd ~/hive
 npm install && npm run build && npm test
 ```
 
@@ -62,7 +62,7 @@ hive uses **Baileys**, an unofficial WhatsApp Web client, and links as a "device
 
 ```bash
 cd ~/hive && npm install @whiskeysockets/baileys@6.7.24 qrcode-terminal
-echo 'HIVE_WHATSAPP_ALLOW=358401234567' >> ~/hive.env    # YOUR number, digits with country code
+echo 'HIVE_WHATSAPP_ALLOW=15550100001' >> ~/hive.env    # YOUR number, digits with country code
 set -a; . ~/hive.env; set +a
 node ~/hive/dist/cli/index.js serve --bridge whatsapp --cwd ~/code/myproject
 # scan the QR on the hive phone: WhatsApp → Linked devices → Link a device

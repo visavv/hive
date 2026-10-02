@@ -11,7 +11,7 @@ Tailscale is a private network between your own devices (free for personal use).
 
 ## 1. The machine running hive
 
-Best on the always-on Ubuntu server (Proxmox VM), so agents keep working when your PC sleeps.
+Best on the always-on Ubuntu server (a home server or VPS), so agents keep working when your PC sleeps.
 
 **Ubuntu / Debian / Fedora** (laptop or server):
 

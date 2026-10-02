@@ -83,6 +83,28 @@ await call("saveLayout", { panes: [{ name: "pane1", kind: "mock", cwd: dir }], c
 const saved = JSON.parse(readFileSync(join(dir, "ui.json"), "utf8"));
 assert(saved.columns === 3 && saved.panes[0].name === "pane1", "layout persisted to .hive/ui.json");
 
+// model chosen in Add agent: applied at start (by name, any case); remembered per kind for the dialog
+const big = await call("addAgent", { name: "pane2", kind: "mock", cwd: dir, policy: "allow-reads", role: "code reviewer", model: "mock large" });
+assert(big.config[0]?.currentValue === "mock-large", `the model picked in Add agent is applied at start (${big.config[0]?.currentValue})`);
+const known = await call("kindModels", { kind: "mock" });
+assert(known.length === 2 && known.some((m: any) => m.name === "Mock Large"), "models a kind offered are remembered for the Add agent dialog");
+await call("addAgent", { name: "pane3", kind: "mock", cwd: dir, policy: "ask", role: "coder", model: "no-such-model" });
+await until(() => events.some((e) => e.event === "error" && /no-such-model/.test(e.text)), 5000, "unknown model error");
+assert(true, "an unknown model says so and keeps the agent's default");
+
+// team broadcast: one lead (the coder) gets the task with a plan-and-hand-out brief; the others wait
+const r = await call("broadcast", { names: ["pane2", "pane3"], text: "make memento mori calendar" });
+assert(r.lead === "pane3", `the coder leads a team broadcast, not the reviewer (${r.lead})`);
+await until(() => events.some((e) => e.event === "agent" && e.agent === "pane2" && (e.e as any).type === "notice" && /pane3 \(coder\) is leading/.test((e.e as any).text)), 5000, "wait notice");
+const hist3 = await call("history", { name: "pane3" });
+assert(hist3.some((h: any) => h.type === "prompt" && /you lead/.test(h.data.text) && /Task: make memento mori calendar/.test(h.data.text) && /pane2 \(code reviewer\)/.test(h.data.text)), "the lead gets the task, the team and how to hand out parts");
+const hist2 = await call("history", { name: "pane2" });
+assert(!hist2.some((h: any) => h.type === "prompt" && /memento/.test(h.data.text ?? "")), "the others spend no turn until the lead's mail arrives");
+const each = await call("broadcast", { names: ["pane2", "pane3"], text: "status?", mode: "each" });
+assert(each.lead === null, "'each' mode still sends the same message to everyone");
+await call("removeAgent", { name: "pane2" });
+await call("removeAgent", { name: "pane3" });
+
 let bad = "";
 await call("addAgent", { name: "bad name!", kind: "mock", cwd: dir }).catch((e) => (bad = e.message));
 assert(/name must be/.test(bad), "invalid pane names rejected");

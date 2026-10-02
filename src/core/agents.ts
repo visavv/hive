@@ -109,13 +109,13 @@ export const AGENTS: Record<string, AgentDef> = {
     args: ["--acp"],
     login: "Run `qwen` once and sign in, or set QWEN_BASE_URL / QWEN_MODEL / QWEN_API_KEY for a local server.",
     env: {
-      // Point at the T550 / any OpenAI-compatible endpoint (Ollama, vLLM, llama.cpp).
+      // Point at any OpenAI-compatible endpoint (Ollama, vLLM, llama.cpp).
       OPENAI_BASE_URL: "${QWEN_BASE_URL}",
       OPENAI_API_KEY: "${QWEN_API_KEY}",
       OPENAI_MODEL: "${QWEN_MODEL}",
     },
     install:
-      "npm i -g @qwen-code/qwen-code. Set QWEN_BASE_URL (e.g. http://192.168.10.69:11434/v1), QWEN_MODEL, QWEN_API_KEY (any string for Ollama).",
+      "npm i -g @qwen-code/qwen-code. Set QWEN_BASE_URL (e.g. http://localhost:11434/v1), QWEN_MODEL, QWEN_API_KEY (any string for Ollama).",
   },
   opencode: {
     id: "opencode",
@@ -170,12 +170,12 @@ export const AGENTS: Record<string, AgentDef> = {
   }),
   ollama: apiAgent({
     id: "ollama",
-    label: "Ollama (local / T550)",
+    label: "Ollama (local or on your network)",
     base: "${OLLAMA_BASE_URL:-http://localhost:11434/v1}",
     model: "${OLLAMA_MODEL:-llama3.1}",
-    login: "No key. Start Ollama here (`ollama serve`) or point OLLAMA_BASE_URL at the T550 (http://<ip>:11434/v1).",
+    login: "No key. Start Ollama here (`ollama serve`) or point OLLAMA_BASE_URL at a local GPU machine (http://<ip>:11434/v1).",
     context: 32_000,
-    install: "Run Ollama (ollama.com) here or on the T550; set OLLAMA_BASE_URL=http://<host>:11434/v1 and OLLAMA_MODEL. No key. Use a model with tool support (llama3.1, qwen2.5, qwen3…).",
+    install: "Run Ollama (ollama.com) here or on a local GPU machine; set OLLAMA_BASE_URL=http://<host>:11434/v1 and OLLAMA_MODEL. No key. Use a model with tool support (llama3.1, qwen2.5, qwen3…).",
   }),
   mock: {
     id: "mock",

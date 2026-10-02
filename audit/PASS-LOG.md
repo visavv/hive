@@ -26,7 +26,7 @@
 **Next pass should investigate.**
 - A real Windows desktop session: vertical monitor at 150% scaling, notifications, chime, `hive ui` from PowerShell.
 - A prompt-injection exercise with real models (a reviewer trying to get a tester to run a command).
-- Real API endpoints (Gemini free tier, Ollama on the T550).
+- Real API endpoints (Gemini free tier, Ollama on a local GPU machine).
 - A soak test with jobs running for hours, checking memory.
 - Keyboard-only and screen-reader walk-throughs.
 - Merge conflicts from the UI.

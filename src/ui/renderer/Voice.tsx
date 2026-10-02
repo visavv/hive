@@ -16,10 +16,11 @@ import type { PaneVoice, VoiceSettings, VoiceStatusView } from "../protocol.js";
 import { rpc } from "./bridge.js";
 import { onTurnEnd, store, useStore } from "./store.js";
 import { focus, overlays, useOverlay } from "./focus.js";
-import { saveLayout } from "./App.js";
+import { saveLayout } from "./layout.js";
 import type { PaletteAction } from "./Palette.js";
 
-export const VOICE_DOCS = "https://github.com/visavv/hargent/blob/main/docs/VOICE.md";
+/** Where voice setup is explained (shipped with hive). */
+export const VOICE_DOCS = "docs/VOICE.md in the hive folder";
 const BROADCAST = "@broadcast";
 
 // ---- tiny observable for voice UI state ----
@@ -688,7 +689,7 @@ function VoiceMenu({ name, onClose }: { name: string; onClose: () => void }) {
         Conversation mode <span className="dim small">sends what you say, speaks replies{voiceSettings().handsFree === false ? "" : ", listens again"}</span>
       </label>
       {st && !st.tts ? (
-        <div className="small warn">Spoken replies need ELEVENLABS_API_KEY. <a href={VOICE_DOCS} target="_blank" rel="noreferrer">How to set it up</a></div>
+        <div className="small warn">Spoken replies need ELEVENLABS_API_KEY. How to set it up: {VOICE_DOCS}.</div>
       ) : (
         <label className="vm-row col">
           <span className="small dim">Voice</span>
@@ -883,7 +884,7 @@ export function VoiceAccounts() {
   return (
     <section className="voice-accounts">
       <h3>
-        Voice <a className="small" href={VOICE_DOCS} target="_blank" rel="noreferrer">set up</a>
+        Voice <span className="small dim" title={`set up: ${VOICE_DOCS}`}>set up: {VOICE_DOCS}</span>
       </h3>
       <VoiceStatusRows />
     </section>

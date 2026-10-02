@@ -17,7 +17,7 @@ const server = createServer(async (req, res) => {
     return res.end(
       JSON.stringify({
         playabilityStatus: { status: "OK" },
-        videoDetails: { title: "Why my first startup failed", author: "Visa" },
+        videoDetails: { title: "Why my first startup failed", author: "Sample Creator" },
         captions: {
           playerCaptionsTracklistRenderer: {
             captionTracks: [

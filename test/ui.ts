@@ -144,6 +144,33 @@ try {
   assert((await page.locator(".pane").count()) === 2, "two panes open");
   assert((await page.locator(".agent-item").count()) === 2, "sidebar lists both agents");
 
+  // Add agent offers the models this kind has shown before
+  await page.keyboard.press("Control+N");
+  await page.locator(".modal").waitFor();
+  await page.locator(".modal select").first().selectOption("mock");
+  await until(async () => (await page.locator(".modal select.add-model option").allInnerTexts()).includes("Mock Large"), 5000);
+  assert(true, "Add agent has a model choice (filled from what this kind offered)");
+  await page.keyboard.press("Escape");
+  await page.locator(".modal").waitFor({ state: "detached" });
+
+  // composer icons: one size, one centre line
+  {
+    const boxes = await Promise.all(["button.improve", ".mic-btn", "button.expand", "button.send"].map((sel) => pane(page, "alpha").locator(sel).boundingBox()));
+    const mids = boxes.map((b) => b!.y + b!.height / 2);
+    const hs = boxes.map((b) => Math.round(b!.height));
+    assert(Math.max(...mids) - Math.min(...mids) <= 1 && new Set(hs).size === 1, `composer icons line up and match (${mids.map(Math.round).join(",")} / ${hs.join(",")})`);
+  }
+
+  // grouping like broadcasting: tick panes, then Group
+  await pane(page, "alpha").locator("input.sel").check();
+  await pane(page, "beta").locator("input.sel").check();
+  await page.locator(".broadcast .group-sel", { hasText: "Group 2" }).click();
+  await page.locator(".modal", { hasText: "Link agents" }).waitFor({ timeout: 5000 });
+  assert(true, "ticked panes can be grouped from the top bar");
+  await page.keyboard.press("Escape");
+  await page.locator(".modal").waitFor({ state: "detached" });
+  await page.locator(".broadcast button[title='clear selection']").click();
+
   // prompt + permission prompt answered in the pane
   await pane(page, "alpha").locator("textarea").fill("please edit something");
   await pane(page, "alpha").locator("textarea").press("Enter");
@@ -159,6 +186,22 @@ try {
   await pane(page, "alpha").locator(".ctx").waitFor({ timeout: 5000 });
   assert(/\d+%/.test(await pane(page, "alpha").locator(".ctx").innerText()), "ctx % meter shown in pane header");
   assert(await pane(page, "alpha").locator(".cfg select").count(), "model selector from configOptions shown");
+  assert((await pane(page, "alpha").locator(".composer-bar .cfg select").count()) > 0 && (await pane(page, "alpha").locator(".pane-head .cfg").count()) === 0, "model settings sit under the message box, not in the pane header");
+  // "/" opens a menu of hive's and the agent's commands
+  {
+    const ta = pane(page, "alpha").locator("textarea");
+    await ta.fill("/");
+    await pane(page, "alpha").locator(".slash-menu").waitFor({ timeout: 5000 });
+    const names = await pane(page, "alpha").locator(".slash-menu .slash-name").allInnerTexts();
+    assert(names.includes("/improve") && names.includes("/compact"), `"/" lists hive's and the agent's commands (${names.join(" ")})`);
+    await ta.fill("/rev");
+    await ta.press("Enter");
+    assert((await ta.inputValue()) === "/review " && (await pane(page, "alpha").locator(".slash-menu").count()) === 0, "typing filters the menu; Enter picks the command");
+    await ta.fill("/");
+    await ta.press("Escape");
+    assert((await pane(page, "alpha").locator(".slash-menu").count()) === 0, "Esc closes the menu");
+    await ta.fill("");
+  }
 
   // phase 4: hover focus, Ctrl+N jump, Ctrl+Tab
   // hover focus starts on mouseenter: begin outside beta (an earlier step can leave the mouse inside it).
@@ -208,12 +251,23 @@ try {
   assert((await pane(page, "alpha").locator("textarea").inputValue()) === "please edit something", "↑ recalls the last prompt");
   await pane(page, "alpha").locator("textarea").fill("");
 
-  // broadcast to all
+  // team broadcast (default): one lead gets the task, the others are told to wait for its mail
+  await page.locator(".broadcast input").fill("team task: tidy the readme");
+  await page.locator(".broadcast input").press("Enter");
+  await pane(page, "beta").locator(".notice", { hasText: "alpha is leading" }).first().waitFor({ timeout: 10_000 });
+  await pane(page, "alpha").getByText("Team task · you lead").first().waitFor({ timeout: 10_000 });
+  assert(true, "team broadcast: one agent leads, the others wait for its part");
+  await until(async () => (await pane(page, "alpha").locator(".st.st-working").count()) === 0, 15_000);
+
+  // "each": the same message to all
+  await page.locator(".broadcast .bc-mode").click();
+  await page.locator(".broadcast .bc-mode", { hasText: "Each" }).waitFor();
   await page.locator(".broadcast input").fill("agents? roll call");
   await page.locator(".broadcast input").press("Enter");
   await pane(page, "alpha").locator(".msg.user", { hasText: "roll call" }).waitFor({ timeout: 10_000 });
   await pane(page, "beta").locator(".msg.user", { hasText: "roll call" }).waitFor({ timeout: 10_000 });
   assert(true, "broadcast reaches every pane");
+  await page.locator(".broadcast .bc-mode").click();
 
   // voice: mic button -> fake microphone -> fake Whisper server -> text at the cursor (not sent)
   const ta = pane(page, "alpha").locator("textarea");
@@ -377,6 +431,11 @@ try {
   await page.keyboard.press("Control+I");
   await page.locator(".drawer").waitFor();
   assert(await page.evaluate(() => !!document.activeElement?.closest(".drawer")), "the drawer takes keyboard focus when it opens");
+  {
+    const d = (await page.locator(".drawer").boundingBox())!;
+    const right = Math.max(...(await page.locator(".pane").evaluateAll((els) => els.map((e) => e.getBoundingClientRect().right))));
+    assert(right <= d.x + 1, `the docked Hive panel sits beside the panes, not over them (panes end ${Math.round(right)}, panel starts ${Math.round(d.x)})`);
+  }
   await page.keyboard.press("Escape");
   await page.locator(".drawer").waitFor({ state: "detached", timeout: 2000 });
   await sleep(500);
@@ -463,6 +522,10 @@ try {
   // ✦ improve: rough idea → full prompt in the same composer, undo, then send to the same agent
   {
     const box = pane(page, "beta").locator("textarea");
+    await box.fill("");
+    await pane(page, "beta").locator("button.improve").click();
+    await page.locator(".toast", { hasText: "type a rough idea first" }).waitFor({ timeout: 5000 });
+    assert(true, "✦ on an empty box is clickable and says what to do");
     await box.fill("make the login remember the email");
     await pane(page, "beta").locator("button.improve").click();
     await until(async () => (await box.inputValue()).startsWith("IMPROVED:"), 30_000);
@@ -516,6 +579,8 @@ try {
   writeFileSync(join(dir, "src", "hello.ts"), "// greet someone by name\nexport function greet(name: string): string {\n  const message = `Hello, ${name}!`;\n  return message;\n}\n");
   await command(page, "open file");
   await page.locator(".code-view").waitFor({ timeout: 5000 });
+  // focus lands once the view has mounted: allow it a moment
+  await until(() => page.evaluate(() => document.activeElement?.closest(".code-find") != null), 2000).catch(() => {});
   assert(await page.evaluate(() => document.activeElement?.closest(".code-find") != null), "Open file… opens the code view with the find box focused");
   await page.locator(".code-find input").fill("hello");
   await page.locator(".code-tree .code-node", { hasText: "src/hello.ts" }).waitFor({ timeout: 5000 });
@@ -609,6 +674,18 @@ try {
   const tb = (await page.locator(".topbar").boundingBox())!;
   const firstPane = (await page.locator(".pane").first().boundingBox())!;
   assert(tb.y + tb.height <= firstPane.y + 1, `vertical: the top bar sits above the panes (bar ends ${Math.round(tb.y + tb.height)}, pane starts ${Math.round(firstPane.y)})`);
+  // rows resize too: drag the line between the two stacked panes
+  {
+    const rh = (await page.locator(".row-handle").first().boundingBox())!;
+    const h0 = (await page.locator(".pane").first().boundingBox())!.height;
+    await page.mouse.move(rh.x + 200, rh.y + rh.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(rh.x + 200, rh.y + rh.height / 2 + 150, { steps: 8 });
+    await page.mouse.up();
+    const h1 = (await page.locator(".pane").first().boundingBox())!.height;
+    assert(h1 > h0 + 80, `dragging the row divider resizes the panes' height (${Math.round(h0)} → ${Math.round(h1)})`);
+    await page.locator(".row-handle").first().dblclick();
+  }
   // two columns in vertical: the divider resizes them (vertical has its own widths)
   await page.locator(".cols button", { hasText: "+" }).click();
   const handle = (await page.locator(".col-handle").first().boundingBox())!;
@@ -703,6 +780,7 @@ try {
   await addAgent(page, "gamma", "ask", { cwd: repo, preset: "coder" });
   await pane(page, "gamma").locator(".branch", { hasText: "hive/gamma" }).waitFor({ timeout: 10_000 });
   assert(true, "coder preset puts the agent in its own worktree (branch shown in pane)");
+  assert((await pane(page, "gamma").locator(".pane-head .role-badge").innerText()) === "coder", "the agent's role is a badge in its pane header");
   const wt = g(["worktree", "list", "--porcelain"]).split("\n\n").find((b) => b.includes("refs/heads/hive/gamma"))!.match(/^worktree (.+)$/m)![1];
   writeFileSync(join(wt, "feature.txt"), "x\ny\n");
   g(["add", "."], wt);

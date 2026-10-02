@@ -168,11 +168,13 @@ export const overlays = {
  * no further (capture phase, so a pane composer behind it never sees the Escape
  * and doesn't cancel the agent's turn). Returns whether this overlay is on top.
  */
-export function useOverlay(kind: OverlayKind, onClose: () => void): () => boolean {
+export function useOverlay(kind: OverlayKind, onClose: () => void, enabled = true): () => boolean {
   const me = useRef({ kind });
   const close = useRef(onClose);
   close.current = onClose;
   useEffect(() => {
+    // a docked panel sits beside the panes rather than over them: it doesn't block their keys
+    if (!enabled) return;
     const entry = me.current;
     stack.push(entry);
     stackChanged();
@@ -194,7 +196,7 @@ export function useOverlay(kind: OverlayKind, onClose: () => void): () => boolea
         stackChanged();
       }
     };
-  }, []);
+  }, [enabled]);
   return () => stack[stack.length - 1] === me.current;
 }
 

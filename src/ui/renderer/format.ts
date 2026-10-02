@@ -1,3 +1,4 @@
+/** Small display formatters shared by the UI (durations, names, context %). */
 export function fmtIdle(ms: number): string {
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s`;

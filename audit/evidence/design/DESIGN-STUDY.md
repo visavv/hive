@@ -420,7 +420,7 @@ Notes:
 - herdr's in-app sidebar colours were read from source and its README screenshot, not from running the binary.
 - OKLCH → hex conversions marked ≈ are approximate.
 
-## Files saved (`/home/user/hargent/audit/evidence/design/`)
+## Files saved (`./audit/evidence/design/`)
 - `DESIGN-STUDY.md`: this report
 - `t3-site.png`, `t3-site-full.png`: t3.codes, 1440x900 and full page
 - `t3-repo-app-desktop.png`: official T3 Code app screenshot (from repo marketing assets)

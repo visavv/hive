@@ -26,6 +26,7 @@ import { nodeEntry } from "./paths.js";
 import { AUTH_STATUS_UPDATE, authLabel, type AuthStatus } from "./doctor.js";
 import { HiveDb } from "../hive/db.js";
 import { TRUST_POLICY } from "./trust.js";
+import { TEAM_POLICY } from "./team.js";
 import * as ledger from "./ledger.js";
 import { projectRoot } from "./home.js";
 import { BUDGET_RECHECK_MS, budgetRev } from "./budget.js";
@@ -102,6 +103,7 @@ export type SessionEvent =
   | { type: "turn_end"; stopReason: string; usage?: unknown }
   | { type: "status"; status: "idle" | "working" | "waiting" | "error"; note?: string }
   | { type: "notice"; text: string }
+  | { type: "commands" }
   | { type: "raw"; update: schema.SessionUpdate }
   | { type: "exit"; code: number | null };
 
@@ -167,6 +169,8 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
   authStatus?: AuthStatus;
   /** Latest model/effort/etc. selectors the agent exposes. */
   configOptions: schema.SessionConfigOption[] = [];
+  /** Slash commands the agent advertised (ACP available_commands_update), for the "/" menu. */
+  commands: { name: string; description?: string; hint?: string }[] = [];
 
   constructor(private opts: SessionOptions) {
     super();
@@ -786,9 +790,11 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
       `You are agent "${this.name}"${this.role ? ` with role: ${this.role}` : ""} in a local multi-agent hive.`,
       `Other agents:\n${others || "- (none yet)"}`,
       groups.length ? `Your groups (mail "@name" reaches all members): ${groups.join("; ")}` : "",
-      `You have MCP tools prefixed hive_: use hive_inbox at the start of each turn, hive_send to hand work or findings to another agent (or "@group" for a group you share), hive_bb_* for shared project facts and task claims (key "claim/<task>"), hive_status to publish what you're doing, hive_diff/hive_log to read another agent's branch, hive_remember when the owner tells you something lasting ("always…", "never…", "remember that…").`,
+      `You have MCP tools prefixed hive_: hive_send to hand work or findings to another agent (or "@group" for a group you share), hive_inbox to read mail, hive_bb_* for shared project facts and task claims (key "claim/<task>"), hive_status to publish what you're doing on longer tasks, hive_diff/hive_log to read another agent's branch, hive_remember when the owner tells you something lasting ("always…", "never…", "remember that…").`,
+      `Mail is delivered to you automatically ("You have N unread hive messages…"): don't check hive_inbox or set hive_status for an ordinary message from the owner — just answer it. Use hive tools only when the task needs them.`,
       `Never wait or poll for replies inside a turn; send, finish your own work, and the hub will wake you when mail arrives.`,
       `To reach the human, hive_send to "owner" — only for decisions you need, finished work worth their attention, or blockers.`,
+      TEAM_POLICY,
       TRUST_POLICY,
       memoryBriefing(this.cwd),
       this.opts.briefing ?? "",
@@ -828,6 +834,17 @@ export class AgentSession extends EventEmitter<{ event: [SessionEvent] }> {
       case "notice":
         this.emitEv({ type: "notice", text: JSON.stringify((u as any).content ?? u) });
         break;
+      case "available_commands_update": {
+        const list = (u as any).availableCommands;
+        this.commands = Array.isArray(list)
+          ? list
+              .filter((c: any) => c && typeof c.name === "string")
+              .slice(0, 200)
+              .map((c: any) => ({ name: String(c.name).replace(/^\//, ""), description: typeof c.description === "string" ? c.description.slice(0, 200) : undefined, hint: typeof c.input?.hint === "string" ? c.input.hint.slice(0, 80) : undefined }))
+          : [];
+        this.emitEv({ type: "commands" });
+        break;
+      }
       default:
         this.emitEv({ type: "raw", update: u });
     }

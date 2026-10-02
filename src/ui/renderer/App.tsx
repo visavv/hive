@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import type { JobView, Layout, PaneSpec, Policy, WorktreeView } from "../protocol.js";
+/** The pane UI shell: boot and sync with the backend, global keys, top bar, sidebar, the grid of panes and the dialogs. */
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import type { JobView, Layout, Policy, WorktreeView } from "../protocol.js";
 import { connect, hello, onEvent, onFocusLast, rpc } from "./bridge.js";
 import { ping, store, useStore } from "./store.js";
 import { Pane } from "./Pane.js";
 import { Drawer } from "./Drawer.js";
-import { agentNameProblem } from "../../core/names.js";
 import { GroupChat, GroupsSection, LinkDialog, PauseIcon } from "./Links.js";
 import { VerdictWindow } from "./Verdict.js";
 import { StatsDialog } from "./Stats.js";
@@ -25,45 +25,16 @@ export const THEMES: { id: NonNullable<Layout["theme"]>; label: string; hint: st
   { id: "paper", label: "Paper", hint: "warm sepia, ink blue", tone: "light" },
 ];
 import { Palette, type PaletteAction } from "./Palette.js";
-import { agentState, rollup, STATE_LABEL, StatePill } from "./state.js";
-import { IconBell, IconBellOff, IconColumns, IconInbox, IconMenu, IconPlus, IconRows, IconScale, IconSearch, IconSpark, IconTeam } from "./Icons.js";
+import { maxedName, openPane, saveLayout, toggleMaximize } from "./layout.js";
+import { Modal } from "./Modal.js";
+import { Grid } from "./Grid.js";
+import { AddAgentDialog, JobDialog } from "./AgentDialogs.js";
+import { agentState, STATE_LABEL } from "./state.js";
+import { IconBell, IconBellOff, IconColumns, IconInbox, IconLink, IconMenu, IconPlus, IconScale, IconSearch, IconTeam } from "./Icons.js";
 import { RecipesDialog, SkillsDialog } from "./Extras.js";
-import { focus, onActivate, overlays, useOverlay } from "./focus.js";
-import { ctxPct, fmtIdle, parseDuration, statusLabel, suggestName, noteLabel } from "./format.js";
+import { focus, onActivate, overlays } from "./focus.js";
+import { ctxPct, noteLabel } from "./format.js";
 
-const POLICIES: Policy[] = ["ask", "allow-reads", "allow-all", "reject-all"];
-
-export function saveLayout(patch: Partial<Layout>) {
-  store.layout = { ...store.layout, ...patch };
-  store.changed();
-  void rpc("saveLayout", store.layout);
-}
-
-/** The maximized pane, or null when none is (or the saved name is no longer open). */
-export function maxedName(l: Layout): string | null {
-  return l.maximized && l.panes.some((p) => p.name === l.maximized) ? l.maximized : null;
-}
-
-/** Maximize / restore a pane; ignores names that aren't open (e.g. a pane just closed). */
-export function toggleMaximize(name: string | undefined) {
-  if (!name || !store.layout.panes.some((p) => p.name === name)) return;
-  saveLayout({ maximized: maxedName(store.layout) === name ? null : name });
-}
-
-export async function openPane(spec: PaneSpec, persist = true, startJob = false) {
-  if (persist && !store.layout.panes.some((p) => p.name === spec.name)) saveLayout({ panes: [...store.layout.panes, spec] });
-  store.starting.set(spec.name, { kind: spec.kind });
-  store.changed();
-  try {
-    await rpc("addAgent", { ...spec, resume: true, startJob });
-    store.starting.delete(spec.name);
-    const rows = await rpc("history", { name: spec.name, limit: 120 });
-    store.loadHistory(spec.name, rows);
-  } catch (e: any) {
-    store.starting.set(spec.name, { kind: spec.kind, error: e.message });
-  }
-  store.changed();
-}
 
 /** Pull the backend's full state and (re)open every pane in the layout. */
 let syncing: Promise<void> | undefined;
@@ -261,10 +232,12 @@ export function App() {
     ...voiceActions(names),
   ];
 
+  // the Hive panel docks beside the panes by default (they make room); it floats on phones and in the vertical layout
+  const docked = !mobile && !vertical && layout.dockDrawer !== false;
   if (!ready) return <div className="boot">starting hive…</div>;
 
   return (
-    <div className={`app${sidebar ? "" : " nosidebar"}${vertical ? " vertical" : ""}${mobile ? " mobile" : ""}`}>
+    <div className={`app${sidebar ? "" : " nosidebar"}${vertical ? " vertical" : ""}${mobile ? " mobile" : ""}${drawer && docked ? " drawer-docked" : ""}`}>
       {!mobile && <TopBar
         names={names}
         selected={selected}
@@ -306,7 +279,7 @@ export function App() {
             </p>
           </div>
         ) : (
-          <Grid names={visible} columns={maximized ? 1 : columns} widths={maximized ? undefined : vertical ? layout.vwidths : layout.widths} widthsKey={vertical ? "vwidths" : "widths"} minRow={vertical ? 360 : 220}>
+          <Grid names={visible} columns={maximized ? 1 : columns} widths={maximized ? undefined : vertical ? layout.vwidths : layout.widths} widthsKey={vertical ? "vwidths" : "widths"} heights={maximized ? undefined : vertical ? layout.vheights : layout.heights} heightsKey={vertical ? "vheights" : "heights"} minRow={vertical ? 360 : 220}>
             {visible.map((n) => (
               <Pane
                 key={n}
@@ -340,7 +313,15 @@ export function App() {
       )}
       {adding && <AddAgentDialog onClose={() => setAdding(false)} />}
       {jobFor && <JobDialog agent={jobFor} onClose={() => setJobFor(null)} />}
-      {drawer && <Drawer key={drawer} initialTab={drawer === "usage" ? "usage" : drawer === "learn" ? "learn" : undefined} onClose={() => setDrawer(false)} />}
+      {drawer && (
+        <Drawer
+          key={drawer}
+          initialTab={drawer === "usage" ? "usage" : drawer === "learn" ? "learn" : undefined}
+          onClose={() => setDrawer(false)}
+          docked={docked}
+          onDock={mobile ? undefined : (d) => saveLayout({ dockDrawer: d })}
+        />
+      )}
       {dialog === "recipes" && <RecipesDialog onClose={() => setDialog("")} />}
       {dialog === "stats" && <StatsDialog onClose={() => setDialog("")} />}
       {linkReq && (
@@ -423,8 +404,10 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onPalett
     if (!t) return;
     const to = targets.length ? targets : names.filter((n) => store.agents.has(n));
     if (!to.length) return store.toast("no running agents to broadcast to", "error");
-    void rpc("broadcast", { names: to, text: t });
-    store.toast(`sent to ${to.join(", ")}`);
+    const mode = layout.broadcastMode ?? "team";
+    rpc("broadcast", { names: to, text: t, mode })
+      .then(({ lead }) => store.toast(lead ? `team task: ${lead} leads and hands out parts to ${to.filter((n) => n !== lead).join(", ")}` : `sent to ${to.join(", ")}`))
+      .catch((e) => store.toast(e.message, "error"));
     setText("");
   };
   useVoiceTarget("@broadcast", { el: () => bcRef.current, setText, send });
@@ -446,7 +429,19 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onPalett
           }
         />
         <MicButton target="@broadcast" />
+        <button
+          className={`ghost bc-mode${(layout.broadcastMode ?? "team") === "team" ? " on" : ""}`}
+          onClick={() => saveLayout({ broadcastMode: (layout.broadcastMode ?? "team") === "team" ? "each" : "team" })}
+          title={(layout.broadcastMode ?? "team") === "team" ? "Team: one agent leads, plans and hands each the part that fits their role; the rest wait for it. Click for 'each' (same message to everyone)." : "Each: the same message to every agent. Click for 'team' (one lead plans and hands out parts)."}
+        >
+          {(layout.broadcastMode ?? "team") === "team" ? "Team" : "Each"}
+        </button>
         <button onClick={() => send()} disabled={!text.trim()}>Send</button>
+        {targets.length >= 2 && (
+          <button className="ghost group-sel" onClick={() => store.requestLink(targets)} title={`link ${targets.join(", ")} into a group so they can talk and review each other`}>
+            <IconLink size={14} /> Group {targets.length}
+          </button>
+        )}
         {selected.size > 0 && (
           <button className="ghost" onClick={() => setSelected(new Set())} title="clear selection">
             ✕ {selected.size}
@@ -531,62 +526,6 @@ function UsageChip({ onClick }: { onClick: () => void }) {
 }
 
 // ---- resizable grid ----
-
-function Grid({ names, columns, widths, widthsKey = "widths", minRow, children }: { names: string[]; columns: number; widths?: number[]; widthsKey?: "widths" | "vwidths"; minRow: number; children: React.ReactNode }) {
-  const cols = Math.max(1, Math.min(columns, names.length));
-  const w = widths && widths.length === cols ? widths : Array(cols).fill(1);
-  const rows = Math.ceil(names.length / cols);
-  const ref = useRef<HTMLDivElement>(null);
-  const total = w.reduce((a, b) => a + b, 0);
-  const startDrag = (i: number) => (e: React.PointerEvent) => {
-    e.preventDefault();
-    const el = ref.current!;
-    const rect = el.getBoundingClientRect();
-    const start = [...w];
-    const x0 = e.clientX;
-    const move = (ev: PointerEvent) => {
-      const dfr = ((ev.clientX - x0) / rect.width) * total;
-      const next = [...start];
-      const min = total * 0.08;
-      const a = Math.max(min, start[i] + dfr);
-      const b = Math.max(min, start[i] + start[i + 1] - a);
-      next[i] = start[i] + start[i + 1] - b;
-      next[i + 1] = b;
-      store.layout = { ...store.layout, [widthsKey]: next };
-      store.changed();
-    };
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-      void rpc("saveLayout", store.layout);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-  };
-  let acc = 0;
-  return (
-    <div
-      className="grid"
-      ref={ref}
-      style={{ gridTemplateColumns: w.map((x) => `minmax(0, ${x}fr)`).join(" "), gridTemplateRows: `repeat(${rows}, minmax(${minRow}px, 1fr))` }}
-    >
-      {children}
-      {w.slice(0, -1).map((x, i) => {
-        acc += x;
-        return (
-          <div
-            key={i}
-            className="col-handle"
-            style={{ left: `calc(${(acc / total) * 100}% - 4px)` }}
-            onPointerDown={startDrag(i)}
-            onDoubleClick={() => saveLayout({ [widthsKey]: undefined })}
-            title="drag to resize · double-click to reset"
-          />
-        );
-      })}
-    </div>
-  );
-}
 
 // ---- sidebar ----
 
@@ -837,341 +776,3 @@ function labelOf(o: { currentValue: string | boolean; options?: { value: string;
 
 // ---- dialogs ----
 
-export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const isTop = useOverlay("modal", onClose);
-  // Keep keyboard focus inside the dialog, and give it back to where it was on close.
-  useEffect(() => {
-    const before = document.activeElement as HTMLElement | null;
-    const el = ref.current;
-    if (el && !el.contains(document.activeElement)) (el.querySelector<HTMLElement>("[autofocus], input, select, textarea, button") ?? el).focus();
-    const trap = (e: KeyboardEvent) => {
-      if (e.key !== "Tab" || !el || !isTop()) return;
-      const items = [...el.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter((x) => !(x as HTMLButtonElement).disabled && x.offsetParent !== null);
-      if (!items.length) return;
-      const first = items[0];
-      const last = items[items.length - 1];
-      if (e.shiftKey && (document.activeElement === first || !el.contains(document.activeElement))) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && (document.activeElement === last || !el.contains(document.activeElement))) {
-        e.preventDefault();
-        first.focus();
-      }
-    };
-    window.addEventListener("keydown", trap, true);
-    return () => {
-      window.removeEventListener("keydown", trap, true);
-      if (before?.isConnected) before.focus({ preventScroll: true });
-    };
-  }, []);
-  return (
-    <div className="modal-back" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div ref={ref} tabIndex={-1} className={`modal${wide ? " wide" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
-        <h2>{title}</h2>
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function AddAgentDialog({ onClose }: { onClose: () => void }) {
-  const kinds = useStore((s) => s.kinds);
-  const taken = useMemo(() => new Set(store.layout.panes.map((p) => p.name)), []);
-  const [kind, setKind] = useState(kinds.find((k) => k.id === "claude")?.id ?? kinds[0]?.id ?? "");
-  const [name, setName] = useState(() => suggestName(taken));
-  const [cwd, setCwd] = useState(store.layout.panes.at(-1)?.cwd ?? store.cwd);
-  const presets = useStore((s) => s.presets);
-  const [presetId, setPresetId] = useState("");
-  const [role, setRole] = useState("");
-  const [policy, setPolicy] = useState<Policy>("ask");
-  const [worktree, setWorktree] = useState(false);
-  const [startJob, setStartJob] = useState(true);
-  const [err, setErr] = useState("");
-  // ---- creator: extra MCP servers from <HIVE_HOME>/mcp.json ----
-  const [mcpList, setMcpList] = useState<{ name: string; command: string }[]>([]);
-  const [mcp, setMcp] = useState<string[]>([]);
-  useEffect(() => {
-    rpc("mcpServers", {}).then(setMcpList, () => setMcpList([]));
-  }, []);
-  const preset = presets.find((p) => p.id === presetId);
-  const pickPreset = (id: string) => {
-    setPresetId(id);
-    const p = presets.find((x) => x.id === id);
-    if (!p) return;
-    setRole(p.role);
-    setPolicy(p.policy);
-    setWorktree(p.worktree);
-  };
-  const submit = () => {
-    const n = name.trim();
-    const problem = agentNameProblem(n);
-    if (problem) return setErr(`name: ${problem}`);
-    if (taken.has(n)) return setErr(`"${n}" is already open`);
-    onClose();
-    void openPane(
-      { name: n, kind, cwd: cwd.trim() || store.cwd, role: role.trim(), policy, worktree, preset: presetId || undefined, ...(mcp.length ? { mcp } : {}) },
-      true,
-      !!preset?.job && startJob,
-    );
-    setTimeout(() => focus.to(n), 300);
-  };
-  return (
-    <Modal title="Add agent" onClose={onClose}>
-      <form
-        className="form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          submit();
-        }}
-      >
-        <label>
-          <span>Agent</span>
-          <select value={kind} onChange={(e) => setKind(e.target.value)} autoFocus>
-            {kinds.map((k) => (
-              <option key={k.id} value={k.id}>
-                {k.label}
-                {k.missing ? ` (set ${k.missing})` : ""}
-              </option>
-            ))}
-          </select>
-        </label>
-        {(() => {
-          const k = kinds.find((x) => x.id === kind);
-          if (!k?.missing && !k?.api) return null;
-          return (
-            <div className={`hint small ${k.missing ? "warn" : "dim"}`}>
-              {k.missing ? `${k.missing} is not set. ` : "Billed per token to your API key. "}
-              {k.install}
-            </div>
-          );
-        })()}
-        <label>
-          <span>Name</span>
-          <input value={name} onChange={(e) => setName(e.target.value)} />
-        </label>
-        <label>
-          <span>Folder</span>
-          <input value={cwd} onChange={(e) => setCwd(e.target.value)} placeholder={store.cwd} />
-        </label>
-        <label>
-          <span>Preset</span>
-          <select value={presetId} onChange={(e) => pickPreset(e.target.value)}>
-            <option value="">— none —</option>
-            {presets.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.label}
-                {p.job ? ` · ${p.job}` : ""}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          <span>Role</span>
-          <input value={role} onChange={(e) => setRole(e.target.value)} placeholder="coder, reviewer, security watcher… (shown to other agents)" />
-        </label>
-        <label>
-          <span>Permissions</span>
-          <select value={policy} onChange={(e) => setPolicy(e.target.value as Policy)}>
-            {POLICIES.map((p) => (
-              <option key={p} value={p}>
-                {p}
-                {p === "ask" ? " — ask me in the pane" : p === "allow-reads" ? " — auto-allow reads, ask for edits" : p === "allow-all" ? " — trusted (use a worktree)" : " — read-only"}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          <span>Worktree</span>
-          <span className="check">
-            <input type="checkbox" checked={worktree} onChange={(e) => setWorktree(e.target.checked)} />
-            own git worktree on branch hive/{name || "<name>"} (recommended for agents that edit)
-          </span>
-        </label>
-        {policy === "allow-all" && !worktree && (
-          <div className="hint small warn" role="note">
-            Allow all outside a worktree: this agent runs commands as you and can change any file you can, including your checkout and hive's own settings. Prefer
-            a worktree, or "ask".
-          </div>
-        )}
-        {mcpList.length > 0 && (
-          <div className="creator-mcp">
-            <span>MCP</span>
-            <div className="creator-mcp-list">
-              {mcpList.map((m) => (
-                <label key={m.name} className="check" title={m.command}>
-                  <input
-                    type="checkbox"
-                    checked={mcp.includes(m.name)}
-                    onChange={(e) => setMcp(e.target.checked ? [...mcp, m.name] : mcp.filter((x) => x !== m.name))}
-                  />
-                  {m.name}
-                </label>
-              ))}
-            </div>
-          </div>
-        )}
-        {preset?.job && (
-          <label>
-            <span>Job</span>
-            <span className="check">
-              <input type="checkbox" checked={startJob} onChange={(e) => setStartJob(e.target.checked)} />
-              also start the preset's job ({preset.job})
-            </span>
-          </label>
-        )}
-        {err && <div className="err">{err}</div>}
-        <div className="buttons">
-          <button type="button" className="ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="primary">Add</button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-function JobDialog({ agent, onClose }: { agent: string; onClose: () => void }) {
-  const [kind, setKind] = useState<"loop" | "interval" | "watch" | "once">("loop");
-  const [prompt, setPrompt] = useState("");
-  const [times, setTimes] = useState("5");
-  const [forS, setForS] = useState("");
-  const [every, setEvery] = useState("10m");
-  const [path, setPath] = useState(".");
-  const [minLines, setMinLines] = useState("50");
-  const [maxWait, setMaxWait] = useState("");
-  const [cooldown, setCooldown] = useState("");
-  const [err, setErr] = useState("");
-  const submit = async () => {
-    if (!prompt.trim()) return setErr("write the instruction the agent should run");
-    const p: Parameters<typeof rpc<"addJob">>[1] = { agent, kind, prompt: prompt.trim() };
-    if (kind === "loop") {
-      if (times.trim()) p.times = Number(times);
-      if (forS.trim()) {
-        const ms = parseDuration(forS);
-        if (!ms) return setErr(`bad duration "${forS}" (e.g. 8h, 90m)`);
-        p.forMs = ms;
-      }
-      if (!p.times && !p.forMs) return setErr("set times and/or a duration");
-    } else if (kind === "interval") {
-      const ms = parseDuration(every);
-      if (!ms) return setErr(`bad interval "${every}" (e.g. 10m)`);
-      p.everyMs = ms;
-    } else if (kind === "watch") {
-      p.watchPath = path.trim() || ".";
-      p.minLines = Number(minLines) || (p.watchPath.startsWith("@bb:") ? 1 : 50);
-      if (maxWait.trim()) {
-        const ms = parseDuration(maxWait);
-        if (!ms) return setErr(`bad duration "${maxWait}" (e.g. 30m)`);
-        p.maxWaitMs = ms;
-      }
-      if (cooldown.trim()) {
-        const ms = parseDuration(cooldown);
-        if (!ms) return setErr(`bad duration "${cooldown}" (e.g. 10m)`);
-        p.cooldownMs = ms;
-      }
-    }
-    try {
-      const id = await rpc("addJob", p);
-      store.toast(`job #${id} scheduled on ${agent}`);
-      onClose();
-    } catch (e: any) {
-      setErr(e.message);
-    }
-  };
-  return (
-    <Modal title={`Schedule a job on ${agent}`} onClose={onClose}>
-      <form
-        className="form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void submit();
-        }}
-      >
-        <div className="seg">
-          {(["loop", "interval", "watch", "once"] as const).map((k) => (
-            <button type="button" key={k} className={kind === k ? "on" : ""} onClick={() => setKind(k)}>
-              {k === "interval" ? "every" : k}
-            </button>
-          ))}
-        </div>
-        <p className="dim small">
-          {kind === "loop" && "Runs back to back, each time in a fresh session. A notes file carries findings between runs."}
-          {kind === "interval" && "Runs on a timer, each time in a fresh session."}
-          {kind === "watch" && "Runs when enough lines change under the folder (untracked files count; .git, node_modules, .hive ignored)."}
-          {kind === "once" && "Runs once now in a fresh session."}
-          {" "}Each run starts a new conversation on this agent.
-        </p>
-        <label>
-          <span>Instruction</span>
-          <textarea rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} autoFocus placeholder="e.g. hunt for bugs in src/ and fix one per run" />
-        </label>
-        {kind === "loop" && (
-          <>
-            <label>
-              <span>Times</span>
-              <input value={times} onChange={(e) => setTimes(e.target.value)} placeholder="5" />
-            </label>
-            <label>
-              <span>For</span>
-              <input value={forS} onChange={(e) => setForS(e.target.value)} placeholder="8h (optional)" />
-            </label>
-          </>
-        )}
-        {kind === "interval" && (
-          <label>
-            <span>Every</span>
-            <input value={every} onChange={(e) => setEvery(e.target.value)} placeholder="10m" />
-          </label>
-        )}
-        {kind === "watch" && (
-          <>
-            <label>
-              <span>Watch</span>
-              <select
-                value={path === "@branches" ? "@branches" : path.startsWith("@bb:") ? "@bb" : "path"}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setPath(v === "@branches" ? "@branches" : v === "@bb" ? "@bb:ideas/raw/" : ".");
-                  setMinLines(v === "@bb" ? "1" : "50");
-                }}
-              >
-                <option value="path">a folder (changed lines)</option>
-                <option value="@branches">agents' branches (hive/*) — commits by coders in worktrees</option>
-                <option value="@bb">blackboard entries (new items under a prefix)</option>
-              </select>
-            </label>
-            {path.startsWith("@bb:") && (
-              <label>
-                <span>Prefix</span>
-                <input value={path.slice(4)} onChange={(e) => setPath("@bb:" + e.target.value)} placeholder="ideas/raw/" />
-              </label>
-            )}
-            {path !== "@branches" && !path.startsWith("@bb:") && (
-              <label>
-                <span>Path</span>
-                <input value={path} onChange={(e) => setPath(e.target.value)} placeholder="relative to the agent's folder" />
-              </label>
-            )}
-            <label>
-              <span>{path.startsWith("@bb:") ? "Min entries" : "Min lines"}</span>
-              <input value={minLines} onChange={(e) => setMinLines(e.target.value)} />
-            </label>
-            <label>
-              <span>Max wait</span>
-              <input value={maxWait} onChange={(e) => setMaxWait(e.target.value)} placeholder="e.g. 30m — review any change after this long" />
-            </label>
-            <label>
-              <span>Cooldown</span>
-              <input value={cooldown} onChange={(e) => setCooldown(e.target.value)} placeholder="e.g. 10m — at most one review per" />
-            </label>
-          </>
-        )}
-        {err && <div className="err">{err}</div>}
-        <div className="buttons">
-          <button type="button" className="ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="primary">Schedule</button>
-        </div>
-      </form>
-    </Modal>
-  );
-}

@@ -149,7 +149,7 @@ Intended for anyone running `allow-all` agents. Add a per-agent `accept_from` li
 The Usage tab shows tokens and Claude's API-equivalent cost. For Gemini/OpenRouter/OpenAI, OpenRouter returns `usage.cost` and the others can use a small price table. That would let `daily_usd` budgets exist. Medium effort because prices change; OpenRouter first.
 
 ### IDEA-003: Per-pane mute; "ready" to chat
-When 3+ agents run jobs, only some matter. Add a mute toggle on the pane header. For the Proxmox setup, the bridge could push "coder is ready" for human-started turns, like job endings are pushed now. S.
+When 3+ agents run jobs, only some matter. Add a mute toggle on the pane header. With an always-on server, the bridge could push "coder is ready" for human-started turns, like job endings are pushed now. S.
 
 ### IDEA-004: Prompt-engineer round trip
 Today ✦ Improve runs the skill in its own pane and saves to `out/prompts/`. Add a "Use this prompt" action on that pane's last reply that fills the editor of the pane you came from. S–M.

@@ -113,6 +113,16 @@ acp
   .onRequest("session/new", async (ctx) => {
     const sessionId = `mock-${Date.now().toString(36)}-${++n}`;
     await openSess(sessionId, ctx.params.cwd, ctx.params.mcpServers ?? [], "new");
+    // slash commands, as Claude Code advertises them (the composer's "/" menu)
+    const client = ctx.client;
+    setTimeout(() => {
+      void client
+        .notify(acp.methods.client.session.update, {
+          sessionId,
+          update: { sessionUpdate: "available_commands_update", availableCommands: [{ name: "compact", description: "Summarize the conversation to free up context" }, { name: "review", description: "Review the current changes", input: { hint: "focus" } }] } as any,
+        })
+        .catch(() => {});
+    }, 50);
     return { sessionId, configOptions };
   })
   .onRequest("session/resume", async (ctx) => {

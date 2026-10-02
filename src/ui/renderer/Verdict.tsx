@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 import type { VerdictState } from "../../core/verdict.js";
 import { rpc } from "./bridge.js";
 import { store, useStore } from "./store.js";
-import { Modal } from "./App.js";
+import { Modal } from "./Modal.js";
 import { renderMarkdown } from "./markdown.js";
 
 export function VerdictWindow() {
