@@ -1,6 +1,6 @@
 {
   "name": "hive",
-  "version": "1.0.0",
+  "version": "1.2.0-wip",
   "private": true,
   "description": "Local multi-agent harness: your coding agents work as a team, review each other's work and keep going while you're away",
   "license": "MIT",

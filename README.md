@@ -15,6 +15,8 @@
   <img alt="Windows and Linux" src="https://img.shields.io/badge/platforms-Windows%20%C2%B7%20Linux-lightgrey">
 </p>
 
+> **🚧 Work in progress.** hive is young and changes often. It's used daily, and every feature has automated tests, but expect rough edges, and pin a release (v1.0, v1.1) if you need stability. Bug reports and ideas are welcome in Issues.
+
 ![A squad of four agents: planner, coder, reviewer, tester](docs/screenshots/03-squad.png)
 
 ## Why hive
