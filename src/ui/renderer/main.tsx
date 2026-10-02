@@ -1,3 +1,4 @@
+/** Entry of the desktop (Electron) build. */
 import { createRoot } from "react-dom/client";
 import { App } from "./App.js";
 

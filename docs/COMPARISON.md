@@ -1,5 +1,26 @@
 # hive compared with similar tools
 
+## Always-on cloud agents: Grok Bot and OpenAI Dots
+
+Checked on 2026-10-02 from launch coverage. I haven't used either product.
+
+| | **hive** | **Grok Bot** (xAI) | **OpenAI Dots** |
+|---|---|---|---|
+| Launched | open source, ongoing | beta, August 2026 | OpenAI DevDay, late September 2026 |
+| Where agents run | your machine or your own server | xAI's cloud, each bot on its own cloud computer | OpenAI's cloud, each dot on its own cloud computer |
+| Who can use it | anyone (MIT) | SuperGrok Heavy, Cursor Ultra and Cursor Teams Premium subscribers | ChatGPT Pro and Business Premium (one dot included); Enterprise beta if an admin enables it |
+| Several agents together | yes: roles, a lead for team broadcasts, mail, groups, blackboard | yes: bots share threads, and in a group chat one bot coordinates the others | no multi-dot coordination described at launch |
+| Agents check each other's work | built in: review groups, security watcher, blind judge | no formal review step described | not described |
+| Keeps working when you're away | jobs, loops, file and branch watchers, budgets | yes | yes, including proactive research through connected apps |
+| Asks you for decisions | inbox, held messages, the coder asks before building improvements | yes, in group chats | yes, in ChatGPT, Slack or Teams |
+| Models | Claude Code, Codex, Gemini CLI, Qwen, OpenCode and API models, mixed in one team | Grok | GPT models |
+
+The shared idea is named agents that own work over time and come back to you for decisions. The difference is where they live and who checks them. Grok Bot and Dots are hosted assistants for general office work. hive runs coding agents from several vendors on your own code, and makes review between them the default.
+
+Sources: [InfoQ on Grok Bot](https://www.infoq.com/news/2026/08/grok-bot-agent/), [MindStudio: what Grok Bot is](https://www.mindstudio.ai/blog/grok-bot-ai-agent-fleet), [9to5Google on OpenAI Dots](https://9to5google.com/2026/09/29/openai-dots-agent/), [MediaNama: DevDay 2026](https://www.medianama.com/2026/10/223-openai-launches-dots-devday-2026/).
+
+## Self-hosted workspaces: Odysseus
+
 Odysseus: https://github.com/odysseus-dev/odysseus. Reviewed on 2026-10-01 from a shallow clone of `main` (commit e303582) plus its README and THREAT_MODEL. I read the code and docs; I didn't install or run it.
 
 ## What each one is
@@ -11,8 +32,8 @@ Odysseus: https://github.com/odysseus-dev/odysseus. Reviewed on 2026-10-01 from 
 | Stack | Node/TypeScript, Electron desktop UI + CLI, SQLite | Python/FastAPI web app (port 7000), SQLite or Postgres, ChromaDB, Docker |
 | Runs as | Desktop app or `hive serve`. **Never opens a network port.** | A web server you open in the browser (plus Mac/Windows wrappers); meant for a private network |
 | Users | You alone | Multi-user, with admin and non-admin roles, 2FA and API tokens |
-| License | (this repo) | AGPL-3.0 |
-| Maturity | Young, personal | Large and active (≈88k stars, ~2k commits, 1.1k open issues) |
+| License | MIT | AGPL-3.0 |
+| Maturity | Young, small team | Large and active (≈88k stars, ~2k commits, 1.1k open issues) |
 
 ## How models and subscriptions are used
 
@@ -38,7 +59,7 @@ Odysseus: https://github.com/odysseus-dev/odysseus. Reviewed on 2026-10-01 from 
 | YouTube transcripts (`services/youtube`, youtube-transcript-api) | **High** for your channel | Let the yt-* skills take a YouTube URL as well as a transcript file. Small. |
 | Compare: blind side-by-side + synthesis | **High** for titles, hooks and prompts | `hive skill run yt-titles --compare claude,gemini-api,openrouter`: run on several models, show results unlabeled, you pick or merge. Medium. |
 | Semantic memory / RAG (ChromaDB) | Medium | The blackboard covers shared facts. Searchable long-term memory could come later; it adds a vector DB. |
-| Cookbook (hardware-aware local models) | Medium for the T550 | Suggest Ollama models that fit the T550's GPU or RAM. Nice to have. |
+| Cookbook (hardware-aware local models) | Medium for local GPU machines | Suggest Ollama models that fit your GPU or RAM. Nice to have. |
 | Deep research reports | Low to medium | An agent with web access can already do this. A "research" recipe could package it. |
 | Email, calendar, CalDAV, notes, documents | Low | Different product; adding them would bloat hive. |
 | Multi-user, 2FA | Not applicable | hive is single-user and has no listener on purpose. |

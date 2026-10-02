@@ -2,7 +2,19 @@
   "name": "hive",
   "version": "1.0.0",
   "private": true,
-  "description": "Local multi-agent harness: one UI, any ACP agent, agents that talk to each other",
+  "description": "Local multi-agent harness: your coding agents work as a team, review each other's work and keep going while you're away",
+  "license": "MIT",
+  "keywords": [
+    "agents",
+    "multi-agent",
+    "acp",
+    "mcp",
+    "claude-code",
+    "codex",
+    "gemini",
+    "code-review",
+    "electron"
+  ],
   "type": "module",
   "bin": {
     "hive": "./dist/cli/index.js"

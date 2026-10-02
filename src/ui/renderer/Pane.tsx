@@ -1,3 +1,4 @@
+/** One agent pane: header (name, role, state, actions), transcript, permission asks, and the composer (message box, "/" menu, ✦ improve). */
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { AgentView, ElicitationAsk, PermissionAsk } from "../protocol.js";
 import { rpc } from "./bridge.js";

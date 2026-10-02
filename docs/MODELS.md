@@ -18,8 +18,8 @@ setx GEMINI_API_KEY "..."          # optional: setx GEMINI_MODEL "gemini-2.5-pro
 setx OPENROUTER_API_KEY "..."      # optional: setx OPENROUTER_MODEL "meta-llama/llama-4-maverick"
 # OpenAI API (separate from a ChatGPT subscription — use codex for that)
 setx OPENAI_API_KEY "..."
-# Ollama on this PC or the T550 (no key)
-setx OLLAMA_BASE_URL "http://192.168.10.69:11434/v1"
+# Ollama on this PC or another machine on your network (no key)
+setx OLLAMA_BASE_URL "http://localhost:11434/v1"
 setx OLLAMA_MODEL "qwen3"
 ```
 

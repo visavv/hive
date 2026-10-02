@@ -1,4 +1,4 @@
-# hive on Linux (Fedora laptop, Ubuntu server)
+# hive on Linux (Fedora, Ubuntu)
 
 Same app as on Windows: the pane UI (`hive ui`), the CLI, jobs, skills, groups, bridges. Nothing listens on the network.
 
@@ -12,16 +12,16 @@ node -v                                                 # v22 or newer
 npm config set prefix ~/.local
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
 
-git clone https://github.com/visavv/hargent ~/code/hive && cd ~/code/hive
+git clone <repo-url> ~/code/hive && cd ~/code/hive
 npm install && npm run build && npm link                # `hive` on PATH
 npm test                                                # optional, ~3 min, mock agents only
 ```
 
 The Electron UI needs the usual desktop libraries (GTK3, NSS, ALSA). Fedora Workstation already has them. On a minimal install, run `sudo dnf install -y gtk3 nss alsa-lib libXScrnSaver mesa-libgbm`.
 
-### Sign in on the laptop (once)
+### Sign in (once)
 
-Subscriptions work on more than one machine. Log the CLIs in on the laptop too:
+Subscriptions work on more than one machine. Log the CLIs in on this machine too:
 
 ```bash
 npm i -g @anthropic-ai/claude-code && claude      # /login, then /exit
@@ -58,7 +58,7 @@ hive desktop --cwd ~/code/myproject     # adds "hive — myproject" to the app m
 - hive state: `~/.local/state/hive/projects/<repo>-<hash>/` (database, layout, agent worktrees). Override with `HIVE_HOME`.
 - Custom providers: `~/.local/state/hive/agents.json`. User skills: `~/.local/state/hive/skills/`.
 
-## Windows desktop + Fedora laptop + Proxmox server
+## Several machines (desktop, laptop, server)
 
 Each machine runs its own hive. Projects travel through git as usual; agent branches (`hive/<name>`) are normal branches you can push. For a hive that keeps running when the laptop sleeps, use the server (docs/BRIDGES.md) and talk to it from Discord or WhatsApp.
 

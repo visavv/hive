@@ -1,10 +1,10 @@
 <#
   hive: install or update on Windows, in one step.
 
-  First time (PowerShell; any folder or drive works, e.g. H:\HIVE or $HOME\code\hive):
-    git clone https://github.com/visavv/hargent H:\HIVE
-    cd H:\HIVE
-    powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1 -Project H:\code\myproject
+  First time (PowerShell; any folder or drive works, e.g. C:\hive or $HOME\code\hive):
+    git clone <repo-url> C:\hive
+    cd C:\hive
+    powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1 -Project C:\code\myproject
 
   -Project is the code you want the agents to work on (not the hive folder). If it doesn't
   exist yet the script offers to create it as an empty git repository.

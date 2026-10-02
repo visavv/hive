@@ -1,17 +1,80 @@
-<img src="assets/hive.png" width="96" alt="hive pixel-art icon" align="right">
+<p align="center">
+  <img src="assets/hive.png" width="128" height="128" alt="hive pixel-art icon: a honeycomb cell with a bee">
+</p>
 
-# hive
+<h1 align="center">hive</h1>
 
-Local multi-agent harness. One process, any number of coding agents (Claude Code, Codex, Qwen, OpenCode, Gemini, …), all driven through the [Agent Client Protocol](https://agentclientprotocol.com), all able to message each other, with loops, schedules and file watchers that run 24/7.
+<p align="center">
+  <b>Your coding agents, working as a team and reviewing each other's work.</b><br>
+  Runs on your own machine · uses the subscriptions you already have · open source (MIT)
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-blue"></a>
+  <img alt="Node 22+" src="https://img.shields.io/badge/node-22%2B-green">
+  <img alt="Windows and Linux" src="https://img.shields.io/badge/platforms-Windows%20%C2%B7%20Linux-lightgrey">
+</p>
 
 ![A squad of four agents: planner, coder, reviewer, tester](docs/screenshots/03-squad.png)
 
-Design goals, in order:
+## Why hive
 
-1. **Your subscriptions keep working.** Every agent is the vendor's own binary behind its official ACP adapter. Auth, sandboxing and permission prompts are the vendor's; hive never re-implements the agent loop.
-2. **Agents talk to each other** through a `hive` MCP server injected into every session. Same tools for every vendor, no per-CLI hacks.
-3. **Runs 24/7 on one machine.** Nothing listens on the network. Optional Discord/WhatsApp bridges connect *out*, allowlisted.
-4. **Many agents on one screen.** A pane grid for a 4K monitor (or a vertical 9:16 one), voice-friendly input routing.
+One AI agent working alone can't see its own mistakes. The fix is the same one software teams use: **someone else reviews the work before it lands.**
+
+hive gives your agents that team:
+
+- **Autonomous review.** A coder's change goes to a reviewer agent automatically, ideally from another vendor (Codex checks Claude's work, or the other way round). A security watcher reads every 50 changed lines. A tester runs the suite. They send findings back, and the coder fixes them. You step in for decisions, not for every hand-off.
+- **Group work.** Agents have roles (planner, coder, reviewer, tester, scout) and talk through mail, groups and a shared blackboard. Broadcast one task and hive names a **lead**. The lead plans and hands each teammate the part that fits their role, while the rest wait instead of duplicating work ([docs/TEAMWORK.md](docs/TEAMWORK.md)).
+- **It keeps going while you're away.** Loops, schedules and file watchers run all night. A scout finds improvements and passes them to the coder, and the coder **asks you before building them**. When you come back, "Since you left" shows what happened.
+- **Your agents, your machine.** Every agent is the vendor's own program (Claude Code, Codex, Gemini CLI, Qwen, OpenCode) driven over the [Agent Client Protocol](https://agentclientprotocol.com). Your subscriptions, logins and sandboxes keep working, and nothing listens on the network.
+
+## How it compares
+
+| | **hive** | Orchestration frameworks<br><sub>(LangGraph, CrewAI, AutoGen…)</sub> | Agent harnesses / terminal managers<br><sub>(several CLIs side by side)</sub> | **Grok Bot** (xAI)<br><sub>beta, Aug 2026</sub> | **OpenAI Dots**<br><sub>DevDay, Sep 2026</sub> |
+|---|---|---|---|---|---|
+| What it is | a desktop app that runs your coding agents as a team | libraries you program agents with | panes or tabs for several coding CLIs | a team of always-on cloud agents | named, always-on agents inside ChatGPT |
+| Runs on | **your machine** (or your server) | wherever you deploy your code | your machine | xAI's cloud: each bot has its own cloud computer | OpenAI's cloud: each dot has its own cloud computer |
+| Agents | the vendors' own coding agents, **mixed vendors** in one team, plus any API model | the model APIs you wire in | the vendors' own CLIs | Grok | GPT models |
+| Agents review each other | **yes, built in**: review groups, security watcher, blind judge (Verdict) | if you build it | usually no; each session works alone | bots coordinate in group chats | not described |
+| Team coordination | lead + roles, mail, groups, blackboard, held messages | your code decides | little or none | one bot coordinates the others in a group chat | each dot works on its own goals |
+| Works while you're away | jobs, loops, watchers, budgets, pause switch | if you deploy it | no | yes | yes |
+| Pay with | **subscriptions you already have** (or API keys) | API keys | your subscriptions | a Grok / Cursor plan | a ChatGPT Pro or Business plan |
+| Open source | **yes, MIT** | mostly yes | varies | no | no |
+
+**Similar to Grok Bot and Dots:** named agents that keep working, coordinate, and ask you when a decision is yours.
+**Similar to harnesses:** you watch real vendor CLIs side by side and step in any time.
+**Similar to orchestrators:** roles, hand-offs and pipelines.
+
+**Different:** it runs locally on your code and accounts, it mixes vendors so they catch each other's mistakes, review is the default rather than an add-on, and it's free and open. More detail, including comparisons with Maestro, Agent Deck, Zed and Claude Code teams: [docs/COMPARISON.md](docs/COMPARISON.md).
+
+## Install
+
+You need **Node.js 22+** and **Git**. The Windows script installs both if they're missing. `<repo-url>` is this page's address: the green **Code** button → copy.
+
+**Windows** (PowerShell):
+
+```powershell
+git clone <repo-url> hive
+cd hive
+powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1
+```
+
+This builds hive, puts `hive` on your PATH and adds a **hive** icon to your Desktop and Start menu. Step by step: [docs/WINDOWS.md](docs/WINDOWS.md).
+
+**Linux** (Fedora, Ubuntu; macOS should work but isn't tested):
+
+```bash
+git clone <repo-url> hive && cd hive
+npm install && npm run build && npm link
+```
+
+Then:
+
+1. Sign in to the agents you use, once: `claude` (then `/login`), `codex login`, `gemini`. Check with `hive doctor`.
+2. Open hive: double-click the icon, or type `hive` in your project folder.
+3. Press **Ctrl+K** → "Set up a team" → **Squad** (planner, coder, reviewer, tester).
+
+No subscription yet? `npm test` runs everything with a built-in mock agent, with no logins and no network. Server, phone and remote setups are in [docs/START-HERE.md](docs/START-HERE.md).
 
 ## What's in it
 
@@ -37,7 +100,7 @@ Design goals, in order:
 | Platforms | Windows ([docs/WINDOWS.md](docs/WINDOWS.md), one-script install), Linux/Fedora ([docs/LINUX.md](docs/LINUX.md)), Ubuntu server + chat bridges ([docs/BRIDGES.md](docs/BRIDGES.md)) |
 | Extra MCP servers | attach DaVinci Resolve or any MCP server to an agent type (`agents.json`) or one agent (`--mcp NAME`, Add-agent checkboxes) ([docs/MCP.md](docs/MCP.md)) |
 
-How it compares with Maestro, Agent Deck, Zed, Claude Code teams and others: [docs/COMPARISON.md](docs/COMPARISON.md). Audit records: [audit/](audit/).
+Architecture and source map: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Audit records: [audit/](audit/). Contributing: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Screenshots
 
@@ -70,21 +133,14 @@ How it compares with Maestro, Agent Deck, Zed, Claude Code teams and others: [do
 
 <br clear="right">
 
-## Quick start
-
-**New here? Read [docs/START-HERE.md](docs/START-HERE.md)**: desktop, server and phone in one page.
-
-
-**On Windows, follow [docs/WINDOWS.md](docs/WINDOWS.md)** (PowerShell, step by step).
+## Everyday use
 
 ```
-npm install
-npm test                         # mock-agent end-to-end suites (no vendor login needed)
-npm run build && npm link        # puts `hive` on your PATH (or use `npm run dev --` from this checkout)
 cd ~/code/myproject
+hive                             # open the app on this project
 hive doctor                      # installed? speaks ACP? logged in?
-hive ui                          # the pane UI for this project
-hive chat claude --as coder      # or a terminal chat
+hive chat claude --as coder      # or chat in the terminal
+hive tui                         # the pane grid in a terminal (works over SSH)
 ```
 
 All state lives outside your repo, in one hive per project: `%LOCALAPPDATA%\hive\projects\<repo>-<hash>\` on Windows (`~/.local/state/hive/…` on Linux, `~/Library/Application Support/hive/…` on macOS; override with `HIVE_HOME`). That's the SQLite db, `ui.json`, watch snapshots and agent worktrees. Run `hive` from anywhere inside the repo (or pass `--cwd`) and you get the same hive.
@@ -207,23 +263,10 @@ Per agent: `ask` (UI pane or terminal), `allow-reads` (auto-approve read/search/
 
 `hive doctor` spawns each adapter, sends `initialize`, and waits for its `_auth/status_update` push, so it reports "not logged in" vs the account actually in use.
 
-## Layout
+## Code layout
 
-```
-src/core/agents.ts     which subprocess to spawn per vendor (add a vendor = add an entry); Windows quoting
-src/core/session.ts    one ACP agent: spawn, inject hive MCP, route updates, resume/load, permissions, elicitation
-src/core/hub.ts        many sessions + delivery loop that wakes idle agents with unread mail
-src/core/scheduler.ts  loop / interval / watch / once jobs, leases, notes files
-src/core/watch.ts      changed-line counting (chokidar + shadow git index)
-src/core/worktree.ts   git worktree per agent, status, merge
-src/core/roles.ts      role presets
-src/core/doctor.ts     adapter probe
-src/hive/db.ts         SQLite: agents, messages, blackboard, events, jobs, job_runs
-src/hive/server.ts     the MCP server each agent gets (hive_send / inbox / thread / bb_* / status / agents / diff / log)
-src/core/home.ts       per-user state dir (one hive per project)
-src/core/report.ts     "since you left" report
-src/mock/agent.ts      scripted ACP agent for tests; really calls the hive tools
-src/cli/index.ts       the CLI
-src/ui/                Electron main, preload, NDJSON backend, React renderer
-test/                  e2e, session, scheduler, worktree, backend, unit; ui.ts drives Electron (npm run test:ui)
-```
+The source map, design rules and how to run things from source are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## License
+
+MIT, see [LICENSE](LICENSE). Security reports: [SECURITY.md](SECURITY.md).

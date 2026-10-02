@@ -2,7 +2,8 @@
 import { useEffect, useRef, useState } from "react";
 import { rpc } from "./bridge.js";
 import { store, useStore } from "./store.js";
-import { Modal, openPane } from "./App.js";
+import { Modal } from "./Modal.js";
+import { openPane } from "./layout.js";
 import { focus } from "./focus.js";
 import { IconScale, IconSpark } from "./Icons.js";
 

@@ -21,7 +21,7 @@ export interface WASocketLike {
 
 export type MakeSocket = (onQr: (qr: string) => void) => Promise<WASocketLike>;
 
-/** "358401234567" or "+358 40 123 4567" → "358401234567" */
+/** "15550100001" or "+1 555 010 0001" → "15550100001" */
 export function normalizeNumber(n: string): string {
   return n.replace(/[^\d]/g, "");
 }

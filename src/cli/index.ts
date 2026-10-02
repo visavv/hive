@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * hive CLI — drives the hub from a terminal until the pane UI exists.
+ * hive CLI: `hive` opens the pane UI; the commands below drive the same hub from a terminal (scripts, servers, SSH).
  *
  * Agents
  *   hive run <agent> [opts] "prompt"          one prompt, wait for replies to settle, exit
@@ -8,7 +8,7 @@
  *   hive agents                               list hive members
  *   hive doctor [agent...] [--quick]          installed? speaks ACP? logged in?
  *
- * Jobs (phase 2 scheduler)
+ * Jobs
  *   hive loop <agent> --times 5 "prompt"      back-to-back fresh sessions with a shared notes file
  *   hive loop <agent> --for 8h "prompt"       … until the time is up (--hours 8 also works)
  *   hive every <agent> 10m "prompt"           on an interval

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Phone access to hive over Tailscale + SSH (+ tmux, so sessions survive dropped connections).
-# For Ubuntu/Debian (e.g. the Proxmox VM) and Fedora. Run as your normal user; it uses sudo.
+# For Ubuntu/Debian (a home server or VPS) and Fedora. Run as your normal user; it uses sudo.
 #
 #   bash scripts/setup-remote.sh                       # Tailscale, OpenSSH, tmux, hive-tui helper
 #   bash scripts/setup-remote.sh --project ~/code/app  # which project `hive-tui` opens

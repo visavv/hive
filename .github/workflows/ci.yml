@@ -102,7 +102,7 @@ jobs:
           if-no-files-found: error
 
   fedora:
-    # The Fedora laptop: full suite + the Electron UI test in a Fedora container.
+    # Fedora: full suite + the Electron UI test in a Fedora container.
     runs-on: ubuntu-latest
     container: fedora:42
     timeout-minutes: 30

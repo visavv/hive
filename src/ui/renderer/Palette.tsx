@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { store, useStore } from "./store.js";
 import { focus, useOverlay } from "./focus.js";
-import { saveLayout } from "./App.js";
+import { saveLayout } from "./layout.js";
 import { agentState, STATE_LABEL, StatePill } from "./state.js";
 
 export interface PaletteAction {

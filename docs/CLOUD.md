@@ -4,8 +4,8 @@
 Run hive on one always-on machine and connect to the **same agents, sessions, board and stats** from your desktop, laptop and phone. Close the app on one machine, open it on another, and carry on where you left off. Agents keep working while nobody is connected.
 
 ```
- Windows desktop ─┐                         ┌─ hive daemon (keeps the backend running)
- Fedora laptop  ──┼── Tailscale + SSH ──────┤    agents: Claude Code, Codex, Gemini, …
+ desktop        ─┐                         ┌─ hive daemon (keeps the backend running)
+ laptop         ──┼── Tailscale + SSH ──────┤    agents: Claude Code, Codex, Gemini, …
  phone          ──┘   (nothing exposed       │    sessions, transcripts, board.db, usage.db
                        to the internet)      └─ your repos → push to GitHub
 ```
@@ -14,7 +14,7 @@ Run hive on one always-on machine and connect to the **same agents, sessions, bo
 
 | | Good for | Cost |
 |---|---|---|
-| **Your Proxmox Ubuntu VM** | already always on, local disks, no monthly bill | electricity |
+| **Your home server** | already always on, local disks, no monthly bill | electricity |
 | **A small VPS** (Hetzner, Netcup, OVH, DigitalOcean…) | reachable when the home network is down, fast uplink | a few euros a month |
 
 Size it for the agents, not for hive: each vendor CLI is a Node process using roughly 200–500 MB while it works. **4 GB RAM / 2 vCPU** runs a four-agent squad comfortably; 8 GB if you also build/test big projects there. Ubuntu 24.04 LTS is what the scripts and CI cover.
@@ -28,7 +28,7 @@ Your subscriptions work on a server: the vendor CLIs sign in once on that machin
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt install -y nodejs git build-essential
 
 # hive
-git clone https://github.com/visavv/hargent ~/hive && cd ~/hive
+git clone <repo-url> ~/hive && cd ~/hive
 npm ci && npm run build && sudo npm link        # puts `hive` on PATH
 
 # the agents you use, then sign in

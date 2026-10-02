@@ -5,7 +5,7 @@
  */
 import { useEffect, useState } from "react";
 import { rpc } from "./bridge.js";
-import { Modal } from "./App.js";
+import { Modal } from "./Modal.js";
 import { store } from "./store.js";
 
 type Dim = "vendor" | "model" | "category" | "project" | "day";

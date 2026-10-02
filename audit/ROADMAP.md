@@ -9,4 +9,4 @@ Done in passes 2–4: SEC-003 (guard), SEC-004 (mitigated), PERF-001, UX-008, UX
 3. **Polish.** IDEA-003 (per-pane mute, "ready" to chat), IDEA-004 (prompt-engineer round trip), bridge commands for held mail and verdicts.
 4. **Later.** IDEA-002 (USD estimates, OpenRouter first), GitHub-event triggers by polling (no listener).
 
-Verify each on a real Windows desktop and the Fedora laptop before relying on it daily.
+Verify each on a real Windows desktop and a Fedora machine before relying on it daily.

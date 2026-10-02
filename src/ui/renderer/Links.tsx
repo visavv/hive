@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 import type { GroupView, MailView } from "../protocol.js";
 import { rpc } from "./bridge.js";
 import { store, useStore } from "./store.js";
-import { Modal } from "./App.js";
+import { Modal } from "./Modal.js";
 import { fmtIdle } from "./format.js";
 import { IconLink } from "./Icons.js";
 import { agentState, rollup, STATE_LABEL } from "./state.js";
