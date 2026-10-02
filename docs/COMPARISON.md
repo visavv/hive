@@ -1,5 +1,32 @@
 # hive compared with similar tools
 
+## Worktrees plus rules files, without hive
+
+A common do-it-yourself setup gives each agent its own git worktree and a strict rules file (`CLAUDE.md` for Claude Code, `AGENTS.md` for Codex). Agents leave notes for each other in shared files ("coder: write a summary to `team/inbox-reviewer.md` when done").
+
+**What this gets right:** agents don't overwrite each other, and each knows its job. hive uses both ideas; your rules files keep working inside it.
+
+**What it can't do on its own:** an agent only acts when something prompts it. Rules describe what to do, but nothing makes it happen while you're away.
+
+| Problem | Why rules alone can't fix it | What hive does |
+|---|---|---|
+| Nobody wakes the reviewer | the note sits in a file until you type "check your inbox" | mail wakes the recipient automatically |
+| Nothing runs overnight | agents have no clock | loops, intervals, "run when 50 lines change", branch watchers |
+| Rules are suggestions | models forget the note, write it in the wrong place, or review their own work | hand-offs go through tools, and review groups hold messages for you |
+| Two agents edit the same notes file | no locking | a database with claims and threads |
+| Permission prompts with nobody there | an unattended agent waits forever | unanswered prompts are declined after 15 minutes |
+| No overview | open every terminal and notes file | "Since you left", the ready chime, an inbox for decisions |
+| No spending limit | a looping agent can use up your plan | daily caps, reserves, pause switch, token stats |
+
+You can patch each gap yourself:
+- a scheduled task running `claude -p "check your inbox"` or `codex exec …`;
+- git hooks that start the reviewer after a commit;
+- lock files, and a summary script.
+
+That works, but the result is a hand-made version of hive: a mailbox, a wake-up loop, triggers, locking, a report and caps, all yours to maintain.
+
+**Rule of thumb:** worktrees and rules are enough when you're at the keyboard and happy to nudge agents along. hive is for when you want the hand-offs, checks and overnight work to happen by themselves.
+
 ## Always-on cloud agents: Grok Bot and OpenAI Dots
 
 Checked on 2026-10-02 from launch coverage. I haven't used either product.

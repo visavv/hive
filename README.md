@@ -31,7 +31,30 @@
 | Cost | your existing plans | their plan | API fees | your existing plans |
 | Open source | ✅ | ❌ | mostly | varies |
 
+### Why not just worktrees and rules files?
+
+Worktrees give each agent its own copy of the code. Rules files (`CLAUDE.md`, `AGENTS.md`) tell each agent what to do. Both help, and hive uses both. But rules can only say *what* to do. They can't make anything *happen* when you're not at the keyboard.
+
+| | Worktrees + rules | hive |
+|---|---|---|
+| Agents don't overwrite each other | ✅ | ✅ (sets up worktrees for you) |
+| Hand-offs ("reviewer, your turn") | you nudge each agent | automatic: agents get woken up |
+| Agents talk to each other | notes in shared files | mail, groups, shared board |
+| Checking the rules were followed | ❌ | reviews and hand-offs are tracked |
+| Works overnight | ❌ needs your own scripts | schedules, loops, file watchers |
+| Stuck on a permission prompt at 3 a.m. | waits forever | declined after 15 minutes |
+| What happened? | open every terminal | one "Since you left" summary |
+| Spending limits | ❌ | daily caps and a pause switch |
+
+You can build these yourself with scheduled scripts, git hooks and lock files. At that point you've built a small hive. Your rules files still work inside hive.
+
 More detail: [docs/COMPARISON.md](docs/COMPARISON.md)
+
+## In your terminal too
+
+`hive tui` shows the same team in a terminal. It works over SSH, so you can check in from your phone.
+
+![hive tui: planner, coder, reviewer and tester in a terminal](docs/screenshots/13-tui.png)
 
 ## Install
 
