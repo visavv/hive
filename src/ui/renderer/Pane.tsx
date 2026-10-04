@@ -231,8 +231,11 @@ function PaneMenu({ name, agent, onJob }: { name: string; agent?: AgentView; onJ
 }
 
 function closePane(name: string) {
-  const jobs = store.agents.get(name)?.jobs ?? 0;
+  const a = store.agents.get(name);
+  const jobs = a?.jobs ?? 0;
   if (jobs && !confirm(`${name} has ${jobs} scheduled job${jobs === 1 ? "" : "s"}. Close the pane and stop ${jobs === 1 ? "it" : "them"}?`)) return;
+  // closing a working agent cancels its turn: say so instead of losing work on a mis-click
+  if (!jobs && a?.status === "working" && !confirm(`${name} is still working. Close the pane and cancel its turn? (Its session is kept; you can reopen it from "Other agents".)`)) return;
   const l = store.layout;
   store.layout = { ...l, panes: l.panes.filter((p) => p.name !== name), maximized: l.maximized === name ? null : l.maximized };
   store.starting.delete(name);

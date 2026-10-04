@@ -584,6 +584,17 @@ try {
   await pane(page, "beta").locator(".composer-state.warn").waitFor({ state: "detached", timeout: 15_000 });
   assert(true, "a nearly full context shows a warning with a one-click fresh session");
 
+  // closing a pane while its agent works asks first; "cancel" keeps the pane
+  await pane(page, "beta").locator("textarea").fill("slow close-check");
+  await pane(page, "beta").locator("textarea").press("Enter");
+  await pane(page, "beta").locator(".pane-head .st.st-working").waitFor({ timeout: 10_000 });
+  page.once("dialog", (d) => void d.dismiss());
+  await pane(page, "beta").locator("button.close").click();
+  await sleep(300);
+  assert((await pane(page, "beta").count()) === 1, "closing a working agent asks first; dismissing keeps the pane");
+  await page.keyboard.press("Escape");
+  await until(async () => (await pane(page, "beta").locator(".pane-head .st.st-working").count()) === 0, 15_000);
+
   // ✦ improve: rough idea → full prompt in the same composer, undo, then send to the same agent
   {
     const box = pane(page, "beta").locator("textarea");
