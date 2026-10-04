@@ -180,6 +180,7 @@ Still open from this pass: none. Not re-verified with a real vendor (mock only).
 | 5 | UX-030 | "Other agents in this hive" listed every finished skill run and sleeping agent for good (clutter after a week of use); sleeping ones now fold under "N finished" | UI test |
 | 6 | BUG-018 | The empty-transcript hint never showed: the "session new" line made the list non-empty. It now keys off real conversation items and names ✦, / and Esc | UI test |
 | 7 | UX-031 | Rows made keyboard-reachable in pass 6 (mail, groups, stats, cards, menu items) had no visible focus ring; tall form fields (Instruction) had their label floating mid-height | UI test (label alignment) |
+| 8 | UX-032 | A nearly full context window (>85 %) was only a colour on the meter. The composer now says "Context is N% full: replies get worse and cost more" with a one-click Fresh session (mock: `ctx-full`) | UI test |
 | 3 | — | The improvements → coder → owner flow is now covered by `test/team.ts` at the wiring level (scout sends ideas to the coder; the coder asks the owner first). Model behaviour still unverified with a real vendor | test/team.ts |
 
 ## Pass 5 (2026-10-01)

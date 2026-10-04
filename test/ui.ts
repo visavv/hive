@@ -567,6 +567,14 @@ try {
   await page.waitForFunction(() => document.activeElement?.closest("[data-pane]")?.getAttribute("data-pane") === "beta", null, { timeout: 5000 });
   assert(await activeIn(page, "beta"), "palette jumps to the agent");
 
+  // a nearly full context window: the composer says so and offers a fresh session
+  await pane(page, "beta").locator("textarea").fill("ctx-full please");
+  await pane(page, "beta").locator("textarea").press("Enter");
+  await pane(page, "beta").locator(".composer-state.warn", { hasText: "% full" }).waitFor({ timeout: 15_000 });
+  await pane(page, "beta").locator(".composer-state.warn button", { hasText: "Fresh session" }).click();
+  await pane(page, "beta").locator(".composer-state.warn").waitFor({ state: "detached", timeout: 15_000 });
+  assert(true, "a nearly full context shows a warning with a one-click fresh session");
+
   // ✦ improve: rough idea → full prompt in the same composer, undo, then send to the same agent
   {
     const box = pane(page, "beta").locator("textarea");

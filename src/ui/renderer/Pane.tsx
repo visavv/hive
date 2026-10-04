@@ -751,6 +751,14 @@ function Composer({ name, agent }: { name: string; agent?: AgentView }) {
           <span>Enter queues your message · Esc cancels the turn</span>
         </div>
       )}
+      {agent && agent.status !== "working" && agent.ctx && ctxPct(agent.ctx.used, agent.ctx.size) > 85 && (
+        <div className="composer-state warn">
+          <span>Context is {ctxPct(agent.ctx.used, agent.ctx.size)}% full: replies get worse and cost more.</span>
+          <button className="ghost small" onClick={() => void rpc("newSession", { name }).catch((e) => store.toast(e.message, "error"))} title="start a fresh conversation with this agent (its memory files and briefing stay)">
+            Fresh session
+          </button>
+        </div>
+      )}
       <div className="composer-box">
       <textarea
         ref={ref}

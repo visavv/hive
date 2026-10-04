@@ -1234,6 +1234,8 @@ button.danger { color: var(--st-error); }
 /* composer: the working line sits above the box instead of replacing its placeholder */
 .composer-state { font-size: var(--fs-1); color: var(--text-3); padding: 0 4px 4px; display: flex; gap: 8px; align-items: center; }
 .composer-state .st { height: 18px; }
+.composer-state.warn { color: var(--st-blocked); }
+.composer-state.warn button { height: 20px; padding: 0 8px; }
 
 /* pane header diet: name · role · state · actions; the rest lives in the sub row */
 .pane-sub { gap: 8px; flex-wrap: nowrap; overflow: hidden; align-items: center; min-height: 22px; }

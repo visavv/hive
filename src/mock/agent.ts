@@ -358,7 +358,7 @@ acp
       sessionId,
       update: {
         sessionUpdate: "usage_update",
-        used: 1000 * sess.turns,
+        used: /ctx-full/.test(text) ? 184_000 : 1000 * sess.turns,
         size: 200_000,
         cost: { amount: 0.01 * sess.turns, currency: "USD" },
         ...(rlM
