@@ -435,6 +435,12 @@ try {
   assert(true, "missing required skill parameters are reported in the dialog");
   await page.keyboard.press("Escape");
   await pane(page, "skill-yt-titles").locator("button.close").click();
+  // a closed skill agent folds under "N finished" in the sidebar instead of staying listed for good
+  await page.locator(".side-head button", { hasText: "finished" }).waitFor({ timeout: 10_000 });
+  assert((await page.locator(".job-list li", { hasText: "skill-yt-titles" }).count()) === 0, "finished agents are folded out of the sidebar until asked for");
+  await page.locator(".side-head button", { hasText: "finished" }).click();
+  await page.locator(".job-list li", { hasText: "skill-yt-titles" }).waitFor({ timeout: 5000 });
+  await page.locator(".side-head button", { hasText: "hide finished" }).click();
   // a required choice without a default runs with the option the dialog shows (the first)
   mkdirSync(join(process.env.HIVE_HOME!, "skills"), { recursive: true });
   writeFileSync(

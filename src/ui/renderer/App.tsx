@@ -643,14 +643,24 @@ function Sidebar({ names, onAdd, onSearch }: { names: string[]; onAdd: () => voi
 
 function OtherAgents({ names }: { names: string[] }) {
   const others = useStore((s) => s.others).filter((o) => !names.includes(o.name));
+  // finished skill runs and sleeping agents pile up over weeks: keep the live ones visible, fold the rest
+  const live = others.filter((o) => o.status !== "asleep" || o.unread > 0);
+  const asleep = others.filter((o) => !live.includes(o));
+  const [showAsleep, setShowAsleep] = useState(false);
   if (!others.length) return null;
+  const shown = showAsleep ? others : live;
   return (
     <>
       <div className="side-head">
         <span>Other agents in this hive</span>
+        {asleep.length > 0 && (
+          <button className="ghost small" onClick={() => setShowAsleep(!showAsleep)} title={showAsleep ? "hide finished agents" : "show finished agents (they resume when opened)"}>
+            {showAsleep ? "hide finished" : `${asleep.length} finished`}
+          </button>
+        )}
       </div>
       <ul className="job-list">
-        {others.map((o) => (
+        {shown.map((o) => (
           <li key={o.name} title={`${o.cwd}${o.where ? ` — running in ${o.where}` : ""}`}>
             <div className="row1">
               <StatePill state={stateOfStatus(o.status)} compact />
