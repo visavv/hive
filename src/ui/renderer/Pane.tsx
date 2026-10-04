@@ -146,6 +146,9 @@ function autoPromptLabel(t: string): string | undefined {
   m = t.match(/^\[hive job #(\d+), (\w+)(?:: ([^\]]+))?\]/);
   if (m) return `Job #${m[1]} · ${m[2]}${m[3] ? ` · ${m[3]}` : ""}`;
   if (t.startsWith("[team broadcast from the owner — you lead]")) return `Team task · you lead · ${(t.match(/\nTask: ([^\n]*)/)?.[1] ?? "").slice(0, 70)}`;
+  // code-view questions carry the file and the code: the first line is the label, the rest folds
+  m = t.match(/^\[learn\] ([^\n]{1,120})/);
+  if (m) return m[1];
   m = t.match(/^\[follow-up from ([\w.-]+)\]/);
   if (m) return `Follow-up from ${m[1]}`;
   if (t.includes("You are agent \"") && t.includes("local multi-agent hive")) return "Briefing";
