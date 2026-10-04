@@ -108,7 +108,7 @@ export function Drawer({ onClose, initialTab, docked, onDock }: { onClose: () =>
         {tab === "inbox" && (
           <>
             <HeldList />
-            {!inbox.length && <div className="dim pad">No mail. Agents write here with hive_send to "owner".</div>}
+            {!inbox.length && <div className="dim pad">No mail yet. Agents write to you here when they need a decision or finish something worth your attention.</div>}
             {inbox.map((m) => (
               <Mail key={m.id} m={m} />
             ))}
@@ -120,6 +120,7 @@ export function Drawer({ onClose, initialTab, docked, onDock }: { onClose: () =>
         {tab === "accounts" && <AccountsView />}
         {tab === "mail" && (
           <>
+            {data && !data.messages.length && <div className="dim pad">No mail between agents yet. Everything agents send each other shows up here, oldest at the bottom.</div>}
             {(data?.messages ?? []).map((m) => (
               <Mail key={m.id} m={m} />
             ))}
@@ -407,7 +408,7 @@ function Board({ rows, onChange }: { rows: HiveData["blackboard"]; onChange: () 
           </button>
         ))}
       </div>
-      {!shown.length && <div className="dim pad">Empty. Agents write shared facts here (ideas/, security/, claim/…).</div>}
+      {!shown.length && <div className="dim pad">Nothing on the board yet. Agents pin shared facts here: ideas they found (ideas/…), security notes (security/…) and the tasks they have claimed (claim/…).</div>}
       {shown.map((r) => (
         <div key={r.key} className="bb-row">
           <div className="row1">

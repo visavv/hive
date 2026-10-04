@@ -519,6 +519,8 @@ try {
   await page.locator(".drawer .seg button", { hasText: "Since you left" }).click();
   await page.locator(".drawer .rep-job", { hasText: "loop" }).waitFor({ timeout: 5000 });
   assert(true, "report tab summarizes job runs");
+  await page.locator(".drawer .seg button", { hasText: "Mail" }).first().click();
+  assert(!/hive_send/.test(await page.locator(".drawer-body").innerText()), "the Mail tab explains itself without tool names");
   await page.locator(".drawer .seg button", { hasText: "Blackboard" }).click();
   await page.locator(".drawer .bb-row", { hasText: "ideas/dark-mode" }).waitFor({ timeout: 5000 });
   assert(true, "blackboard tab shows entries agents wrote");

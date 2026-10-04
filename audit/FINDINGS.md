@@ -193,6 +193,7 @@ Still open from this pass: none. Not re-verified with a real vendor (mock only).
 | 18 | — | Verified BUG-011/013 end to end: with one permission ask open, the pane, the sidebar word and the window title ("(1) hive — needs you") agree | UI test |
 | 19 | UX-041 | Verdict setup: the "Code / Text" toggle had no label; it is now "What they make" with one line explaining each choice | UI test |
 | 20 | UX-042 | Recipes: "Main agent / Checkers / Prefix" were jargon; now "Does the work / Checks the work / Name prefix", a line on why a different vendor should check, and the prefix explained | UI test |
+| 21 | UX-043 | Empty states in the Hive panel used tool names ("Agents write here with hive_send to "owner"", "Empty."); Inbox, Mail and Blackboard now say in plain words what will appear there and why | UI test |
 | 3 | — | The improvements → coder → owner flow is now covered by `test/team.ts` at the wiring level (scout sends ideas to the coder; the coder asks the owner first). Model behaviour still unverified with a real vendor | test/team.ts |
 
 ## Pass 5 (2026-10-01)
