@@ -483,7 +483,7 @@ function ToolCard({ item }: { item: Item & { k: "tool" } }) {
         onKeyDown={hasBody ? onActivate(() => setOpen(!open)) : undefined}
       >
         <span className="tstatus">{item.status === "completed" ? "✓" : item.status === "failed" ? "✗" : item.status === "in_progress" ? "…" : "○"}</span>
-        {item.kind && !item.title.toLowerCase().startsWith(item.kind.toLowerCase()) && <span className="tverb">{item.kind}</span>}
+        {item.kind && !["other", "tool"].includes(item.kind) && !item.title.toLowerCase().startsWith(item.kind.toLowerCase()) && <span className="tverb">{item.kind}</span>}
         <span className="ttitle">{item.title}</span>
         {loc && <span className="tloc code-link" data-path={loc} data-line={item.locations[0]?.line ?? undefined} title={`open ${loc} in the code view`}>{shortPath(loc)}</span>}
         {diffs.length > 0 && <span className="tdiff">{diffStat(diffs)}</span>}
