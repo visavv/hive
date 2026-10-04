@@ -191,6 +191,7 @@ Still open from this pass: none. Not re-verified with a real vendor (mock only).
 | 16 | UX-039 | Add agent's permission options said "reject-all — read-only" (wrong: it is chat only, no tools) and "trusted"; they now use the pane's own words with one line each: asks first / reads freely / full access / chat only | UI test |
 | 17 | UX-040 | Closing a pane while its agent was working cancelled the turn silently; it now asks first (the session is kept and can be reopened from "Other agents"). Full `npm test` 30/30 re-run | UI test |
 | 18 | — | Verified BUG-011/013 end to end: with one permission ask open, the pane, the sidebar word and the window title ("(1) hive — needs you") agree | UI test |
+| 19 | UX-041 | Verdict setup: the "Code / Text" toggle had no label; it is now "What they make" with one line explaining each choice | UI test |
 | 3 | — | The improvements → coder → owner flow is now covered by `test/team.ts` at the wiring level (scout sends ideas to the coder; the coder asks the owner first). Model behaviour still unverified with a real vendor | test/team.ts |
 
 ## Pass 5 (2026-10-01)

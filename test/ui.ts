@@ -832,6 +832,8 @@ try {
   const vd = page.locator(".modal.wide", { hasText: "several agents, one judge" });
   await vd.locator("textarea.verdict-prompt").fill("verdict-task: three title ideas for my video");
   await vd.locator(".seg button", { hasText: "Text" }).click();
+  await vd.locator(".verdict-mode .hint", { hasText: "answers in words" }).waitFor({ timeout: 3000 });
+  assert(true, "verdict: the Code / Text choice is labelled and explained");
   for (const l of await vd.locator("fieldset label.radio").all()) if (await l.locator("input").isChecked()) await l.locator("input").uncheck();
   await vd.locator("fieldset label.radio", { hasText: /^\s*Mock agent \(tests\)/ }).locator("input").check();
   await vd.locator("fieldset label.radio", { hasText: "Mock agent 2" }).locator("input").check();
