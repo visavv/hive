@@ -494,6 +494,7 @@ try {
   assert(await activeIn(page, "beta"), "closing the drawer gives focus back to the pane");
   await page.keyboard.press("Escape");
   await pane(page, "beta").locator(".turn", { hasText: "cancelled" }).waitFor({ timeout: 10_000 });
+  assert(!/·\s*$/.test(await pane(page, "beta").locator(".turn", { hasText: "cancelled" }).last().innerText()), "a cancelled turn's footer has no dangling separator");
   assert(true, "Esc in a pane still cancels its turn");
 
   // hive drawer: mail to the owner, report, blackboard, send as owner

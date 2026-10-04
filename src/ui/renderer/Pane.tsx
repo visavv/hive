@@ -461,8 +461,7 @@ const ItemView = memo(function ItemView({ item, name }: { item: Item; rev: numbe
       const ok = item.stopReason === "end_turn";
       return (
         <div className={`turn${ok ? "" : " odd"}`} title={`${ok ? "finished" : item.stopReason} at ${new Date(item.ts).toLocaleTimeString()}`}>
-          {ok ? "" : `${item.stopReason} · `}
-          {item.tokens ? `${item.tokens.toLocaleString()} tok` : ok ? "done" : ""}
+          {[ok ? "" : item.stopReason, item.tokens ? `${item.tokens.toLocaleString()} tok` : ok ? "done" : ""].filter(Boolean).join(" · ")}
         </div>
       );
     }
