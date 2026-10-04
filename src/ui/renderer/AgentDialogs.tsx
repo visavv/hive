@@ -137,7 +137,8 @@ export function AddAgentDialog({ onClose }: { onClose: () => void }) {
             {POLICIES.map((p) => (
               <option key={p} value={p}>
                 {p}
-                {p === "ask" ? " — ask me in the pane" : p === "allow-reads" ? " — auto-allow reads, ask for edits" : p === "allow-all" ? " — trusted (use a worktree)" : " — read-only"}
+                {/* the same words the pane's sub row uses: asks first / reads freely / full access / chat only */}
+                {p === "ask" ? " — asks first: every edit or command waits for your OK in the pane" : p === "allow-reads" ? " — reads freely: reading and searching allowed, edits and commands ask" : p === "allow-all" ? " — full access: runs anything without asking (give it its own worktree)" : " — chat only: no files, no commands"}
               </option>
             ))}
           </select>

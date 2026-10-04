@@ -151,6 +151,10 @@ try {
   await page.locator(".modal select").first().selectOption("mock");
   await until(async () => (await page.locator(".modal select.add-model option").allInnerTexts()).includes("Mock Large"), 5000);
   assert(true, "Add agent has a model choice (filled from what this kind offered)");
+  {
+    const opts = await page.locator(".modal label:has-text('Permissions') option").allInnerTexts();
+    assert(opts.some((o) => /chat only/.test(o)) && opts.some((o) => /asks first/.test(o)) && !opts.some((o) => /read-only/.test(o)), "permission options use the pane's own words (asks first / reads freely / full access / chat only)");
+  }
   await page.keyboard.press("Escape");
   await page.locator(".modal").waitFor({ state: "detached" });
 
