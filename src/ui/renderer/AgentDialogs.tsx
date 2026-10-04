@@ -270,11 +270,11 @@ export function JobDialog({ agent, onClose }: { agent: string; onClose: () => vo
         {kind === "loop" && (
           <>
             <label>
-              <span>Times</span>
+              <span>How many runs</span>
               <input value={times} onChange={(e) => setTimes(e.target.value)} placeholder="5" />
             </label>
             <label>
-              <span>For</span>
+              <span>Or stop after</span>
               <input value={forS} onChange={(e) => setForS(e.target.value)} placeholder="8h (optional)" />
             </label>
           </>
@@ -315,16 +315,16 @@ export function JobDialog({ agent, onClose }: { agent: string; onClose: () => vo
               </label>
             )}
             <label>
-              <span>{path.startsWith("@bb:") ? "Min entries" : "Min lines"}</span>
+              <span>{path.startsWith("@bb:") ? "Run after … new entries" : "Run after … changed lines"}</span>
               <input value={minLines} onChange={(e) => setMinLines(e.target.value)} />
             </label>
             <label>
-              <span>Max wait</span>
-              <input value={maxWait} onChange={(e) => setMaxWait(e.target.value)} placeholder="e.g. 30m — review any change after this long" />
+              <span>Or after this long</span>
+              <input value={maxWait} onChange={(e) => setMaxWait(e.target.value)} placeholder="e.g. 30m: any change gets looked at after this long" />
             </label>
             <label>
-              <span>Cooldown</span>
-              <input value={cooldown} onChange={(e) => setCooldown(e.target.value)} placeholder="e.g. 10m — at most one review per" />
+              <span>At most once every</span>
+              <input value={cooldown} onChange={(e) => setCooldown(e.target.value)} placeholder="e.g. 10m" />
             </label>
           </>
         )}

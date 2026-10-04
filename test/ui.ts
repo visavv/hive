@@ -401,7 +401,7 @@ try {
     assert(Math.abs(lab.y - ta.y) < 12, `job dialog: the Instruction label aligns with the top of its box (${Math.round(lab.y - ta.y)} px)`);
   }
   await page.locator(".modal textarea").fill("hunt bugs");
-  await page.locator(".modal label:has-text('Times') input").fill("2");
+  await page.locator(".modal label:has-text('How many runs') input").fill("2");
   await page.locator(".modal button[type=submit]").click();
   // the job must exist before we wait for it to finish: report the dialog if it didn't take
   const scheduled = await page.locator(".toast", { hasText: "scheduled on beta" }).waitFor({ timeout: 10_000 }).then(() => true, () => false);
