@@ -138,7 +138,9 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 .thought div { white-space: pre-wrap; padding: 4px 0 4px 12px; border-left: 2px solid var(--border); }
 .notice { color: var(--text-2); font-size: var(--fs-1); margin: 4px 0; font-family: var(--font-mono); }
 .notice.error { color: var(--st-error); }
-.turn { color: var(--text-2); font-size: var(--fs-1); text-align: right; margin: 2px 0 10px; border-bottom: 1px dashed var(--border); padding-bottom: 4px; }
+.turn { color: var(--text-3); font-size: var(--fs-1); text-align: right; margin: 0 0 10px; font-variant-numeric: tabular-nums; }
+.turn.odd { color: var(--st-blocked); }
+.notice.team { font-family: var(--font-sans); color: var(--text); background: var(--accent-soft); border-left: 2px solid var(--accent); padding: 4px 8px; border-radius: 0 var(--r-2) var(--r-2) 0; white-space: pre-wrap; }
 
 .tool { margin: 4px 0; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-0); font-size: var(--fs-2); }
 .tool.failed { border-color: #5a2a2a; }

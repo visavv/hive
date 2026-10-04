@@ -254,7 +254,7 @@ try {
   // team broadcast (default): one lead gets the task, the others are told to wait for its mail
   await page.locator(".broadcast input").fill("team task: tidy the readme");
   await page.locator(".broadcast input").press("Enter");
-  await pane(page, "beta").locator(".notice", { hasText: "alpha is leading" }).first().waitFor({ timeout: 10_000 });
+  await pane(page, "beta").locator(".notice.team", { hasText: "alpha is leading" }).first().waitFor({ timeout: 10_000 });
   await pane(page, "alpha").getByText("Team task · you lead").first().waitFor({ timeout: 10_000 });
   assert(true, "team broadcast: one agent leads, the others wait for its part");
   await until(async () => (await pane(page, "alpha").locator(".st.st-working").count()) === 0, 15_000);

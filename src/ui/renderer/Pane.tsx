@@ -445,15 +445,21 @@ const ItemView = memo(function ItemView({ item, name }: { item: Item; rev: numbe
           }}
         />
       );
-    case "notice":
-      return <div className={`notice ${item.level ?? ""}`}>{item.text}</div>;
-    case "turn":
+    case "notice": {
+      // a team broadcast's "waiting for the lead" notice is the pane's whole state for a while: make it readable
+      const team = item.text.startsWith("team broadcast ");
+      return <div className={`notice ${item.level ?? ""}${team ? " team" : ""}`}>{team ? `◔ ${item.text}` : item.text}</div>;
+    }
+    case "turn": {
+      // one quiet line per turn: the token count (the time and stop reason are in the tooltip)
+      const ok = item.stopReason === "end_turn";
       return (
-        <div className="turn">
-          {item.stopReason === "end_turn" ? "done" : item.stopReason}
-          {item.tokens ? ` · ${item.tokens.toLocaleString()} tok` : ""} · {new Date(item.ts).toLocaleTimeString()}
+        <div className={`turn${ok ? "" : " odd"}`} title={`${ok ? "finished" : item.stopReason} at ${new Date(item.ts).toLocaleTimeString()}`}>
+          {ok ? "" : `${item.stopReason} · `}
+          {item.tokens ? `${item.tokens.toLocaleString()} tok` : ok ? "done" : ""}
         </div>
       );
+    }
     case "session":
       return <div className="notice">session {item.how} · {item.sessionId.slice(0, 18)}</div>;
   }

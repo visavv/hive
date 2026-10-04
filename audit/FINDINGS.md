@@ -167,6 +167,13 @@ All pass-6 items were fixed in one round and verified by `npm test` (30 suites) 
 
 Still open from this pass: none. Not re-verified with a real vendor (mock only).
 
+### Pass 6 loop (2026-10-04, one small fix per tick)
+
+| Tick | ID | What | Verified |
+|---|---|---|---|
+| 1 | UX-024 | Turn footer was a dashed rule + "done · 4,210 tok · 3:12:14 PM" on every turn (noise next to T3 Code). Now one quiet right-aligned "4,210 tok"; stop reason and time in the tooltip; cancelled/error turns in amber | UI test (cancel still shown) |
+| 1 | UX-025 | The team-broadcast "waiting for the lead" notice was a grey mono line, easy to miss. Now a tinted accent line with a ◔ mark | UI test (`.notice.team`) |
+
 ## Pass 5 (2026-10-01)
 
 Security review of permission prompts and agent-to-agent reach, plus a review of `hive tui`, the CLI and the phone-access setup scripts. Items not fixed yet are being fixed on the core and UI branches.
