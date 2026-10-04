@@ -1066,7 +1066,9 @@ button.danger { color: var(--st-error); }
   .pal-input { font-size: 17px; padding: 16px; }
   .pal-item { height: 48px; }
   .pal-foot { display: none; }
-  .toasts { top: calc(8px + env(safe-area-inset-top, 0px)); }
+  /* phones: toasts sit above the bottom bar, never over the pane header */
+  .toasts { top: auto; bottom: calc(72px + env(safe-area-inset-bottom, 0px)); left: 12px; right: 12px; align-items: stretch; }
+  .toast { width: auto; }
 
   /* the board: one column per screen, swipe sideways between Draft / In progress / Done */
   .kb-bar { flex-wrap: wrap; height: auto; padding: 8px 12px; row-gap: 8px; }

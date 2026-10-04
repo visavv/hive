@@ -725,6 +725,7 @@ try {
   await command(page, "layout"); // → auto
   await page.setViewportSize({ width: 720, height: 1280 }).catch(() => {});
   await page.locator(".app.vertical").waitFor({ timeout: 5000 });
+  assert(await page.evaluate(() => document.querySelector(".toasts")!.getBoundingClientRect().top > window.innerHeight / 2), "phone layout: toasts sit at the bottom, not over the pane header");
   assert(true, "auto layout goes vertical on a 9:16 window");
   await page.screenshot({ path: join(shots, "hive-ui-vertical.png") });
   // the wrapped top bar (buttons + broadcast row) must not spill over the panes — at a desktop-sized tall window

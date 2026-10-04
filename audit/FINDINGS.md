@@ -184,6 +184,7 @@ Still open from this pass: none. Not re-verified with a real vendor (mock only).
 | 9 | UX-033 | Palette agent rows said "claude-code · hive/coder"; the role (what the agent is for) comes first now, kind and branch after | UI test |
 | 10 | BUG-019 | A cancelled or errored turn's footer ended in a dangling "·" (tick 1 regression); sidebar section titles wrapped under their buttons ("Other agents in this hive" / "4 finished") | UI test |
 | 11 | UX-034 | The sidebar's "N finished" button wrapped onto two lines beside its section title; one line now. Full `npm test` (30/30) re-run this tick | UI test |
+| 12 | UX-035 | Phone layout: toasts stacked over the pane header (the agent's name and state); they now sit above the bottom bar | UI test |
 | 3 | — | The improvements → coder → owner flow is now covered by `test/team.ts` at the wiring level (scout sends ideas to the coder; the coder asks the owner first). Model behaviour still unverified with a real vendor | test/team.ts |
 
 ## Pass 5 (2026-10-01)
