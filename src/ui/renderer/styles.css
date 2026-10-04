@@ -1296,5 +1296,6 @@ button.danger { color: var(--st-error); }
 /* keyboard focus on every row that acts like a button; labels of tall fields sit at the top */
 .mail:focus-visible, .group-item:focus-visible, .stats-rows li:focus-visible, .kb-card:focus-visible, .pane-menu .menu button:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: -2px; }
 .side-head > span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.side-head button { white-space: nowrap; flex: none; }
 .form label:has(textarea) { align-items: start; }
 .form label:has(textarea) > span:first-child { padding-top: 7px; }
