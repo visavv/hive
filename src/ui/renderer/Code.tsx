@@ -329,7 +329,7 @@ function CodeView({ req }: { req: CodeRequest & { nonce: number } }) {
     window.addEventListener("keydown", k, true);
     return () => window.removeEventListener("keydown", k, true);
   }, []);
-  useOverlay("modal", closeCode);
+  useOverlay("panel", closeCode);
 
   useEffect(() => {
     if (req.find) setTimeout(() => findRef.current?.focus(), 0);

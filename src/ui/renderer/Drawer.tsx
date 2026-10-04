@@ -7,7 +7,8 @@ import type { Report } from "../../core/report.js";
 import { rpc } from "./bridge.js";
 import { store, useStore } from "./store.js";
 import { fmtIdle } from "./format.js";
-import { overlays, useOverlay } from "./focus.js";
+import { onActivate, overlays, useOverlay } from "./focus.js";
+import { refreshUsage, watchUsage } from "./usage.js";
 import { HeldList, PauseIcon } from "./Links.js";
 import { VoiceAccounts } from "./Voice.js";
 
@@ -77,7 +78,7 @@ export function Drawer({ onClose, initialTab, docked, onDock }: { onClose: () =>
         <div className="seg">
           {(["report", "inbox", "learn", "board", "mail", "usage", "accounts"] as Tab[]).map((t) => (
             <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>
-              {t === "report" ? "Since you left" : t === "inbox" ? `Inbox${unread + held ? ` (${unread + held})` : ""}` : t === "learn" ? `Learning${learn ? ` (${learn})` : ""}` : t === "board" ? "Blackboard" : t === "usage" ? "Usage" : t === "accounts" ? "Accounts" : "All mail"}
+              {t === "report" ? "Since you left" : t === "inbox" ? `Inbox${unread + held ? ` (${unread + held})` : ""}` : t === "learn" ? `Learning${learn ? ` (${learn})` : ""}` : t === "board" ? "Blackboard" : t === "usage" ? "Usage" : t === "accounts" ? "Accounts" : "Mail"}
             </button>
           ))}
         </div>
@@ -107,7 +108,7 @@ export function Drawer({ onClose, initialTab, docked, onDock }: { onClose: () =>
         {tab === "inbox" && (
           <>
             <HeldList />
-            {!inbox.length && <div className="dim pad">No mail. Agents write here with hive_send to "owner".</div>}
+            {!inbox.length && <div className="dim pad">No mail yet. Agents write to you here when they need a decision or finish something worth your attention.</div>}
             {inbox.map((m) => (
               <Mail key={m.id} m={m} />
             ))}
@@ -119,6 +120,7 @@ export function Drawer({ onClose, initialTab, docked, onDock }: { onClose: () =>
         {tab === "accounts" && <AccountsView />}
         {tab === "mail" && (
           <>
+            {data && !data.messages.length && <div className="dim pad">No mail between agents yet. Everything agents send each other shows up here, oldest at the bottom.</div>}
             {(data?.messages ?? []).map((m) => (
               <Mail key={m.id} m={m} />
             ))}
@@ -216,7 +218,7 @@ export function AccountsView() {
         </span>
         <span className="spacer" />
         <button className="ghost small" onClick={() => load(true)} disabled={busy}>
-          {busy ? "checking…" : "↻ check again"}
+          ↻ check again
         </button>
       </div>
       {!rows && <div className="dim pad">checking each agent (a few seconds)…</div>}
@@ -271,13 +273,12 @@ const BUDGET_HELP: Record<string, string> = {
 export function UsageView() {
   const [u, setU] = useState<Usage | null>(null);
   const [, tick] = useState(0);
-  const load = () => void rpc("usage", {}).then(setU).catch((e) => store.toast(e.message, "error"));
+  const load = () => void refreshUsage();
   useEffect(() => {
-    load();
-    const t = setInterval(load, 15_000);
+    const off = watchUsage((u) => setU(u as Usage));
     const c = setInterval(() => tick((n) => n + 1), 1000);
     return () => {
-      clearInterval(t);
+      off();
       clearInterval(c);
     };
   }, []);
@@ -285,7 +286,16 @@ export function UsageView() {
     void rpc("setBudget", { key, value })
       .then((r) => {
         setU(r);
-        store.toast(`${key} ${value === "" ? "cleared" : `= ${value}`}`);
+        // say what changed in words, not "paused = 1"
+        store.toast(
+          key === "paused"
+            ? value === "1"
+              ? "Automatic work paused: jobs and mail wake-ups wait; your own prompts still run"
+              : "Automatic work resumed"
+            : value === ""
+              ? `${key}: back to the default`
+              : `${key} set to ${value}`,
+        );
       })
       .catch((e) => store.toast(e.message, "error"));
   if (!u) return <div className="dim pad">loading…</div>;
@@ -371,7 +381,7 @@ function BudgetRow({ k, value, help, onSet }: { k: string; value: string; help: 
 function Mail({ m }: { m: HiveData["messages"][number] }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className={`mail${m.to_agent === "owner" && m.read_at == null ? " unread" : ""}`} onClick={() => setOpen(!open)}>
+    <div className={`mail${m.to_agent === "owner" && m.read_at == null ? " unread" : ""}`} role="button" tabIndex={0} aria-expanded={open} onClick={() => setOpen(!open)} onKeyDown={onActivate(() => setOpen(!open))}>
       <div className="row1">
         <strong>{m.from_agent}</strong>
         <span className="dim">→ {m.to_agent === "*" ? "all" : m.to_agent}</span>
@@ -398,7 +408,7 @@ function Board({ rows, onChange }: { rows: HiveData["blackboard"]; onChange: () 
           </button>
         ))}
       </div>
-      {!shown.length && <div className="dim pad">Empty. Agents write shared facts here (ideas/, security/, claim/…).</div>}
+      {!shown.length && <div className="dim pad">Nothing on the board yet. Agents pin shared facts here: ideas they found (ideas/…), security notes (security/…) and the tasks they have claimed (claim/…).</div>}
       {shown.map((r) => (
         <div key={r.key} className="bb-row">
           <div className="row1">

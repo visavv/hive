@@ -9,7 +9,7 @@ import { ctxPct, fmtIdle, statusLabel, noteLabel } from "./format.js";
 import { PromptEditor } from "./Extras.js";
 import { GroupChips, groupColor } from "./Links.js";
 import { agentState, StatePill } from "./state.js";
-import { IconClock, IconClose, IconExpand, IconLink, IconLock, IconSpark, IconMaximize, IconRefresh, IconSend, IconStop } from "./Icons.js";
+import { IconClock, IconClose, IconExpand, IconLink, IconLock, IconMore, IconSpark, IconMaximize, IconRefresh, IconSend, IconStop } from "./Icons.js";
 import { MicButton, PaneVoiceControls, stopSpeech, useVoiceTarget } from "./Voice.js";
 
 export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
@@ -67,10 +67,11 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
           className="sel"
           checked={selected}
           onChange={(e) => onSelect(e.target.checked)}
-          title="include in broadcast"
+          title="include in broadcast (tick several, then Send or Group)"
+          aria-label={`include ${name} in broadcast`}
           onDoubleClick={(e) => e.stopPropagation()}
         />
-        <span className="idx">{index < 9 ? index + 1 : ""}</span>
+        <span className="idx" aria-hidden="true">{index < 9 ? index + 1 : ""}</span>
         <strong
           className="pname"
           draggable
@@ -82,38 +83,20 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
         >
           {name}
         </strong>
-        <span className="kind">{agent?.kind ?? starting?.kind}</span>
         {agent?.role && (
           <span className="role-badge" title={`role: ${agent.role}`}>
             {roleLabel(agent.role)}
           </span>
         )}
-        <GroupChips agent={name} />
         <span className="spacer" />
-        {agent?.ctx && <CtxMeter used={agent.ctx.used} size={agent.ctx.size} />}
         <StatePill state={state} />
-        {agent && agent.queued > 0 && <span className="badge" title="prompts queued">{agent.queued} queued</span>}
-        {agent && agent.jobs > 0 && <span className="badge job" title="scheduled jobs on this agent"><IconClock size={12} /> {agent.jobs}</span>}
         <div className="pane-actions" onDoubleClick={(e) => e.stopPropagation()}>
           <PaneVoiceControls name={name} />
           {agent && status === "working" && (
             <button onClick={() => void rpc("cancel", { name })} title="cancel turn (Esc)" aria-label="cancel turn"><IconStop /></button>
           )}
-          {agent && (
-            <button onClick={onJob} title="schedule a loop / interval / watch job" aria-label="schedule a job"><IconClock /></button>
-          )}
-          <button onClick={() => store.requestLink([name])} title="link with another agent (or drag this pane's name onto another pane)" aria-label="link with another agent">
-            <IconLink />
-          </button>
-          {agent && (
-            <button
-              onClick={() => void rpc("newSession", { name }).catch((e) => store.toast(e.message, "error"))}
-              title="fresh session (clears context)"
-            >
-              <IconRefresh />
-            </button>
-          )}
-          <button onClick={onMaximize} title="maximize / restore" aria-label="maximize"><IconMaximize /></button>
+          <button onClick={onMaximize} title="maximize / restore (Ctrl+M)" aria-label="maximize"><IconMaximize /></button>
+          <PaneMenu name={name} agent={agent} onJob={onJob} />
           <button className="close" onClick={() => closePane(name)} title="close pane" aria-label="close pane"><IconClose /></button>
         </div>
       </header>
@@ -128,9 +111,14 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
             <span className="where">{agent.cwd.split(/[\\/]/).filter(Boolean).pop() ?? agent.cwd}</span>
           )}
           <span className={`pol pol-${agent.policy}`}>{POLICY_LABEL[agent.policy] ?? agent.policy}</span>
+          <span className="kind" title="agent kind">{agent.kind}</span>
+          <GroupChips agent={name} />
           {agent.auth?.startsWith("not logged in") && <span className="warn">not signed in</span>}
+          {agent.queued > 0 && <span className="badge" title="prompts queued">{agent.queued} queued</span>}
+          {agent.jobs > 0 && <span className="badge job" title="scheduled jobs on this agent"><IconClock size={11} /> {agent.jobs}</span>}
           <span className="spacer" />
           <span className="note">{noteLabel(agent.note)}</span>
+          {agent.ctx && <CtxMeter used={agent.ctx.used} size={agent.ctx.size} />}
           {status === "idle" && <span>idle {fmtIdle(agent.idleMs)}</span>}
         </div>
       )}
@@ -143,7 +131,7 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
       ) : !agent && !starting ? (
         <div className="pane-error stopped">
           Agent is not running.
-          <button onClick={() => retry(name)}>Restart (resumes the session)</button>
+          <button onClick={() => retry(name)}>Restart</button>
         </div>
       ) : (
         <Composer name={name} agent={agent} />
@@ -159,6 +147,9 @@ function autoPromptLabel(t: string): string | undefined {
   m = t.match(/^\[hive job #(\d+), (\w+)(?:: ([^\]]+))?\]/);
   if (m) return `Job #${m[1]} · ${m[2]}${m[3] ? ` · ${m[3]}` : ""}`;
   if (t.startsWith("[team broadcast from the owner — you lead]")) return `Team task · you lead · ${(t.match(/\nTask: ([^\n]*)/)?.[1] ?? "").slice(0, 70)}`;
+  // code-view questions carry the file and the code: the first line is the label, the rest folds
+  m = t.match(/^\[learn\] ([^\n]{1,120})/);
+  if (m) return m[1];
   m = t.match(/^\[follow-up from ([\w.-]+)\]/);
   if (m) return `Follow-up from ${m[1]}`;
   if (t.includes("You are agent \"") && t.includes("local multi-agent hive")) return "Briefing";
@@ -190,9 +181,61 @@ export function roleLabel(role: string): string {
 
 const POLICY_LABEL: Record<string, string> = { ask: "asks first", "allow-reads": "reads freely", "allow-all": "full access", "reject-all": "chat only" };
 
+/** The "…" menu: the pane actions that aren't needed every minute (job, link, fresh session). */
+function PaneMenu({ name, agent, onJob }: { name: string; agent?: AgentView; onJob: () => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") (e.stopPropagation(), setOpen(false));
+    };
+    window.addEventListener("mousedown", away);
+    window.addEventListener("keydown", key, true);
+    return () => {
+      window.removeEventListener("mousedown", away);
+      window.removeEventListener("keydown", key, true);
+    };
+  }, [open]);
+  const item = (label: string, icon: React.ReactNode, run: () => void, disabled = false) => (
+    <button
+      type="button"
+      role="menuitem"
+      disabled={disabled}
+      onClick={() => {
+        setOpen(false);
+        run();
+      }}
+    >
+      {icon} {label}
+    </button>
+  );
+  return (
+    <span className="pane-menu" ref={ref}>
+      <button onClick={() => setOpen(!open)} title="more: schedule a job, link, fresh session" aria-label="more actions" aria-expanded={open} aria-haspopup="menu">
+        <IconMore />
+      </button>
+      {open && (
+        <div className="menu" role="menu">
+          {item("Schedule a job (loop, interval, watch)…", <IconClock size={14} />, onJob, !agent)}
+          {item("Link with another agent…", <IconLink size={14} />, () => store.requestLink([name]))}
+          <div className="sep" />
+          {item("Fresh session (clears context)", <IconRefresh size={14} />, () => void rpc("newSession", { name }).catch((e) => store.toast(e.message, "error")), !agent)}
+        </div>
+      )}
+    </span>
+  );
+}
+
 function closePane(name: string) {
-  const jobs = store.agents.get(name)?.jobs ?? 0;
+  const a = store.agents.get(name);
+  const jobs = a?.jobs ?? 0;
   if (jobs && !confirm(`${name} has ${jobs} scheduled job${jobs === 1 ? "" : "s"}. Close the pane and stop ${jobs === 1 ? "it" : "them"}?`)) return;
+  // closing a working agent cancels its turn: say so instead of losing work on a mis-click
+  if (!jobs && a?.status === "working" && !confirm(`${name} is still working. Close the pane and cancel its turn? (Its session is kept; you can reopen it from "Other agents".)`)) return;
   const l = store.layout;
   store.layout = { ...l, panes: l.panes.filter((p) => p.name !== name), maximized: l.maximized === name ? null : l.maximized };
   store.starting.delete(name);
@@ -228,7 +271,7 @@ function shortPath(p: string) {
 function CtxMeter({ used, size }: { used: number; size: number }) {
   const pct = ctxPct(used, size);
   return (
-    <span className={`ctx ${pct > 85 ? "hot" : pct > 60 ? "warm" : ""}`} title={`context ${used.toLocaleString()} / ${size.toLocaleString()} tokens`}>
+    <span className={`ctx ${pct > 85 ? "hot" : pct > 60 ? "warm" : ""}`} role="img" aria-label={`context window ${pct}% full`} title={`context window: ${used.toLocaleString()} of ${size.toLocaleString()} tokens used (${pct}%)`}>
       <span className="bar" style={{ width: `${Math.min(100, pct)}%` }} />
       <span className="lbl">{pct}%</span>
     </span>
@@ -284,7 +327,12 @@ export const Transcript = memo(function Transcript({ name }: { name: string }) {
         stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
       }}
     >
-      {pane.items.length === 0 && <div className="empty">Type below to talk to {name}. Esc cancels a turn; ↑ recalls your last prompt.</div>}
+      {/* a fresh pane holds only the session line, so the hint keys off real conversation items */}
+      {!pane.items.some((i) => i.k !== "notice" && i.k !== "session") && (
+        <div className="empty">
+          Say what you want {name} to do. <b>✦</b> turns a rough idea into a full prompt, <b>/</b> lists commands, <b>Esc</b> cancels a turn.
+        </div>
+      )}
       {foldTurns(pane.items).map((b) =>
         b.work ? (
           <details className="worked" key={"w" + b.work[0].id}>
@@ -410,15 +458,20 @@ const ItemView = memo(function ItemView({ item, name }: { item: Item; rev: numbe
           }}
         />
       );
-    case "notice":
-      return <div className={`notice ${item.level ?? ""}`}>{item.text}</div>;
-    case "turn":
+    case "notice": {
+      // a team broadcast's "waiting for the lead" notice is the pane's whole state for a while: make it readable
+      const team = item.text.startsWith("team broadcast ");
+      return <div className={`notice ${item.level ?? ""}${team ? " team" : ""}`}>{team ? `◔ ${item.text}` : item.text}</div>;
+    }
+    case "turn": {
+      // one quiet line per turn: the token count (the time and stop reason are in the tooltip)
+      const ok = item.stopReason === "end_turn";
       return (
-        <div className="turn">
-          {item.stopReason === "end_turn" ? "done" : item.stopReason}
-          {item.tokens ? ` · ${item.tokens.toLocaleString()} tok` : ""} · {new Date(item.ts).toLocaleTimeString()}
+        <div className={`turn${ok ? "" : " odd"}`} title={`${ok ? "finished" : item.stopReason} at ${new Date(item.ts).toLocaleTimeString()}`}>
+          {[ok ? "" : item.stopReason, item.tokens ? `${item.tokens.toLocaleString()} tok` : ok ? "done" : ""].filter(Boolean).join(" · ")}
         </div>
       );
+    }
     case "session":
       return <div className="notice">session {item.how} · {item.sessionId.slice(0, 18)}</div>;
   }
@@ -441,7 +494,7 @@ function ToolCard({ item }: { item: Item & { k: "tool" } }) {
         onKeyDown={hasBody ? onActivate(() => setOpen(!open)) : undefined}
       >
         <span className="tstatus">{item.status === "completed" ? "✓" : item.status === "failed" ? "✗" : item.status === "in_progress" ? "…" : "○"}</span>
-        <span className="tkind">{item.kind ?? "tool"}</span>
+        {item.kind && !["other", "tool"].includes(item.kind) && !item.title.toLowerCase().startsWith(item.kind.toLowerCase()) && <span className="tverb">{item.kind}</span>}
         <span className="ttitle">{item.title}</span>
         {loc && <span className="tloc code-link" data-path={loc} data-line={item.locations[0]?.line ?? undefined} title={`open ${loc} in the code view`}>{shortPath(loc)}</span>}
         {diffs.length > 0 && <span className="tdiff">{diffStat(diffs)}</span>}
@@ -698,12 +751,26 @@ function Composer({ name, agent }: { name: string; agent?: AgentView }) {
           ))}
         </div>
       )}
+      {agent && agent.status === "working" && (
+        <div className="composer-state">
+          <StatePill state="working" />
+          <span>Enter queues your message · Esc cancels the turn</span>
+        </div>
+      )}
+      {agent && agent.status !== "working" && agent.ctx && ctxPct(agent.ctx.used, agent.ctx.size) > 85 && (
+        <div className="composer-state warn">
+          <span>Context is {ctxPct(agent.ctx.used, agent.ctx.size)}% full: replies get worse and cost more.</span>
+          <button className="ghost small" onClick={() => void rpc("newSession", { name }).catch((e) => store.toast(e.message, "error"))} title="start a fresh conversation with this agent (its memory files and briefing stay)">
+            Fresh session
+          </button>
+        </div>
+      )}
       <div className="composer-box">
       <textarea
         ref={ref}
         value={text}
         rows={Math.min(8, Math.max(1, text.split("\n").length))}
-        placeholder={improving ? "writing a better prompt…" : agent ? (agent.status === "working" ? "agent is working — Enter queues, Esc cancels" : `message ${name}…  ✦ improves a rough idea`) : "starting…"}
+        placeholder={improving ? "writing a better prompt…" : agent ? `message ${name}…` : "starting…"}
         disabled={!agent || improving}
         onFocus={() => focus.setActive(name)}
         onChange={(e) => {

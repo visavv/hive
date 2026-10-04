@@ -101,7 +101,10 @@ export function AddAgentDialog({ onClose }: { onClose: () => void }) {
               ))}
             </select>
           ) : (
-            <input className="add-model" value={model} onChange={(e) => setModel(e.target.value)} placeholder="default (or type a model name; the list fills in once this agent has run)" />
+            <span className="field-col">
+              <input className="add-model" value={model} onChange={(e) => setModel(e.target.value)} placeholder="default" />
+              <span className="hint small dim">or type a model id; the list fills in once this agent has run</span>
+            </span>
           )}
         </label>
         <label>
@@ -134,7 +137,8 @@ export function AddAgentDialog({ onClose }: { onClose: () => void }) {
             {POLICIES.map((p) => (
               <option key={p} value={p}>
                 {p}
-                {p === "ask" ? " — ask me in the pane" : p === "allow-reads" ? " — auto-allow reads, ask for edits" : p === "allow-all" ? " — trusted (use a worktree)" : " — read-only"}
+                {/* the same words the pane's sub row uses: asks first / reads freely / full access / chat only */}
+                {p === "ask" ? " — asks first: every edit or command waits for your OK in the pane" : p === "allow-reads" ? " — reads freely: reading and searching allowed, edits and commands ask" : p === "allow-all" ? " — full access: runs anything without asking (give it its own worktree)" : " — chat only: no files, no commands"}
               </option>
             ))}
           </select>
@@ -266,11 +270,11 @@ export function JobDialog({ agent, onClose }: { agent: string; onClose: () => vo
         {kind === "loop" && (
           <>
             <label>
-              <span>Times</span>
+              <span>How many runs</span>
               <input value={times} onChange={(e) => setTimes(e.target.value)} placeholder="5" />
             </label>
             <label>
-              <span>For</span>
+              <span>Or stop after</span>
               <input value={forS} onChange={(e) => setForS(e.target.value)} placeholder="8h (optional)" />
             </label>
           </>
@@ -311,16 +315,16 @@ export function JobDialog({ agent, onClose }: { agent: string; onClose: () => vo
               </label>
             )}
             <label>
-              <span>{path.startsWith("@bb:") ? "Min entries" : "Min lines"}</span>
+              <span>{path.startsWith("@bb:") ? "Run after … new entries" : "Run after … changed lines"}</span>
               <input value={minLines} onChange={(e) => setMinLines(e.target.value)} />
             </label>
             <label>
-              <span>Max wait</span>
-              <input value={maxWait} onChange={(e) => setMaxWait(e.target.value)} placeholder="e.g. 30m — review any change after this long" />
+              <span>Or after this long</span>
+              <input value={maxWait} onChange={(e) => setMaxWait(e.target.value)} placeholder="e.g. 30m: any change gets looked at after this long" />
             </label>
             <label>
-              <span>Cooldown</span>
-              <input value={cooldown} onChange={(e) => setCooldown(e.target.value)} placeholder="e.g. 10m — at most one review per" />
+              <span>At most once every</span>
+              <input value={cooldown} onChange={(e) => setCooldown(e.target.value)} placeholder="e.g. 10m" />
             </label>
           </>
         )}

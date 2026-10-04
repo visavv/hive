@@ -91,8 +91,8 @@ await shot("01-welcome");
 // set up the squad from the recipe dialog
 await page.locator(".welcome button", { hasText: "Set up a team" }).click();
 await page.locator(".modal .recipe", { hasText: "Squad" }).click();
-await page.locator(".modal label:has-text('Main agent') select").selectOption("claude-code");
-await page.locator(".modal label:has-text('Checkers') select").selectOption("codex-cli");
+await page.locator(".modal label:has-text('Does the work') select").selectOption("claude-code");
+await page.locator(".modal label:has-text('Checks the work') select").selectOption("codex-cli");
 await shot("02-recipes");
 await page.locator(".modal button[type=submit]").click();
 for (const n of ["planner", "coder", "reviewer", "tester"]) await pane(n).locator("textarea:not([disabled])").waitFor({ timeout: 30_000 });

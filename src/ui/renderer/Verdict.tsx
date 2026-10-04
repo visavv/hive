@@ -73,14 +73,20 @@ function VerdictSetup({ initial }: { initial: string }) {
             <span>Judge model</span>
             <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="optional, e.g. the strongest model id" />
           </label>
-          <div className="seg" role="group" aria-label="mode">
-            <button type="button" className={mode === "code" ? "on" : ""} onClick={() => setMode("code")} title="each agent writes code in its own worktree">
-              Code
-            </button>
-            <button type="button" className={mode === "text" ? "on" : ""} onClick={() => setMode("text")} title="compare answers (titles, plans, prompts…)">
-              Text
-            </button>
-          </div>
+          <label className="verdict-mode">
+            <span>What they make</span>
+            <span className="field-col">
+              <div className="seg" role="group" aria-label="mode">
+                <button type="button" className={mode === "code" ? "on" : ""} onClick={() => setMode("code")} title="each agent writes code in its own worktree">
+                  Code
+                </button>
+                <button type="button" className={mode === "text" ? "on" : ""} onClick={() => setMode("text")} title="compare answers (titles, plans, prompts…)">
+                  Text
+                </button>
+              </div>
+              <span className="hint small dim">{mode === "code" ? "each agent builds it in its own worktree; the judge reads the diffs" : "each agent answers in words (titles, plans, prompts); the judge compares the answers"}</span>
+            </span>
+          </label>
           {mode === "code" && (
             <label>
               <span>Contenders may</span>
