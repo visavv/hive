@@ -328,8 +328,8 @@ export function GroupsSection() {
       </div>
       <details className="group-rules">
         <summary>
-          Rules: {scope === "linked" ? "only linked agents talk" : "agents can message anyone"}
-          {guard ? " · full-access agents protected" : ""}
+          Rules: {scope === "linked" ? "agents talk only to agents you linked" : "any agent can message any agent"}
+          {guard ? " · mail to full-access agents waits for you" : ""}
         </summary>
         <div className="scope-row">
           <div className="seg small" role="group" aria-label="who agents can message">
@@ -342,7 +342,7 @@ export function GroupsSection() {
           </div>
         </div>
         <label className="radio small guard-row" title="An agent that may run anything only takes orders from agents you linked it with; other agents' mail to it waits for your review.">
-          <input type="checkbox" checked={guard} onChange={(e) => void rpc("setGuard", { on: e.target.checked })} /> hold unlinked mail to full-access agents
+          <input type="checkbox" checked={guard} onChange={(e) => void rpc("setGuard", { on: e.target.checked })} /> mail from unlinked agents to a full-access agent waits for me
         </label>
       </details>
       <ul className="agent-list">
