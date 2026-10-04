@@ -142,6 +142,7 @@ try {
   await addAgent(page, "alpha");
   await addAgent(page, "beta", "allow-all");
   assert((await page.locator(".pane").count()) === 2, "two panes open");
+  assert((await pane(page, "alpha").locator(".empty").count()) === 1, "a fresh pane shows the getting-started hint");
   assert((await page.locator(".agent-item").count()) === 2, "sidebar lists both agents");
 
   // Add agent offers the models this kind has shown before

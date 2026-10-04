@@ -320,7 +320,12 @@ export const Transcript = memo(function Transcript({ name }: { name: string }) {
         stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
       }}
     >
-      {pane.items.length === 0 && <div className="empty">Type below to talk to {name}. Esc cancels a turn; ↑ recalls your last prompt.</div>}
+      {/* a fresh pane holds only the session line, so the hint keys off real conversation items */}
+      {!pane.items.some((i) => i.k !== "notice" && i.k !== "session") && (
+        <div className="empty">
+          Say what you want {name} to do. <b>✦</b> turns a rough idea into a full prompt, <b>/</b> lists commands, <b>Esc</b> cancels a turn.
+        </div>
+      )}
       {foldTurns(pane.items).map((b) =>
         b.work ? (
           <details className="worked" key={"w" + b.work[0].id}>
