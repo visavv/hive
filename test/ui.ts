@@ -473,7 +473,8 @@ try {
   // recipes: studio opens a chat pane
   await command(page, "set up a team");
   await page.locator(".modal .recipe", { hasText: "Creator studio" }).click();
-  await page.locator(".modal label:has-text('Main agent') select").selectOption("mock");
+  assert((await page.locator(".modal label:has-text('Does the work') select").count()) === 1 && (await page.locator(".modal label:has-text('Name prefix') .hint").count()) === 1, "recipes: the vendor selects say who does and who checks the work; the prefix is explained");
+  await page.locator(".modal label:has-text('Does the work') select").selectOption("mock");
   await page.locator(".modal button[type=submit]").click();
   await page.locator(`[data-pane="studio"] textarea:not([disabled])`).waitFor({ timeout: 20_000 });
   assert(true, "a recipe sets up its team and opens the agent you talk to");
