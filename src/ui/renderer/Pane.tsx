@@ -9,7 +9,7 @@ import { ctxPct, fmtIdle, statusLabel, noteLabel } from "./format.js";
 import { PromptEditor } from "./Extras.js";
 import { GroupChips, groupColor } from "./Links.js";
 import { agentState, StatePill } from "./state.js";
-import { IconClock, IconClose, IconExpand, IconLink, IconLock, IconSpark, IconMaximize, IconRefresh, IconSend, IconStop } from "./Icons.js";
+import { IconClock, IconClose, IconExpand, IconLink, IconLock, IconMore, IconSpark, IconMaximize, IconRefresh, IconSend, IconStop } from "./Icons.js";
 import { MicButton, PaneVoiceControls, stopSpeech, useVoiceTarget } from "./Voice.js";
 
 export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
@@ -82,38 +82,20 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
         >
           {name}
         </strong>
-        <span className="kind">{agent?.kind ?? starting?.kind}</span>
         {agent?.role && (
           <span className="role-badge" title={`role: ${agent.role}`}>
             {roleLabel(agent.role)}
           </span>
         )}
-        <GroupChips agent={name} />
         <span className="spacer" />
-        {agent?.ctx && <CtxMeter used={agent.ctx.used} size={agent.ctx.size} />}
         <StatePill state={state} />
-        {agent && agent.queued > 0 && <span className="badge" title="prompts queued">{agent.queued} queued</span>}
-        {agent && agent.jobs > 0 && <span className="badge job" title="scheduled jobs on this agent"><IconClock size={12} /> {agent.jobs}</span>}
         <div className="pane-actions" onDoubleClick={(e) => e.stopPropagation()}>
           <PaneVoiceControls name={name} />
           {agent && status === "working" && (
             <button onClick={() => void rpc("cancel", { name })} title="cancel turn (Esc)" aria-label="cancel turn"><IconStop /></button>
           )}
-          {agent && (
-            <button onClick={onJob} title="schedule a loop / interval / watch job" aria-label="schedule a job"><IconClock /></button>
-          )}
-          <button onClick={() => store.requestLink([name])} title="link with another agent (or drag this pane's name onto another pane)" aria-label="link with another agent">
-            <IconLink />
-          </button>
-          {agent && (
-            <button
-              onClick={() => void rpc("newSession", { name }).catch((e) => store.toast(e.message, "error"))}
-              title="fresh session (clears context)"
-            >
-              <IconRefresh />
-            </button>
-          )}
-          <button onClick={onMaximize} title="maximize / restore" aria-label="maximize"><IconMaximize /></button>
+          <button onClick={onMaximize} title="maximize / restore (Ctrl+M)" aria-label="maximize"><IconMaximize /></button>
+          <PaneMenu name={name} agent={agent} onJob={onJob} />
           <button className="close" onClick={() => closePane(name)} title="close pane" aria-label="close pane"><IconClose /></button>
         </div>
       </header>
@@ -128,9 +110,14 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
             <span className="where">{agent.cwd.split(/[\\/]/).filter(Boolean).pop() ?? agent.cwd}</span>
           )}
           <span className={`pol pol-${agent.policy}`}>{POLICY_LABEL[agent.policy] ?? agent.policy}</span>
+          <span className="kind" title="agent kind">{agent.kind}</span>
+          <GroupChips agent={name} />
           {agent.auth?.startsWith("not logged in") && <span className="warn">not signed in</span>}
+          {agent.queued > 0 && <span className="badge" title="prompts queued">{agent.queued} queued</span>}
+          {agent.jobs > 0 && <span className="badge job" title="scheduled jobs on this agent"><IconClock size={11} /> {agent.jobs}</span>}
           <span className="spacer" />
           <span className="note">{noteLabel(agent.note)}</span>
+          {agent.ctx && <CtxMeter used={agent.ctx.used} size={agent.ctx.size} />}
           {status === "idle" && <span>idle {fmtIdle(agent.idleMs)}</span>}
         </div>
       )}
@@ -143,7 +130,7 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
       ) : !agent && !starting ? (
         <div className="pane-error stopped">
           Agent is not running.
-          <button onClick={() => retry(name)}>Restart (resumes the session)</button>
+          <button onClick={() => retry(name)}>Restart</button>
         </div>
       ) : (
         <Composer name={name} agent={agent} />
@@ -189,6 +176,54 @@ export function roleLabel(role: string): string {
 }
 
 const POLICY_LABEL: Record<string, string> = { ask: "asks first", "allow-reads": "reads freely", "allow-all": "full access", "reject-all": "chat only" };
+
+/** The "…" menu: the pane actions that aren't needed every minute (job, link, fresh session). */
+function PaneMenu({ name, agent, onJob }: { name: string; agent?: AgentView; onJob: () => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") (e.stopPropagation(), setOpen(false));
+    };
+    window.addEventListener("mousedown", away);
+    window.addEventListener("keydown", key, true);
+    return () => {
+      window.removeEventListener("mousedown", away);
+      window.removeEventListener("keydown", key, true);
+    };
+  }, [open]);
+  const item = (label: string, icon: React.ReactNode, run: () => void, disabled = false) => (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={() => {
+        setOpen(false);
+        run();
+      }}
+    >
+      {icon} {label}
+    </button>
+  );
+  return (
+    <span className="pane-menu" ref={ref}>
+      <button onClick={() => setOpen(!open)} title="more: schedule a job, link, fresh session" aria-label="more actions" aria-expanded={open} aria-haspopup="menu">
+        <IconMore />
+      </button>
+      {open && (
+        <div className="menu" role="menu">
+          {item("Schedule a job (loop, interval, watch)…", <IconClock size={14} />, onJob, !agent)}
+          {item("Link with another agent…", <IconLink size={14} />, () => store.requestLink([name]))}
+          <div className="sep" />
+          {item("Fresh session (clears context)", <IconRefresh size={14} />, () => void rpc("newSession", { name }).catch((e) => store.toast(e.message, "error")), !agent)}
+        </div>
+      )}
+    </span>
+  );
+}
 
 function closePane(name: string) {
   const jobs = store.agents.get(name)?.jobs ?? 0;
@@ -441,7 +476,7 @@ function ToolCard({ item }: { item: Item & { k: "tool" } }) {
         onKeyDown={hasBody ? onActivate(() => setOpen(!open)) : undefined}
       >
         <span className="tstatus">{item.status === "completed" ? "✓" : item.status === "failed" ? "✗" : item.status === "in_progress" ? "…" : "○"}</span>
-        <span className="tkind">{item.kind ?? "tool"}</span>
+        {item.kind && !item.title.toLowerCase().startsWith(item.kind.toLowerCase()) && <span className="tverb">{item.kind}</span>}
         <span className="ttitle">{item.title}</span>
         {loc && <span className="tloc code-link" data-path={loc} data-line={item.locations[0]?.line ?? undefined} title={`open ${loc} in the code view`}>{shortPath(loc)}</span>}
         {diffs.length > 0 && <span className="tdiff">{diffStat(diffs)}</span>}
@@ -698,12 +733,18 @@ function Composer({ name, agent }: { name: string; agent?: AgentView }) {
           ))}
         </div>
       )}
+      {agent && agent.status === "working" && (
+        <div className="composer-state">
+          <StatePill state="working" />
+          <span>Enter queues your message · Esc cancels the turn</span>
+        </div>
+      )}
       <div className="composer-box">
       <textarea
         ref={ref}
         value={text}
         rows={Math.min(8, Math.max(1, text.split("\n").length))}
-        placeholder={improving ? "writing a better prompt…" : agent ? (agent.status === "working" ? "agent is working — Enter queues, Esc cancels" : `message ${name}…  ✦ improves a rough idea`) : "starting…"}
+        placeholder={improving ? "writing a better prompt…" : agent ? `message ${name}…` : "starting…"}
         disabled={!agent || improving}
         onFocus={() => focus.setActive(name)}
         onChange={(e) => {

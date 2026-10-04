@@ -44,7 +44,7 @@ Disproved: pass 1 suspected "Ctrl+9 doesn't scroll in vertical layout". The caus
 
 ## Pass 6 (2026-10-04): UI coherence, control-by-control value, orchestration workflows
 
-Review only; nothing was changed in this pass. Method: the demo session (`test/showcase.ts`, mock agents in demo mode), a scenario script (dialogs, six agents, 1280×720 and 1920×1080, 3 columns, a 25-turn transcript, every drawer tab, light theme, 120 % zoom), the existing UI test (passes), and a code trace of the control inventory, the agent state model and `styles.css`. **Only the mock agent was exercised; no real vendor is signed in on this machine.** Evidence: `audit/evidence/pass6/`, `docs/screenshots/` (regenerated).
+Review on 2026-10-04, fix round the same day (see "Pass 6 fixes" below). Method: the demo session (`test/showcase.ts`, mock agents in demo mode), a scenario script (dialogs, six agents, 1280×720 and 1920×1080, 3 columns, a 25-turn transcript, every drawer tab, light theme, 120 % zoom), the existing UI test (passes), and a code trace of the control inventory, the agent state model and `styles.css`. **Only the mock agent was exercised; no real vendor is signed in on this machine.** Evidence: `audit/evidence/pass6/`, `docs/screenshots/` (regenerated).
 
 ### Assessment
 
@@ -139,6 +139,33 @@ No agents, one, six: fine (r01, 03, r07). 25-turn transcript: renders without la
 4. UX-013 + UX-016: header diet and tool-line rendering.
 5. UX-014/015/017/018/019/020/021: control cleanup.
 6. BUG-009/010, UX-022/023, PERF-002, IDEA-008.
+
+### Pass 6 fixes (2026-10-04)
+
+All pass-6 items were fixed in one round and verified by `npm test` (30 suites) and `npm run test:ui` (new checks: 1280 px / 3 columns nothing clips, undo button width, Ctrl+J closes the board, every dialog has ✕, the pane … menu). Screenshots regenerated.
+
+| ID | What changed |
+|---|---|
+| BUG-005/006/007 | container queries moved to the end of `styles.css` (nothing can undo them); the header now holds name · role · state · actions only, everything else in the sub row, which collapses by width; tables never break words and scroll sideways; drawer tabs sit on their own row and never wrap |
+| BUG-008 | composer rules share one specificity; undo is text-wide; ✦ hover accent works |
+| BUG-009 | palette "Zoom in" zooms in (hint names Ctrl+- / Ctrl+0) |
+| BUG-010 | Ctrl+J closes the board; Ctrl+I / M / J / P ignore Shift; the board and the code view are "panel" overlays, so Ctrl+K opens the palette over them (UX-023) but never over a form dialog |
+| BUG-011/012/013/014 | `agentState`: "needs you" only from open asks, tool-set waiting is shown as working with a note, asleep → stopped; window title uses `rollup`; other agents use the same `StatePill`; palette re-reads states while open |
+| BUG-015/016 | leftover `.pane.ready` / `.pane.linked` borders removed; the colour-mix override removed and the dark themes' borders set per theme |
+| BUG-017 | one loading line in Accounts |
+| UX-010/011/012 | one `:root` token block (the two older ones and the alias names are gone; 14 legacy names rewritten); type scale `--fs-1..4`, chip/control/icon heights, `--r-pill`; one `hive-pulse` keyframe and one dot size for `.dot`, `.gdot`, `.st-dot` and the voice badge; one reduced-motion block |
+| UX-013 | pane header diet; job, link and fresh session live in a … menu |
+| UX-014 | Team/Each is a small select in the broadcast box ("as a team" / "to each"); the Verdict button left the top bar (palette, welcome screen and the prompt editor still open it) |
+| UX-015 | placeholder is "message <name>…"; while working a line above the box says "Enter queues your message · Esc cancels the turn" |
+| UX-016 | tool calls are one line each while running and after the fold; the verb is shown once |
+| UX-017 | Ctrl+\ and Ctrl+Shift+[ ] removed; one "Restart" label; bell and palette share `togglePing` |
+| UX-018/019 | ✕ in every dialog (`Modal`); the card editor uses `Modal`; "Delete group" moved to the group header, away from Send |
+| UX-020/021 | job cards: schedule on one line, runs on the next; Add agent model field says "default" with a hint under it |
+| UX-022 | group rows, mail rows and stats rows are keyboard-reachable buttons |
+| PERF-002 | one usage poller (`usage.ts`) feeds the chip and the Usage tab |
+| IDEA-008 | "Inspiration" section at the top of docs/COMPARISON.md |
+
+Still open from this pass: none. Not re-verified with a real vendor (mock only).
 
 ## Pass 5 (2026-10-01)
 

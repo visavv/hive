@@ -34,6 +34,9 @@ export function Modal({ title, onClose, children, wide }: { title: string; onClo
     <div className="modal-back" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div ref={ref} tabIndex={-1} className={`modal${wide ? " wide" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
         <h2>{title}</h2>
+        <button type="button" className="ghost modal-close" onClick={onClose} title="close (Esc)" aria-label="close">
+          ✕
+        </button>
         {children}
       </div>
     </div>

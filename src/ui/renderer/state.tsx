@@ -22,10 +22,11 @@ const PRIORITY: AgentState[] = ["needs", "error", "working", "done", "idle", "st
 export function agentState(name: string): AgentState {
   const a = store.agents.get(name);
   const st = store.starting.get(name);
-  if (store.waitingOn(name) > 0 || a?.status === "waiting") return "needs";
+  // "needs you" only when there is something to answer in the pane: a tool-set "waiting" status is a note, not a state
+  if (store.waitingOn(name) > 0) return "needs";
   if (a?.status === "error" || st?.error) return "error";
-  if (!a) return st ? "starting" : "stopped";
-  if (a.status === "working") return "working";
+  if (!a || a.status === "asleep") return st ? "starting" : "stopped";
+  if (a.status === "working" || a.status === "waiting") return "working";
   if (a.status === "starting") return "starting";
   if (store.readyAt.has(name)) return "done";
   return "idle";
@@ -35,6 +36,11 @@ export function agentState(name: string): AgentState {
 export function rollup(states: AgentState[]): AgentState | undefined {
   for (const s of PRIORITY) if (states.includes(s)) return s;
   return undefined;
+}
+
+/** The one state for a raw backend status (agents without a pane, e.g. started by a job or another process). */
+export function stateOfStatus(status: string): AgentState {
+  return status === "waiting" || status === "working" ? "working" : status === "error" ? "error" : status === "asleep" ? "stopped" : status === "starting" ? "starting" : "idle";
 }
 
 export function StatePill({ state, compact }: { state: AgentState; compact?: boolean }) {

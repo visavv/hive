@@ -7,7 +7,8 @@ import type { Report } from "../../core/report.js";
 import { rpc } from "./bridge.js";
 import { store, useStore } from "./store.js";
 import { fmtIdle } from "./format.js";
-import { overlays, useOverlay } from "./focus.js";
+import { onActivate, overlays, useOverlay } from "./focus.js";
+import { refreshUsage, watchUsage } from "./usage.js";
 import { HeldList, PauseIcon } from "./Links.js";
 import { VoiceAccounts } from "./Voice.js";
 
@@ -77,7 +78,7 @@ export function Drawer({ onClose, initialTab, docked, onDock }: { onClose: () =>
         <div className="seg">
           {(["report", "inbox", "learn", "board", "mail", "usage", "accounts"] as Tab[]).map((t) => (
             <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>
-              {t === "report" ? "Since you left" : t === "inbox" ? `Inbox${unread + held ? ` (${unread + held})` : ""}` : t === "learn" ? `Learning${learn ? ` (${learn})` : ""}` : t === "board" ? "Blackboard" : t === "usage" ? "Usage" : t === "accounts" ? "Accounts" : "All mail"}
+              {t === "report" ? "Since you left" : t === "inbox" ? `Inbox${unread + held ? ` (${unread + held})` : ""}` : t === "learn" ? `Learning${learn ? ` (${learn})` : ""}` : t === "board" ? "Blackboard" : t === "usage" ? "Usage" : t === "accounts" ? "Accounts" : "Mail"}
             </button>
           ))}
         </div>
@@ -216,7 +217,7 @@ export function AccountsView() {
         </span>
         <span className="spacer" />
         <button className="ghost small" onClick={() => load(true)} disabled={busy}>
-          {busy ? "checking…" : "↻ check again"}
+          ↻ check again
         </button>
       </div>
       {!rows && <div className="dim pad">checking each agent (a few seconds)…</div>}
@@ -271,13 +272,12 @@ const BUDGET_HELP: Record<string, string> = {
 export function UsageView() {
   const [u, setU] = useState<Usage | null>(null);
   const [, tick] = useState(0);
-  const load = () => void rpc("usage", {}).then(setU).catch((e) => store.toast(e.message, "error"));
+  const load = () => void refreshUsage();
   useEffect(() => {
-    load();
-    const t = setInterval(load, 15_000);
+    const off = watchUsage((u) => setU(u as Usage));
     const c = setInterval(() => tick((n) => n + 1), 1000);
     return () => {
-      clearInterval(t);
+      off();
       clearInterval(c);
     };
   }, []);
@@ -371,7 +371,7 @@ function BudgetRow({ k, value, help, onSet }: { k: string; value: string; help: 
 function Mail({ m }: { m: HiveData["messages"][number] }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className={`mail${m.to_agent === "owner" && m.read_at == null ? " unread" : ""}`} onClick={() => setOpen(!open)}>
+    <div className={`mail${m.to_agent === "owner" && m.read_at == null ? " unread" : ""}`} role="button" tabIndex={0} aria-expanded={open} onClick={() => setOpen(!open)} onKeyDown={onActivate(() => setOpen(!open))}>
       <div className="row1">
         <strong>{m.from_agent}</strong>
         <span className="dim">→ {m.to_agent === "*" ? "all" : m.to_agent}</span>

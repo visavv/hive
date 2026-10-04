@@ -1,5 +1,21 @@
 # hive compared with similar tools
 
+## Inspiration
+
+hive borrows openly. These are the projects and ideas it learned from, and what each one gave it:
+
+- **T3 Code** (https://t3.codes, https://github.com/pingdotgg/t3code): the command palette, the "Worked for 1m 12s" fold of a turn's tool calls, pane proportions and density.
+- **herdr** (https://www.opentechhub.io/herdr/): the four agent states (needs you, working, done, idle), "go to agent" in the palette, and a single accent edge on the focused pane only.
+- **Odysseus** (https://github.com/odysseus-dev/odysseus): the design study in `audit/evidence/design/` and the comparison below.
+- **typesafe.ai, "System One models and Jev"** (https://typesafe.ai/blog/introducing-system-one-models-and-jev): the question of whether a small fast model should make hive's own decisions. Evaluated in audit pass 6: not for now, because hive's automatic decisions are rules, not judgement calls.
+- **laya** (https://github.com/NandhaKishorM/laya): token-saving and decision-quality ideas; the same evaluation applies.
+- **Hermes**: the shape of memory and learning (remember the owner and the project, propose skills, never save without an OK).
+- **Handy**: hover-to-focus input routing, so dictation lands in the pane under the pointer.
+- **Grok Bot** and **OpenAI Dots**: the comparison targets for always-on, team-of-agents products (next section).
+
+Where hive deliberately differs: your own messages are a full-width tinted box, not a bubble; each turn ends with a token count; and tool calls stay one line each whether the turn is running or folded.
+
+
 ## Worktrees plus rules files, without hive
 
 A common do-it-yourself setup gives each agent its own git worktree and a strict rules file (`CLAUDE.md` for Claude Code, `AGENTS.md` for Codex). Agents leave notes for each other in shared files ("coder: write a summary to `team/inbox-reviewer.md` when done").

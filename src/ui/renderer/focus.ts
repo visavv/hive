@@ -143,7 +143,8 @@ export const focus = {
 
 // ---- overlays (dialogs, the Hive drawer, the command palette) ----
 
-export type OverlayKind = "modal" | "drawer" | "palette";
+/** modal = a dialog with a form; panel = a full-screen view (board, code) the palette may open over; drawer; palette. */
+export type OverlayKind = "modal" | "panel" | "drawer" | "palette";
 const stack: { kind: OverlayKind }[] = [];
 const stackSubs = new Set<() => void>();
 const stackChanged = () => stackSubs.forEach((f) => f());

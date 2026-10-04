@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { JobView, Layout, Policy, WorktreeView } from "../protocol.js";
 import { connect, hello, onEvent, onFocusLast, rpc } from "./bridge.js";
 import { ping, store, useStore } from "./store.js";
+import { watchUsage, type UsageSummary } from "./usage.js";
 import { Pane } from "./Pane.js";
 import { Drawer } from "./Drawer.js";
 import { GroupChat, GroupsSection, LinkDialog, PauseIcon } from "./Links.js";
@@ -29,7 +30,7 @@ import { maxedName, openPane, saveLayout, toggleMaximize } from "./layout.js";
 import { Modal } from "./Modal.js";
 import { Grid } from "./Grid.js";
 import { AddAgentDialog, JobDialog } from "./AgentDialogs.js";
-import { agentState, STATE_LABEL } from "./state.js";
+import { agentState, rollup, STATE_LABEL, StatePill, stateOfStatus, type AgentState } from "./state.js";
 import { IconBell, IconBellOff, IconColumns, IconInbox, IconLink, IconMenu, IconPlus, IconScale, IconSearch, IconTeam } from "./Icons.js";
 import { RecipesDialog, SkillsDialog } from "./Extras.js";
 import { focus, onActivate, overlays } from "./focus.js";
@@ -103,12 +104,14 @@ export function App() {
   const visible = mobile ? (mobileAgent ? [mobileAgent] : []) : maximized ? [maximized] : names;
   useEffect(() => focus.setOrder(names), [names.join("|")]);
 
-  // Title shows how many agents need you, so it's visible from the taskbar.
-  const waitingTotal = useStore((s) => names.reduce((n, x) => n + s.waitingOn(x), 0));
-  const readyTotal = useStore((s) => names.filter((n) => s.readyAt.has(n)).length);
+  // Title shows the most urgent state across panes (same rule as the pills), so it's visible from the taskbar.
+  const states = useStore(() => names.map((n) => agentState(n)).join(","));
   useEffect(() => {
-    document.title = waitingTotal ? `(${waitingTotal}) hive — needs you` : readyTotal ? `✓${readyTotal} hive — ready` : "hive";
-  }, [waitingTotal, readyTotal]);
+    const all = states ? (states.split(",") as AgentState[]) : [];
+    const top = rollup(all);
+    const n = all.filter((s) => s === top).length;
+    document.title = top === "needs" ? `(${n}) hive — needs you` : top === "error" ? `(${n}) hive — error` : top === "done" ? `✓${n} hive — ready` : "hive";
+  }, [states]);
 
   // 9:16 monitors: tall or narrow windows get one column and no sidebar (unless you choose otherwise).
   const portrait = useMedia("(max-aspect-ratio: 4/5), (max-width: 820px)");
@@ -117,6 +120,8 @@ export function App() {
   const sidebar = !mobile && (vertical ? !!layout.vsidebar : layout.sidebar);
   const columns = vertical ? (layout.vcolumns ?? 1) : layout.columns;
 
+  const boardOpen = useRef(false);
+  boardOpen.current = dialog === "board";
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
@@ -124,13 +129,15 @@ export function App() {
       const names = store.layout.panes.map((p) => p.name);
       const maximized = maxedName(store.layout);
       // A dialog, the drawer or the palette is open: pane shortcuts would act on
-      // what's hidden behind it. Only zoom, and the key that closes the top overlay, pass.
+      // what's hidden behind it. Only zoom, the palette, and the key that closes the top overlay pass.
       const top = overlays.top;
       if (top) {
         const zoom = mod && (e.key === "=" || e.key === "+" || e.key === "-" || e.key === "0");
         const k = e.key.toLowerCase();
-        const closesTop = mod && !e.shiftKey && ((top === "palette" && k === "k") || (top === "drawer" && k === "i"));
-        if (!zoom && !closesTop) return;
+        // the palette may open over the drawer, the board and the code view, never over a form dialog
+        const palette = mod && !e.shiftKey && k === "k" && (top === "palette" || top === "drawer" || top === "panel");
+        const closesTop = mod && !e.shiftKey && ((top === "drawer" && k === "i") || (top === "panel" && k === "j" && boardOpen.current));
+        if (!zoom && !palette && !closesTop) return;
       }
       if (mod && /^[1-9]$/.test(e.key)) {
         e.preventDefault();
@@ -152,12 +159,6 @@ export function App() {
       } else if (mod && e.key.toLowerCase() === "b") {
         e.preventDefault();
         toggleSidebar();
-      } else if (mod && e.shiftKey && (e.key === "[" || e.key === "{" || e.key === "]" || e.key === "}")) {
-        e.preventDefault();
-        focus.cycle(e.key === "[" || e.key === "{" ? -1 : 1);
-      } else if (mod && e.key === "\\") {
-        e.preventDefault();
-        toggleSidebar();
       } else if (mod && (e.key === "=" || e.key === "+" || e.key === "-" || e.key === "0")) {
         e.preventDefault();
         const z = store.layout.zoom ?? 1;
@@ -169,16 +170,16 @@ export function App() {
       } else if (mod && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setPalette((v) => !v);
-      } else if (mod && e.key.toLowerCase() === "j") {
+      } else if (mod && !e.shiftKey && e.key.toLowerCase() === "j") {
         e.preventDefault();
         setDialog((d) => (d === "board" ? "" : "board"));
-      } else if (mod && e.key.toLowerCase() === "i") {
+      } else if (mod && !e.shiftKey && e.key.toLowerCase() === "i") {
         e.preventDefault();
         setDrawer((d) => (d ? false : "default"));
       } else if (mod && !e.shiftKey && e.key.toLowerCase() === "p") {
         e.preventDefault();
         openCode({ find: true });
-      } else if (mod && e.key.toLowerCase() === "m") {
+      } else if (mod && !e.shiftKey && e.key.toLowerCase() === "m") {
         e.preventDefault();
         toggleMaximize(focus.active);
       }
@@ -218,7 +219,7 @@ export function App() {
     { id: "sidebar", label: "Toggle sidebar", keys: "Ctrl+B", run: () => toggleSidebar() },
     { id: "max", label: "Maximize / restore the focused agent", keys: "Ctrl+M", run: () => toggleMaximize(focus.active) },
     { id: "layout", label: `Layout: ${layout.orientation === "vertical" ? "horizontal" : layout.orientation === "horizontal" ? "auto" : "vertical"} (now ${layout.orientation ?? "auto"})`, run: () => saveLayout({ orientation: layout.orientation === "vertical" ? "horizontal" : layout.orientation === "horizontal" ? "auto" : "vertical" }) },
-    { id: "board", label: "Board (Kanban): Draft, In progress, Done", keys: "Ctrl+J", run: () => setDialog("board") },
+    { id: "board", label: "Board (Kanban): Draft, In progress, Done", keys: "Ctrl+J", run: () => setDialog((d) => (d === "board" ? "" : "board")) },
     ...codeActions(),
     { id: "browser", label: "Open browser…", hint: "sandboxed: its own profile, never your logins", run: () => openDevice("browser") },
     { id: "android", label: "Android device…", hint: "emulator or phone over adb", run: () => openDevice("android") },
@@ -227,8 +228,8 @@ export function App() {
       .filter((d) => d !== (layout.density ?? "comfortable"))
       .map((d) => ({ id: "density-" + d, label: `Density: ${d}`, run: () => saveLayout({ density: d }) })),
     { id: "hover", label: `Hover to focus panes: ${layout.hoverFocus ? "turn off" : "turn on"}`, hint: "for Handy / voice typing", run: () => saveLayout({ hoverFocus: !layout.hoverFocus }) },
-    { id: "ping", label: `Finish chime: ${layout.ping === false ? "turn on" : "turn off"}`, run: () => saveLayout({ ping: layout.ping === false }) },
-    { id: "zoomin", label: "Zoom in / out / reset", keys: "Ctrl+= / Ctrl+- / Ctrl+0", run: () => {} },
+    { id: "ping", label: `Finish chime: ${layout.ping === false ? "turn on" : "turn off"}`, run: () => togglePing() },
+    { id: "zoomin", label: "Zoom in", hint: "Ctrl+- zooms out, Ctrl+0 resets", keys: "Ctrl+=", run: () => saveLayout({ zoom: Math.min(2, Math.round(((layout.zoom ?? 1) + 0.1) * 10) / 10) }) },
     ...voiceActions(names),
   ];
 
@@ -372,6 +373,13 @@ function useMedia(q: string): boolean {
 }
 
 /** The sidebar switch remembers its state separately for the vertical layout. */
+/** Chime on finished turns: one toggle for the bell and the palette (plays a sample when turning on). */
+function togglePing() {
+  const off = store.layout.ping === false;
+  saveLayout({ ping: off });
+  if (off) ping();
+}
+
 function toggleSidebar() {
   const vertical = document.querySelector(".app")?.classList.contains("vertical");
   if (vertical) saveLayout({ vsidebar: !store.layout.vsidebar });
@@ -416,7 +424,7 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onPalett
   const readyNames = useStore((s) => names.filter((n) => s.readyAt.has(n)));
   return (
     <div className="topbar">
-      <button className="ghost" onClick={toggleSidebar} title="toggle sidebar (Ctrl+\)" aria-label="toggle sidebar"><IconMenu /></button>
+      <button className="ghost" onClick={toggleSidebar} title="toggle sidebar (Ctrl+B)" aria-label="toggle sidebar"><IconMenu /></button>
       <span className="brand">hive</span>
       <div className="broadcast">
         <input
@@ -429,13 +437,16 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onPalett
           }
         />
         <MicButton target="@broadcast" />
-        <button
-          className={`ghost bc-mode${(layout.broadcastMode ?? "team") === "team" ? " on" : ""}`}
-          onClick={() => saveLayout({ broadcastMode: (layout.broadcastMode ?? "team") === "team" ? "each" : "team" })}
-          title={(layout.broadcastMode ?? "team") === "team" ? "Team: one agent leads, plans and hands each the part that fits their role; the rest wait for it. Click for 'each' (same message to everyone)." : "Each: the same message to every agent. Click for 'team' (one lead plans and hands out parts)."}
+        <select
+          className="bc-mode"
+          value={layout.broadcastMode ?? "team"}
+          onChange={(e) => saveLayout({ broadcastMode: e.target.value as "team" | "each" })}
+          aria-label="how to broadcast"
+          title="Team: one agent leads, plans and hands each the part that fits their role; the rest wait for it. Each: the same message to every agent."
         >
-          {(layout.broadcastMode ?? "team") === "team" ? "Team" : "Each"}
-        </button>
+          <option value="team">as a team</option>
+          <option value="each">to each</option>
+        </select>
         <button onClick={() => send()} disabled={!text.trim()}>Send</button>
         {targets.length >= 2 && (
           <button className="ghost group-sel" onClick={() => store.requestLink(targets)} title={`link ${targets.join(", ")} into a group so they can talk and review each other`}>
@@ -464,10 +475,7 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onPalett
       )}
       <button
         className="ghost"
-        onClick={() => {
-          saveLayout({ ping: layout.ping === false });
-          if (layout.ping === false) ping();
-        }}
+        onClick={togglePing}
         title={layout.ping === false ? "sound off — click to chime when an agent finishes" : "chime when an agent finishes (click to mute)"}
         aria-label={layout.ping === false ? "finish sound off" : "finish sound on"}
       >
@@ -479,9 +487,6 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onPalett
         <button className="ghost" disabled={cols >= 8} onClick={() => setCols(cols + 1)} aria-label="more columns">+</button>
       </span>
       <UsageChip onClick={onUsage} />
-      <button className="ghost" onClick={() => store.openVerdict({})} title="send one prompt to several agents; a judge picks the best parts">
-        <IconScale /> <span className="bl">Verdict</span>
-      </button>
       <button className="ghost cmd-btn" onClick={onPalette} title="jump to an agent or run any command (Ctrl+K)">
         <IconSearch /> <span className="bl">Commands</span> <kbd>Ctrl K</kbd>
       </button>
@@ -501,13 +506,8 @@ function TopBar({ names, selected, setSelected, onAdd, onHive, onUsage, onPalett
 
 /** Fullest subscription window across providers; amber/red as it fills, ⏸ when automatic work is held. */
 function UsageChip({ onClick }: { onClick: () => void }) {
-  const [u, setU] = useState<Awaited<ReturnType<typeof rpc<"usage">>> | null>(null);
-  useEffect(() => {
-    const load = () => void rpc("usage", {}).then(setU).catch(() => {});
-    load();
-    const t = setInterval(load, 10_000);
-    return () => clearInterval(t);
-  }, []);
+  const [u, setU] = useState<UsageSummary | null>(null);
+  useEffect(() => watchUsage(setU), []);
   if (!u) return null;
   let worst: { p: string; w: string; pct: number } | null = null;
   for (const p of u.providers)
@@ -621,7 +621,8 @@ function Sidebar({ names, onAdd, onSearch }: { names: string[]; onAdd: () => voi
                 ■
               </button>
             </div>
-            <div className="row2 dim">{j.schedule} · {j.runs} run{j.runs === 1 ? "" : "s"}</div>
+            <div className="row2 dim">{j.schedule}</div>
+            <div className="row3 dim">{j.runs} run{j.runs === 1 ? "" : "s"} so far</div>
             {j.lastError && <div className="row3 err">{j.lastError}</div>}
           </li>
         ))}
@@ -651,7 +652,7 @@ function OtherAgents({ names }: { names: string[] }) {
         {others.map((o) => (
           <li key={o.name} title={`${o.cwd}${o.where ? ` — running in ${o.where}` : ""}`}>
             <div className="row1">
-              <span className={`dot ${o.status}`} />
+              <StatePill state={stateOfStatus(o.status)} compact />
               <strong>{o.name}</strong>
               <span className="kind">{o.kind}</span>
               {o.unread > 0 && <span className="badge" title="unread hive mail"><IconInbox size={11} /> {o.unread}</span>}

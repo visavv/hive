@@ -101,7 +101,10 @@ export function AddAgentDialog({ onClose }: { onClose: () => void }) {
               ))}
             </select>
           ) : (
-            <input className="add-model" value={model} onChange={(e) => setModel(e.target.value)} placeholder="default (or type a model name; the list fills in once this agent has run)" />
+            <span className="field-col">
+              <input className="add-model" value={model} onChange={(e) => setModel(e.target.value)} placeholder="default" />
+              <span className="hint small dim">or type a model id; the list fills in once this agent has run</span>
+            </span>
           )}
         </label>
         <label>

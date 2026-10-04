@@ -20,6 +20,7 @@ export interface PaletteAction {
 
 export function Palette({ actions, onClose }: { actions: PaletteAction[]; onClose: () => void }) {
   const names = useStore((s) => s.layout.panes.map((p) => p.name));
+  const stateKey = useStore(() => names.map((n) => agentState(n)).join(","));
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
@@ -52,7 +53,7 @@ export function Palette({ actions, onClose }: { actions: PaletteAction[]; onClos
       .filter((x) => x.score >= 0)
       .sort((a, b) => a.score - b.score)
       .map((x) => x.it);
-  }, [q, names.join("|"), actions]);
+  }, [q, names.join("|"), actions, stateKey]);
   useEffect(() => setSel(0), [q]);
   useEffect(() => {
     listRef.current?.querySelector(".pal-item.on")?.scrollIntoView({ block: "nearest" });

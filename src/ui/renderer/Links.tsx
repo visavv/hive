@@ -9,6 +9,7 @@ import type { GroupView, MailView } from "../protocol.js";
 import { rpc } from "./bridge.js";
 import { store, useStore } from "./store.js";
 import { Modal } from "./Modal.js";
+import { onActivate } from "./focus.js";
 import { fmtIdle } from "./format.js";
 import { IconLink } from "./Icons.js";
 import { agentState, rollup, STATE_LABEL } from "./state.js";
@@ -226,6 +227,15 @@ export function GroupChat({ name, onClose }: { name: string; onClose: () => void
               Review each message
             </button>
           </div>
+          <button
+            className="ghost small danger"
+            onClick={() => {
+              if (confirm(`Delete @${name}? Members stop sharing this channel.`)) act(rpc("setGroup", { name, delete: true }).then(onClose));
+            }}
+            title="delete this group (asks first)"
+          >
+            Delete group
+          </button>
           <label className="cap">
             max/h
             <input
@@ -290,14 +300,6 @@ export function GroupChat({ name, onClose }: { name: string; onClose: () => void
         <button onClick={post} disabled={!text.trim()}>
           Send
         </button>
-        <button
-          className="ghost danger"
-          onClick={() => {
-            if (confirm(`Delete @${name}? Members stop sharing this channel.`)) act(rpc("setGroup", { name, delete: true }).then(onClose));
-          }}
-        >
-          Delete group
-        </button>
       </div>
     </Modal>
   );
@@ -337,7 +339,7 @@ export function GroupsSection() {
       </details>
       <ul className="agent-list">
         {groups.map((g) => (
-          <li key={g.name} className="agent-item group-item" style={{ ["--grp" as any]: groupColor(g.name) }} onClick={() => store.openGroup(g.name)}>
+          <li key={g.name} className="agent-item group-item" style={{ ["--grp" as any]: groupColor(g.name) }} role="button" tabIndex={0} onClick={() => store.openGroup(g.name)} onKeyDown={onActivate(() => store.openGroup(g.name))}>
             <div className="row1">
               <span className="gdot" />
               <strong>@{g.name}</strong>

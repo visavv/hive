@@ -110,3 +110,7 @@ Verified with `npm test` (17 suites), the UI test (new: Inbox lists held mail; v
 **Not tested.** Real vendors, Windows scaling, screen readers, hundreds of tool calls with a real adapter, device panes, the improvements → coder → owner rule with a real model.
 
 **Next.** Fix in the order given in FINDINGS.md; start with the narrow-width CSS and the stylesheet collapse.
+
+## Pass 6 fix round: 2026-10-04
+
+Every pass-6 finding fixed (FINDINGS.md "Pass 6 fixes"). The stylesheet now has one token block, one state system and the narrow-width rules last; the pane header carries name, role, state and three actions plus a … menu; the four states come from one function on every surface. `npm test` 30/30, `npm run test:ui` green with five new checks, screenshots regenerated.

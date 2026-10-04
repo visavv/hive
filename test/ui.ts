@@ -260,14 +260,13 @@ try {
   await until(async () => (await pane(page, "alpha").locator(".st.st-working").count()) === 0, 15_000);
 
   // "each": the same message to all
-  await page.locator(".broadcast .bc-mode").click();
-  await page.locator(".broadcast .bc-mode", { hasText: "Each" }).waitFor();
+  await page.locator(".broadcast select.bc-mode").selectOption("each");
   await page.locator(".broadcast input").fill("agents? roll call");
   await page.locator(".broadcast input").press("Enter");
   await pane(page, "alpha").locator(".msg.user", { hasText: "roll call" }).waitFor({ timeout: 10_000 });
   await pane(page, "beta").locator(".msg.user", { hasText: "roll call" }).waitFor({ timeout: 10_000 });
   assert(true, "broadcast reaches every pane");
-  await page.locator(".broadcast .bc-mode").click();
+  await page.locator(".broadcast select.bc-mode").selectOption("team");
 
   // voice: mic button -> fake microphone -> fake Whisper server -> text at the cursor (not sent)
   const ta = pane(page, "alpha").locator("textarea");
@@ -348,8 +347,43 @@ try {
   assert(await activeIn(page, "beta"), "Ctrl+2 while maximized restores the grid and focuses pane 2");
   await page.locator(".cols button", { hasText: "+" }).click();
 
-  // schedule a job from the pane
-  await pane(page, "beta").locator("button[title^='schedule']").click();
+  // pass 6: three columns at 1280 px: nothing in a pane header or sub row may clip (BUG-005), and the dialogs have a ✕
+  await page.setViewportSize({ width: 1280, height: 720 }).catch(() => {});
+  await page.locator(".cols button", { hasText: "+" }).click();
+  await sleep(300);
+  {
+    const clipped = await page.evaluate(() => {
+      const out: string[] = [];
+      for (const row of document.querySelectorAll<HTMLElement>(".pane-head, .pane-sub")) {
+        if (row.scrollWidth > row.clientWidth + 1) out.push(`${row.className}: ${row.scrollWidth}>${row.clientWidth}`);
+        for (const el of row.querySelectorAll<HTMLElement>("*")) {
+          const r = el.getBoundingClientRect();
+          const p = row.getBoundingClientRect();
+          if (r.width && (r.right > p.right + 1 || r.left < p.left - 1)) out.push(`${row.className} > ${el.className || el.tagName}`);
+        }
+      }
+      return out;
+    });
+    assert(clipped.length === 0, `1280 px, 3 columns: pane headers and sub rows fit (${clipped.slice(0, 3).join("; ") || "ok"})`);
+  }
+  await page.locator(".cols button", { hasText: "−" }).click();
+  await page.setViewportSize({ width: 1600, height: 950 }).catch(() => {});
+  await page.keyboard.press("Control+J");
+  await page.locator(".kanban, .kb-cols").first().waitFor({ timeout: 5000 });
+  await page.keyboard.press("Control+J");
+  await page.locator(".kb-cols").waitFor({ state: "detached", timeout: 3000 });
+  assert(true, "Ctrl+J opens and closes the board (BUG-010)");
+  await page.keyboard.press("Control+N");
+  await page.locator(".modal .modal-close").waitFor({ timeout: 3000 });
+  await page.locator(".modal .modal-close").click();
+  await page.locator(".modal").waitFor({ state: "detached", timeout: 3000 });
+  assert(true, "every dialog has a close button (UX-018)");
+
+  // schedule a job from the pane's "…" menu
+  await pane(page, "beta").locator(".pane-menu > button").click();
+  await pane(page, "beta").locator(".pane-menu .menu button", { hasText: "Fresh session" }).waitFor({ timeout: 3000 });
+  assert(true, "the pane's … menu holds job, link and fresh session");
+  await pane(page, "beta").locator(".pane-menu .menu button", { hasText: "Schedule a job" }).click();
   await page.locator(".modal textarea").fill("hunt bugs");
   await page.locator(".modal label:has-text('Times') input").fill("2");
   await page.locator(".modal button[type=submit]").click();
@@ -440,7 +474,7 @@ try {
   await page.locator(".drawer").waitFor({ state: "detached", timeout: 2000 });
   await sleep(500);
   assert(
-    (await pane(page, "beta").locator(".turn", { hasText: "cancelled" }).count()) === 0 && (await pane(page, "beta").locator(".st.st-working").count()) === 1,
+    (await pane(page, "beta").locator(".turn", { hasText: "cancelled" }).count()) === 0 && (await pane(page, "beta").locator(".pane-head .st.st-working").count()) === 1,
     "Esc in the drawer closes it and leaves the agent's turn running",
   );
   assert(await activeIn(page, "beta"), "closing the drawer gives focus back to the pane");
@@ -530,6 +564,8 @@ try {
     await pane(page, "beta").locator("button.improve").click();
     await until(async () => (await box.inputValue()).startsWith("IMPROVED:"), 30_000);
     assert((await box.inputValue()).includes("make the login remember the email"), "✦ turns the draft into a fuller prompt in the same box");
+    const undoW = (await pane(page, "beta").locator("button.improve-undo").boundingBox())!.width;
+    assert(undoW > 36, `the undo button is as wide as its text (${Math.round(undoW)} px) (BUG-008)`);
     await pane(page, "beta").locator("button.improve-undo").click();
     assert((await box.inputValue()) === "make the login remember the email", "undo brings the draft back");
     await box.press("Control+Shift+Enter");
@@ -745,7 +781,7 @@ try {
   await page.screenshot({ path: join(shots, "hive-ui-linked.png") });
 
   // verdict mode: one prompt to two agents, a judge picks the best parts, then build the merge
-  await page.locator(".topbar button", { hasText: "Verdict" }).click();
+  await command(page, "verdict");
   const vd = page.locator(".modal.wide", { hasText: "several agents, one judge" });
   await vd.locator("textarea.verdict-prompt").fill("verdict-task: three title ideas for my video");
   await vd.locator(".seg button", { hasText: "Text" }).click();
