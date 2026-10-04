@@ -382,7 +382,8 @@ try {
   // schedule a job from the pane's "…" menu
   await pane(page, "beta").locator(".pane-menu > button").click();
   await pane(page, "beta").locator(".pane-menu .menu button", { hasText: "Fresh session" }).waitFor({ timeout: 3000 });
-  assert(true, "the pane's … menu holds job, link and fresh session");
+  assert((await pane(page, "beta").locator(".pane-menu .menu [role=menuitem]").count()) >= 3, "the pane's … menu holds job, link and fresh session (menu items)");
+  assert(!/default/i.test(await page.locator(".agent-item", { hasText: "beta" }).locator(".row2").innerText()), "the sidebar doesn't repeat a vendor's 'Default' model");
   await pane(page, "beta").locator(".pane-menu .menu button", { hasText: "Schedule a job" }).click();
   await page.locator(".modal textarea").fill("hunt bugs");
   await page.locator(".modal label:has-text('Times') input").fill("2");

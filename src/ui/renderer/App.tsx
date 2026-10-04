@@ -588,7 +588,8 @@ function Sidebar({ names, onAdd, onSearch }: { names: string[]; onAdd: () => voi
                 <span>{a?.kind ?? st?.kind}</span>
                 {a?.branch?.startsWith("hive/") && <span className="branch"> · {a.branch}</span>}
                 {a?.ctx && <span> · {ctxPct(a.ctx.used, a.ctx.size)}%</span>}
-                {model && <span> · {labelOf(model)}</span>}
+                {/* the vendor's default model says nothing; a chosen one is worth the space */}
+                {model && !/^default\b/i.test(labelOf(model)) && <span> · {labelOf(model)}</span>}
               </div>
               {a?.note && state !== "idle" && <div className="row3" title={a.note}>{noteLabel(a.note)}</div>}
               {st?.error && <div className="row3 err">{st.error}</div>}

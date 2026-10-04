@@ -199,6 +199,7 @@ function PaneMenu({ name, agent, onJob }: { name: string; agent?: AgentView; onJ
   const item = (label: string, icon: React.ReactNode, run: () => void, disabled = false) => (
     <button
       type="button"
+      role="menuitem"
       disabled={disabled}
       onClick={() => {
         setOpen(false);

@@ -173,6 +173,8 @@ Still open from this pass: none. Not re-verified with a real vendor (mock only).
 |---|---|---|---|
 | 1 | UX-024 | Turn footer was a dashed rule + "done · 4,210 tok · 3:12:14 PM" on every turn (noise next to T3 Code). Now one quiet right-aligned "4,210 tok"; stop reason and time in the tooltip; cancelled/error turns in amber | UI test (cancel still shown) |
 | 1 | UX-025 | The team-broadcast "waiting for the lead" notice was a grey mono line, easy to miss. Now a tinted accent line with a ◔ mark | UI test (`.notice.team`) |
+| 2 | UX-026 | Sidebar rows ended in a truncated "Default (recommended)" for every agent on the vendor's default model; the default is left out, a chosen model is shown | UI test |
+| 2 | UX-027 | The pane … menu items had no `menuitem` role | UI test |
 
 ## Pass 5 (2026-10-01)
 
