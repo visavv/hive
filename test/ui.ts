@@ -532,6 +532,8 @@ try {
   assert(await page.locator(".drawer .usage-win", { hasText: "resets in" }).count() > 0, "usage tab shows what's left in a window and when it resets");
   await page.locator(".drawer .usage-pause button").click();
   await page.locator(".drawer .usage-pause.on").waitFor({ timeout: 5000 });
+  await page.locator(".toast", { hasText: "Automatic work paused" }).waitFor({ timeout: 5000 });
+  assert(true, "pausing says what it did in words, not 'paused = 1'");
   assert(true, "the pause switch stops automatic work");
   await page.screenshot({ path: join(shots, "hive-ui-usage.png") });
   await page.locator(".drawer .usage-pause button").click();

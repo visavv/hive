@@ -285,7 +285,16 @@ export function UsageView() {
     void rpc("setBudget", { key, value })
       .then((r) => {
         setU(r);
-        store.toast(`${key} ${value === "" ? "cleared" : `= ${value}`}`);
+        // say what changed in words, not "paused = 1"
+        store.toast(
+          key === "paused"
+            ? value === "1"
+              ? "Automatic work paused: jobs and mail wake-ups wait; your own prompts still run"
+              : "Automatic work resumed"
+            : value === ""
+              ? `${key}: back to the default`
+              : `${key} set to ${value}`,
+        );
       })
       .catch((e) => store.toast(e.message, "error"));
   if (!u) return <div className="dim pad">loading…</div>;
