@@ -841,6 +841,10 @@ try {
   await pane(page, "gamma").locator(".branch", { hasText: "hive/gamma" }).waitFor({ timeout: 10_000 });
   assert(true, "coder preset puts the agent in its own worktree (branch shown in pane)");
   assert((await pane(page, "gamma").locator(".pane-head .role-badge").innerText()) === "coder", "the agent's role is a badge in its pane header");
+  await page.keyboard.press("Control+k");
+  await page.locator(".palette .pal-input").fill("gamma");
+  assert(/coder/.test(await page.locator(".palette .pal-item", { hasText: "gamma" }).first().innerText()), "the palette shows each agent's role");
+  await page.keyboard.press("Escape");
   const wt = g(["worktree", "list", "--porcelain"]).split("\n\n").find((b) => b.includes("refs/heads/hive/gamma"))!.match(/^worktree (.+)$/m)![1];
   writeFileSync(join(wt, "feature.txt"), "x\ny\n");
   g(["add", "."], wt);

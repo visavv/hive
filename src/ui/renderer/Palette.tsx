@@ -32,7 +32,8 @@ export function Palette({ actions, onClose }: { actions: PaletteAction[]; onClos
       return {
         id: "agent:" + n,
         label: n,
-        hint: `${a?.kind ?? store.starting.get(n)?.kind ?? ""}${a?.branch?.startsWith("hive/") ? " · " + a.branch : ""}`,
+        // the role says what the agent is for; the kind and branch are secondary
+        hint: [a?.role, a?.kind ?? store.starting.get(n)?.kind, a?.branch?.startsWith("hive/") ? a.branch : ""].filter(Boolean).join(" · "),
         keys: i < 9 ? `Ctrl+${i + 1}` : undefined,
         state: st,
         run: () => {
