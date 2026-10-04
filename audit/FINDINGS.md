@@ -187,6 +187,7 @@ Still open from this pass: none. Not re-verified with a real vendor (mock only).
 | 12 | UX-035 | Phone layout: toasts stacked over the pane header (the agent's name and state); they now sit above the bottom bar | UI test |
 | 13 | UX-036 | Code-view questions to the teacher showed the whole generated prompt (path, fenced code, instructions) as a user message in the dock and in the teacher's pane; they fold under a one-line label ("Explain · src/hello.ts lines 2–4") like other hive-written prompts | UI test |
 | 14 | UX-037 | Spending-guard toasts read "paused = 1" / "daily_tokens = 2000000"; they now say what happened ("Automatic work paused: jobs and mail wake-ups wait; your own prompts still run", "daily_tokens set to …") | UI test |
+| 15 | UX-038 | Screen-reader labels: the broadcast checkbox ("include alpha in broadcast"), the context meter ("context window 19% full", `role=img`), and the decorative pane number hidden | UI test |
 | 3 | — | The improvements → coder → owner flow is now covered by `test/team.ts` at the wiring level (scout sends ideas to the coder; the coder asks the owner first). Model behaviour still unverified with a real vendor | test/team.ts |
 
 ## Pass 5 (2026-10-01)

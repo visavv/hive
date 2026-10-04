@@ -67,10 +67,11 @@ export function Pane({ name, index, onMaximize, onJob, selected, onSelect }: {
           className="sel"
           checked={selected}
           onChange={(e) => onSelect(e.target.checked)}
-          title="include in broadcast"
+          title="include in broadcast (tick several, then Send or Group)"
+          aria-label={`include ${name} in broadcast`}
           onDoubleClick={(e) => e.stopPropagation()}
         />
-        <span className="idx">{index < 9 ? index + 1 : ""}</span>
+        <span className="idx" aria-hidden="true">{index < 9 ? index + 1 : ""}</span>
         <strong
           className="pname"
           draggable
@@ -267,7 +268,7 @@ function shortPath(p: string) {
 function CtxMeter({ used, size }: { used: number; size: number }) {
   const pct = ctxPct(used, size);
   return (
-    <span className={`ctx ${pct > 85 ? "hot" : pct > 60 ? "warm" : ""}`} title={`context ${used.toLocaleString()} / ${size.toLocaleString()} tokens`}>
+    <span className={`ctx ${pct > 85 ? "hot" : pct > 60 ? "warm" : ""}`} role="img" aria-label={`context window ${pct}% full`} title={`context window: ${used.toLocaleString()} of ${size.toLocaleString()} tokens used (${pct}%)`}>
       <span className="bar" style={{ width: `${Math.min(100, pct)}%` }} />
       <span className="lbl">{pct}%</span>
     </span>

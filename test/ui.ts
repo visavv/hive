@@ -185,7 +185,8 @@ try {
   const lines = await pane(page, "alpha").locator(".tool-line").allInnerTexts();
   assert(lines.length > 0 && lines.every((c) => c.includes("checked mail")) && (await pane(page, "alpha").locator(".tool").count()) === 0, "hive's own tool calls show as quiet one-liners, updated in place");
   await pane(page, "alpha").locator(".ctx").waitFor({ timeout: 5000 });
-  assert(/\d+%/.test(await pane(page, "alpha").locator(".ctx").innerText()), "ctx % meter shown in pane header");
+  assert(/\d+%/.test(await pane(page, "alpha").locator(".ctx").innerText()) && /context window/.test((await pane(page, "alpha").locator(".ctx").getAttribute("aria-label")) ?? ""), "ctx % meter shown in the pane, with a spoken label");
+  assert(/include alpha/.test((await pane(page, "alpha").locator("input.sel").getAttribute("aria-label")) ?? ""), "the broadcast checkbox has a spoken label");
   assert(await pane(page, "alpha").locator(".cfg select").count(), "model selector from configOptions shown");
   assert((await pane(page, "alpha").locator(".composer-bar .cfg select").count()) > 0 && (await pane(page, "alpha").locator(".pane-head .cfg").count()) === 0, "model settings sit under the message box, not in the pane header");
   // "/" opens a menu of hive's and the agent's commands
