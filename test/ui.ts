@@ -181,6 +181,8 @@ try {
   await pane(page, "alpha").locator("textarea").press("Enter");
   const perm = pane(page, "alpha").locator(".ask.perm");
   await perm.waitFor({ timeout: 10_000 });
+  await until(async () => /needs you/.test(await page.title()), 5000);
+  assert(/^\(1\) hive — needs you$/.test(await page.title()) && (await page.locator(".agent-item .state-word", { hasText: "needs you" }).count()) === 1, "pane, sidebar and window title agree: one agent needs you");
   assert(await page.locator(".pane.needs-you").count(), "pane is highlighted while waiting on a permission");
   await perm.locator("button", { hasText: "Allow" }).click();
   await pane(page, "alpha").locator(".msg.agent", { hasText: "edit allowed" }).waitFor({ timeout: 10_000 });
