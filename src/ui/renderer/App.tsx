@@ -89,7 +89,7 @@ export function App() {
   const [adding, setAdding] = useState(false);
   const [jobFor, setJobFor] = useState<string | null>(null);
   const [drawer, setDrawer] = useState<false | "default" | "usage" | "learn">(false);
-  const [dialog, setDialog] = useState<"" | "recipes" | "skills" | "stats" | "board">("");
+  const [dialog, setDialog] = useState<"" | "recipes" | "skills" | "stats" | "board" | "keys">("");
   const [palette, setPalette] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const skillReq = useStore((s) => s.skillRequest);
@@ -215,6 +215,7 @@ export function App() {
     },
     { id: "learn", label: "Memory and learning: what hive knows about you, skills it suggests", run: () => setDrawer("learn") },
     { id: "stats", label: "Token stats: by provider, model, task, project", hint: "all projects, kept for good", run: () => setDialog("stats") },
+    { id: "keys", label: "Keyboard shortcuts", hint: "every key hive listens to", run: () => setDialog("keys") },
     { id: "broadcast", label: "Message all agents", keys: "Ctrl+Shift+B", run: () => setTimeout(() => document.querySelector<HTMLInputElement>(".broadcast input")?.focus(), 0) },
     { id: "sidebar", label: "Toggle sidebar", keys: "Ctrl+B", run: () => toggleSidebar() },
     { id: "max", label: "Maximize / restore the focused agent", keys: "Ctrl+M", run: () => toggleMaximize(focus.active) },
@@ -325,6 +326,7 @@ export function App() {
       )}
       {dialog === "recipes" && <RecipesDialog onClose={() => setDialog("")} />}
       {dialog === "stats" && <StatsDialog onClose={() => setDialog("")} />}
+      {dialog === "keys" && <KeysDialog onClose={() => setDialog("")} />}
       {linkReq && (
         <LinkDialog
           members={linkReq}
@@ -373,6 +375,53 @@ function useMedia(q: string): boolean {
 }
 
 /** The sidebar switch remembers its state separately for the vertical layout. */
+/** Every shortcut in one place, for people who don't read tooltips. */
+const KEYS: [string, string][] = [
+  ["Ctrl+K", "jump to an agent or run any command"],
+  ["Ctrl+1 … 9", "focus pane 1 … 9"],
+  ["Ctrl+Tab / Ctrl+Shift+Tab", "next / previous pane"],
+  ["Ctrl+M", "maximize or restore the focused pane"],
+  ["Ctrl+N", "add an agent"],
+  ["Ctrl+Shift+B", "message all agents (the broadcast box)"],
+  ["Ctrl+I", "open or close the Hive panel"],
+  ["Ctrl+J", "open or close the board"],
+  ["Ctrl+P", "open a file in the code view"],
+  ["Ctrl+Shift+K", "run a skill"],
+  ["Ctrl+B", "show or hide the sidebar"],
+  ["Ctrl+= / Ctrl+- / Ctrl+0", "zoom in / out / reset"],
+  ["Enter", "send (Shift+Enter for a new line); while the agent works it queues"],
+  ["Esc", "cancel the agent's turn, close a menu or dialog"],
+  ["↑ in an empty box", "recall your last prompt"],
+  ["/", "list the agent's commands"],
+  ["Ctrl+Shift+Enter", "✦ improve the prompt you're typing"],
+  ["Ctrl+E", "open the big editor for long prompts"],
+  ["Ctrl+Shift+Space (hold)", "dictate"],
+  ["Ctrl+Alt+H", "bring hive to the front from any app"],
+];
+function KeysDialog({ onClose }: { onClose: () => void }) {
+  return (
+    <Modal title="Keyboard shortcuts" onClose={onClose}>
+      <table className="keys-table">
+        <tbody>
+          {KEYS.map(([k, what]) => (
+            <tr key={k}>
+              <td>
+                {k.split(" / ").map((part, i) => (
+                  <span key={i}>
+                    {i > 0 && " / "}
+                    <kbd>{part}</kbd>
+                  </span>
+                ))}
+              </td>
+              <td>{what}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Modal>
+  );
+}
+
 /** Chime on finished turns: one toggle for the bell and the palette (plays a sample when turning on). */
 function togglePing() {
   const off = store.layout.ping === false;

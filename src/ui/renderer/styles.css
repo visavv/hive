@@ -1291,6 +1291,10 @@ button.danger { color: var(--st-error); }
 .field-col { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .field-col .hint { font-size: var(--fs-1); color: var(--text-3); }
 .recipe-why { margin: 0 0 8px 108px; }
+.keys-table { border-collapse: collapse; width: 100%; }
+.keys-table td { padding: 5px 8px 5px 0; vertical-align: top; border-bottom: 1px solid var(--border); }
+.keys-table td:first-child { white-space: nowrap; width: 1%; }
+.keys-table kbd { height: 20px; font-size: var(--fs-1); }
 .verdict-mode { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 8px; align-items: start; margin: 8px 0; }
 .verdict-mode > span:first-child { padding-top: 4px; }
 .broadcast .bc-mode { height: var(--ctl-h); font-size: var(--fs-2); color: var(--text-2); background: transparent; border-color: var(--border); max-width: 110px; }

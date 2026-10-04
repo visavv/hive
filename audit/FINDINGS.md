@@ -195,6 +195,7 @@ Still open from this pass: none. Not re-verified with a real vendor (mock only).
 | 20 | UX-042 | Recipes: "Main agent / Checkers / Prefix" were jargon; now "Does the work / Checks the work / Name prefix", a line on why a different vendor should check, and the prefix explained | UI test |
 | 21 | UX-043 | Empty states in the Hive panel used tool names ("Agents write here with hive_send to "owner"", "Empty."); Inbox, Mail and Blackboard now say in plain words what will appear there and why | UI test |
 | 22 | UX-044 | Sidebar group rules were shorthand ("agents can message anyone · full-access agents protected", "hold unlinked mail to full-access agents"); they read as sentences now | UI test |
+| 23 | UX-045 | Shortcuts were only in tooltips and the palette hints; a "Keyboard shortcuts" palette command opens one table with every key | UI test |
 | 3 | — | The improvements → coder → owner flow is now covered by `test/team.ts` at the wiring level (scout sends ideas to the coder; the coder asks the owner first). Model behaviour still unverified with a real vendor | test/team.ts |
 
 ## Pass 5 (2026-10-01)

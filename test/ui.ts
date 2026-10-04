@@ -623,6 +623,13 @@ try {
     assert(true, "Ctrl+Shift+Enter improves, Enter sends it to the same agent");
   }
 
+  // every shortcut in one place
+  await command(page, "keyboard shortcuts");
+  await page.locator(".modal", { hasText: "Keyboard shortcuts" }).waitFor({ timeout: 5000 });
+  assert((await page.locator(".modal .keys-table kbd", { hasText: "Ctrl+K" }).count()) >= 1, "a Keyboard shortcuts dialog lists the keys");
+  await page.keyboard.press("Escape");
+  await page.locator(".modal").waitFor({ state: "detached", timeout: 3000 });
+
   // board: Ctrl+J, quick add, Esc closes; stats and themes from the palette
   await page.keyboard.press("Control+j");
   await page.locator(".kanban").waitFor({ timeout: 5000 });
