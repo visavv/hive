@@ -1289,3 +1289,4 @@ button.danger { color: var(--st-error); }
 .broadcast .bc-mode { height: var(--ctl-h); font-size: var(--fs-2); color: var(--text-2); background: transparent; border-color: var(--border); max-width: 110px; }
 .kb-editor { display: flex; flex-direction: column; gap: 8px; }
 .group-head .danger { margin-left: 8px; }
+.group-mode-hint { padding: 2px 2px 6px; }

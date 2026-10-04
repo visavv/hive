@@ -16,4 +16,8 @@ const p = leadPrompt("make memento mori calendar", team[0], team);
 assert(p.startsWith(LEAD_MARK) && p.includes("Task: make memento mori calendar") && p.includes("wombat (code reviewer)") && !p.includes("Teammates: zucchini"), "the lead's prompt carries the task and its teammates");
 assert(/waits for its part by mail/.test(waitNotice("x", team[0])), "the others are told they wait for the lead");
 assert(/asks the owner which to do/.test(TEAM_POLICY) && /hive names one lead/.test(TEAM_POLICY), "every agent's briefing explains team broadcasts and the improvements → coder → owner flow");
+// the improvements → coder → owner flow is wired through the presets' briefings (the model does the rest)
+const { ROLES } = await import("../src/core/roles.js");
+assert(/hive_send it the new ideas/.test(ROLES.scout.briefing ?? "") && /coder agent exists/.test(ROLES.scout.briefing ?? ""), "the scout preset sends new ideas to the coder");
+assert(/don't build them yet/.test(ROLES.coder.briefing ?? "") && /ask the owner which to do/.test(ROLES.coder.briefing ?? ""), "the coder preset asks the owner before building suggested ideas");
 finish("team");

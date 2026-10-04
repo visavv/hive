@@ -175,6 +175,8 @@ Still open from this pass: none. Not re-verified with a real vendor (mock only).
 | 1 | UX-025 | The team-broadcast "waiting for the lead" notice was a grey mono line, easy to miss. Now a tinted accent line with a ◔ mark | UI test (`.notice.team`) |
 | 2 | UX-026 | Sidebar rows ended in a truncated "Default (recommended)" for every agent on the vendor's default model; the default is left out, a chosen model is shown | UI test |
 | 2 | UX-027 | The pane … menu items had no `menuitem` role | UI test |
+| 3 | UX-028 | Group chat: "Direct / Review each message" had no explanation beyond tooltips; one line under the header now says what the current mode does and the hourly cap | UI test |
+| 3 | — | The improvements → coder → owner flow is now covered by `test/team.ts` at the wiring level (scout sends ideas to the coder; the coder asks the owner first). Model behaviour still unverified with a real vendor | test/team.ts |
 
 ## Pass 5 (2026-10-01)
 

@@ -253,6 +253,14 @@ export function GroupChat({ name, onClose }: { name: string; onClose: () => void
           </label>
         </div>
       )}
+      {g && (
+        <div className="group-mode-hint dim small">
+          {g.mode === "review"
+            ? "Review: every message an agent sends in this group waits for you below (Release, Edit or Drop). Your own messages are never held."
+            : "Direct: agents in this group message each other freely; you see the exchange here."}
+          {g.maxPerHour ? ` At most ${g.maxPerHour} agent messages per hour.` : ""}
+        </div>
+      )}
       <div className="group-log" aria-live="polite">
         {data && !data.messages.length && <div className="dim pad">No messages yet. Post below, or tell an agent to message @{name}.</div>}
         {data?.messages.map((m) => (

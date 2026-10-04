@@ -771,6 +771,8 @@ try {
   }
   assert(misaligned.length === 0, `rows are vertically aligned${misaligned.length ? ": " + misaligned.slice(0, 6).map((m) => `${m.row} > ${m.el} off by ${m.dy}px`).join("; ") : ""}`);
   await pane(page, "beta").locator(".group-chip").click();
+  await page.locator(".modal.wide .group-mode-hint", { hasText: /Review|Direct/ }).waitFor({ timeout: 5000 });
+  assert(true, "the group chat explains its mode in one line");
   const gc = page.locator(".modal.wide", { hasText: "@alpha-beta" });
   await gc.locator(".gmsg.held", { hasText: "please check the login flow" }).waitFor({ timeout: 5000 });
   await page.screenshot({ path: join(shots, "hive-ui-group-chat.png") });
