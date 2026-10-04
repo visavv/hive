@@ -42,6 +42,104 @@ Passes: 1 (2026-09-30, commit e5d0908); 2 and 3 (2026-10-01, commits a4f18dc →
 
 Disproved: pass 1 suspected "Ctrl+9 doesn't scroll in vertical layout". The cause was UX-001; Ctrl+9 works.
 
+## Pass 6 (2026-10-04): UI coherence, control-by-control value, orchestration workflows
+
+Review only; nothing was changed in this pass. Method: the demo session (`test/showcase.ts`, mock agents in demo mode), a scenario script (dialogs, six agents, 1280×720 and 1920×1080, 3 columns, a 25-turn transcript, every drawer tab, light theme, 120 % zoom), the existing UI test (passes), and a code trace of the control inventory, the agent state model and `styles.css`. **Only the mock agent was exercised; no real vendor is signed in on this machine.** Evidence: `audit/evidence/pass6/`, `docs/screenshots/` (regenerated).
+
+### Assessment
+
+The pane grid, palette and "Worked for" fold are close to T3 Code and herdr, and the main journeys (team broadcast, mail hand-off, review groups, jobs, ✦ improve, dictation with a fake server) work in the UI test. What doesn't hold up is the layer under them: `styles.css` has grown as five override passes on top of each other, so earlier fixes silently stopped applying (UX-004 regressed), the four agent states are computed in four places with different rules, and roughly a third of the controls are duplicates of another control. Narrow panes (3 columns, the docked Hive panel, 1280 px windows) are where the UI melts: headers clip, tables break into syllables, the panel's tabs wrap to three lines.
+
+### Register
+
+| ID | Title | Sev. | Conf. | Verdict |
+|---|---|---|---|---|
+| BUG-005 | **UX-004 regressed**: pane header clips at narrow widths again (role badge, context meter, state pill and the "idle 15s" text cut off at 3 columns / 1280 px and beside the docked Hive panel) because the container-query rules at `styles.css:362/368` (`.kind`, `.ctx` hidden) are overridden by the later unconditional `display: inline-flex` at :682 | High | High (screenshots r08, drawer-docked) | fix: move the hide rules after the alignment pass, or scope them with higher specificity; re-add the 3-column probe to `test/ui.ts` |
+| BUG-006 | Markdown tables inside a transcript break words into syllables at pane widths under ~450 px ("Hig h", "Med ium", "limite r.ts:27") | Medium | High (drawer-docked.png) | fix: `white-space: nowrap` on the first/last columns and `overflow-x: auto` on `.md table` wrappers |
+| BUG-007 | Docked Hive panel: the seven tabs wrap onto two rows and "Since you left" onto three lines at the default dock width (640 px) | Medium | High | fix: shorter tab labels ("Report", "Inbox", "Learn", "Board", "Mail", "Usage", "Accounts") or an overflow menu; dock width min 560 |
+| BUG-008 | The "undo" button after ✦ improve is squeezed to 30 px wide: `.composer-bar > button.ghost` (0,2,1) at :1226 beats `.composer-bar .improve-undo { width: auto }` (0,2,0) at :1233. The same specificity order kills the ✦ accent hover at :1232 | Medium | High (code) | fix: give the composer rules one specificity level; drop the `>` child combinator |
+| BUG-009 | Palette command "Zoom in / out / reset" does nothing (`run: () => {}`, App.tsx:231): picking it closes the palette and that's all | Low | High | fix: make it zoom in, and list Ctrl+- / Ctrl+0 in the hint; or remove it |
+| BUG-010 | Ctrl+J opens the board but can't close it: the overlay gate (App.tsx:128-134) only lets Ctrl+K and Ctrl+I through while an overlay is on top. Ctrl+Shift+M / Ctrl+Shift+I also trigger maximize / drawer (no Shift check) | Low | High | fix: add `board`+J to `closesTop`; check `!e.shiftKey` on M and I |
+| BUG-011 | An agent that calls `hive_status({status:"waiting"})` turns its pane to **needs you** with nothing to answer, until its next status write; the window title and the ready button ignore it, so the header and the title disagree | Medium | High (code: state.tsx:25 vs App.tsx:107) | fix: derive "needs you" from open asks only; show a tool-set "waiting" as a note |
+| BUG-012 | "asleep" agents have no branch in `agentState`, so a closed session shows **done** or **idle** for up to a second, then flips to **stopped** when it leaves the snapshot; `OtherAgents` and `format.ts statusLabel` use their own raw-status tables | Low | Medium | fix: one `agentState` for every surface; map asleep → stopped |
+| BUG-013 | The window title counts only open cards and ready marks; an agent in **error** or the tool-set waiting state never shows in the title, although the sidebar and palette show it | Low | High | fix: use `rollup()` as the comment at state.tsx:34 already intends |
+| BUG-014 | Palette rows can show a stale state while the palette is open: `items` is memoised on `[q, names, actions]` (Palette.tsx) | Low | Medium | fix: include the states in the deps or read them in render |
+| BUG-015 | `.pane.ready` (done panes) gets a *weaker* border than idle panes: :610 sets `border-color: var(--border)` after the contrast pass set `--border-strong` for every pane; `.pane.linked` gets a mismatched left edge from :440 | Low | High | fix: remove the two leftovers |
+| BUG-016 | Every dark theme's hand-picked `--border`, `--border-strong` and `--text-3` are dead: `:root:not([data-tone="light"])` at :1242 (same specificity, later) replaces them with a colour-mix | Low | High | fix: compute the mix once per theme, or move :1242 before the theme blocks |
+| BUG-017 | Accounts tab shows two loading lines at once ("checking…" and "checking each agent (a few seconds)…") | Low | High (r06-drawer-accounts) | fix: one |
+| UX-010 | **Design tokens are defined four times** (`:root` at :1, :406, :515, :669) with aliases that trap authors: `--bg3` is `--bg-2`, not `--bg-3`, so hover uses two different shades (:64 vs :772); `var()` fallbacks disagree with the tokens (`--r-3, 10px` while `--r-3` is 8px); `--bg-4` is defined in every theme and never used; `--magenta` is never themed | Medium | High | fix: one `:root` block with the new names; delete the old aliases after a rename pass |
+| UX-011 | **No type or size scale**: 14 distinct font sizes (five between 10 and 12.5 px), pills built five ways (8, 9, 10, 999 px, calc), control heights 18/20/22/26/28/30/34, two icon classes with different baselines (`.ico` −1 px, `.icon` −3 px), `.pane-head .st` set to 20 px and 18 px in the same pass (:682 vs :691) | Medium | High | fix: tokens `--fs-1..4`, `--h-ctl` 28 / `--h-chip` 20 / `--h-icon` 30, one `.pill` class, one icon class |
+| UX-012 | **Five state-indicator systems** coexist: `.dot.*` (sidebar legacy, `pulse` easing), `.st-*` (pills, `hive-pulse` steps), `.badge.ready`, `.vc/.vstat` (verdict), `.kb-dot-*` (board), `.voice-badge` (`voice-pulse`); the same state has different dot sizes (6/7/8 px) and animations | Medium | High | fix: one `StatePill`/dot component and one keyframe, used by sidebar, palette, board and verdict |
+| UX-013 | Pane header carries up to 11 items (checkbox, index, name, kind, role badge, group chip, context meter, state pill, queued badge, job badge, 7 action icons). herdr shows name + state. Kind ("claude-code") is 10 px grey text nobody reads; role badge and group chip are both pills and read as the same thing | Medium | High (03-squad) | fix: name · role badge · state pill in the header; kind, branch, policy, idle time, context in the sub row; actions behind one "…" menu except Stop and Maximize |
+| UX-014 | Top bar has 13 controls. "Team / Each" is a highlighted toggle next to Send and reads as an app-wide mode; "✓ 2 ready" is the only green button; "Usage" is a chip whose meaning is unclear until hovered | Medium | Medium | fix: Team/Each as a small select inside the broadcast box; Verdict and Board into the palette only (both are in it already); keep ☰, broadcast, ready, bell, columns, Hive, + Agent |
+| UX-015 | Composer placeholder does two jobs: "message planner… ✦ improves a rough idea". While working it changes to "agent is working — Enter queues, Esc cancels", so the box's own name disappears | Low | High | fix: "message planner…" only; ✦ hint in the button's tooltip; working state shown as a small line above the box |
+| UX-016 | Tool rows repeat the verb: "read **Read** src/api/client.ts", "execute npm test". T3 Code shows one verb. While a turn is running each tool is a full bordered card; only after the turn do they fold | Low | High (05-focus-coder) | fix: drop the kind label when the title starts with the same verb; render in-flight tools as the same compact lines the fold uses |
+| UX-017 | Duplicate controls with the same effect: sidebar toggle ×4 (Ctrl+B, Ctrl+\, ☰, palette), pane cycle ×2 pairs, link agents ×6 entry points, verdict ×5, "Retry" and "Restart (resumes the session)" call the same function, chime toggle in two places with slightly different behaviour | Low | High | verdicts: keep Ctrl+B + ☰, drop Ctrl+\; keep Ctrl+Tab, drop Ctrl+Shift+[ ]; one "Retry"; one Verdict button; link via drag + pane icon + Group N |
+| UX-018 | Three dialogs have no Close/Cancel button (Token stats, Group chat, Verdict view); `CardEditor` builds its own modal without the focus trap; `Modal` renders no ✕ | Low | High | fix: ✕ in `Modal` for all |
+| UX-019 | "Delete group" (red) sits next to "Send" in the group chat; one mis-click away | Low | High (07-group-chat) | fix: move to a "…" menu or the top-right with a confirm |
+| UX-020 | Sidebar job card wording is a sentence fragment: "agent branches (hive/*) ≥40 lines or any change after 20m, at most every 5m · 0 runs" | Low | High | fix: two lines: "watch · agent branches" / "≥40 lines or 20 min · every 5 min · 0 runs" |
+| UX-021 | Add agent "Model" field placeholder is a paragraph ("default (or type a model name; the list fills in once this agent has…") and gets cut off | Low | High (r02) | fix: placeholder "default"; the explanation as a hint line under the field |
+| UX-022 | Clickable rows without keyboard access or a role: group `li` (Links.tsx:340), mail rows (Drawer.tsx:374), stats rows (Stats.tsx:93); the "fresh session" button has no aria-label; `.dot` / `voice-pulse` / `.improve.busy` animations have no reduced-motion guard | Low | High | fix: `role="button"` + `onActivate`; one `prefers-reduced-motion` block |
+| UX-023 | Palette is unreachable by keyboard while the board, the code view or any dialog is open (overlay gate) | Low | High | fix: allow Ctrl+K through the gate; the palette can sit above a dialog |
+| PERF-002 | Four independent pollers: usage chip (10 s) and usage tab (15 s) both call `rpc("usage")`; worktrees 8 s; board 4 s; group chat 2 s, all while visible | Low | High | fix: one usage subscription pushed by the backend; board/worktrees refresh on events |
+| IDEA-008 | Inspiration credits: typesafe.ai (System One / Jev), laya, Hermes and Handy are named in the README history but not credited anywhere in the repo; T3 Code, herdr and Odysseus are | Low | High | add an "Inspiration" list to docs/COMPARISON.md |
+
+### Transcript versus the inspirations
+
+| Where | hive | T3 Code / herdr | Deliberate? |
+|---|---|---|---|
+| Tool calls during a turn | full-width bordered cards, one per tool, with the kind label repeated in the title | one compact line per tool, collapsed into "Worked for N" as soon as the turn ends | no (UX-016) |
+| Your own messages | full-width tinted box indented 18 % from the left | small right-aligned bubble (T3) / plain line (herdr) | undocumented; keep, but document it |
+| Turn footer | dashed rule + "done · 4,210 tok · 8:52 AM" on every turn | nothing per turn; tokens in a status bar | undocumented; the token count is useful, the dashed rule and timestamp are noise |
+| Pane header | 11 items (UX-013) | name, state, one action | no |
+| Focused pane | accent border + 1 px ring + 18 px glow (`:1245`), added by the contrast pass against the "no glows" rule at :403/:437/:606 | one accent edge | no; the comment and the rule disagree |
+| needs-you pane | amber border replaces the accent, so a focused pane that needs you shows amber only | herdr: state in the header, focus on the edge | undocumented |
+| Palette | matches: states, shortcuts, filter words, footer hints | | yes |
+| Fold ("Worked for 1m 12s · 4 steps") | matches after the turn ends | | yes |
+
+### Control inventory
+
+Mapped: 24 palette actions (+ 5 code, + 9 voice), 18 global shortcuts, 15 top-bar controls, 6 sidebar sections, 11 pane-header controls, 7 composer controls, 7 drawer tabs with 20 body controls, 13 dialogs (full table in `audit/evidence/pass6/inventory.md`). Verdicts: **keep** 78 · **fix** 9 (BUG-008/009/010, UX-015/016/018/019/020/021) · **merge** 11 (UX-017) · **relabel** 3 (drawer tabs, Usage chip, Team toggle) · **remove** 2 (Ctrl+\, Ctrl+Shift+[ ]). Tested in the interface: everything `test/ui.ts` covers plus the scenario script; inspected in code only: device panes, verdict view, teacher dock, voice setup.
+
+### Journeys
+
+| Journey | Result |
+|---|---|
+| Returning operator (6 agents, mixed states) | sidebar, palette and headers agree on the state; the title shows "✓ 1 ready"; the needs-you pane is amber. Fine at 1680 px; headers clip at 1280 px (BUG-005) |
+| One task end to end (mock) | permission card inline, Allow/Reject, result on disk: passes in `test/ui.ts` |
+| Hand-off A → B over mail | B woken, mail shown in both panes with the sender: passes in `test/ui.ts` |
+| Team broadcast | lead chosen, wait notices in the others, no turn spent: passes in `test/ui.ts` and `test/backend.ts`. The lead's prompt label "Team task · you lead · …" is clear; the others' notice is one grey mono line that is easy to miss |
+| Improvements → coder → owner | briefing rule only; not exercised with a real model (mock can't follow it). **Unverified.** |
+| Jobs (loop / interval / watch) | schedule, run history, stop: pass in `test/ui.ts` and `test/scheduler.ts`; the sidebar card wording is UX-020 |
+| Review group, held mail | Release / Edit / Drop: passes |
+| Dictation (fake Whisper) | text lands in the hovered pane, not sent: passes |
+| Interrupt / backend restart | Esc cancels; backend crash auto-restarts and panes reconnect: passes. Ready marks and `starting` survive a restart (state trace §6); a turn killed mid-flight gets no done mark, by design |
+| Automatic decisions | lead choice (rule), reflection (rule + model), held mail (rule), declined prompt after 15 min (rule), usage-limit pause (rule). All visible as a toast, a notice or an inbox item. None is reversible from the UI except held mail (Release). A small fast model (System One / Jev) would not improve any of these: they are rules with no judgement in them; the one judgement call, picking the lead, is a 5-line regex on roles, and a wrong pick costs one turn. **Recommendation: no.** laya-style token saving: the only automatic spend is reflection and ✦ improve, both already capped; nothing to save |
+
+### Load and failure states
+
+No agents, one, six: fine (r01, 03, r07). 25-turn transcript: renders without lag; no virtualisation, so hundreds of tool calls would need a check with a real vendor. Vendor not installed / not signed in: Accounts tab says so with the command to copy (BUG-017 aside). Backend restart: covered. 120 % zoom at 1680 px with six panes: transcripts become 150 px tall (r15); acceptable. Light theme: fine. Both 760 px and 1280 px: 760 is the phone layout (fine); 1280 is BUG-005.
+
+### Design rules (proposed)
+
+1. One `:root` token block; the old alias names are removed after a rename pass.
+2. Type scale: 11 / 12 / 13 / 15 px. Chips 20 px, controls 28 px, composer icons 30 px, radii 4 / 6 / 8 / 999.
+3. One `StatePill` component and one pulse keyframe for every surface.
+4. Header = name · role · state · Stop · Maximize · "…". Everything else in the sub row.
+5. In-flight tool calls look like folded ones: one line each.
+6. Only the focused pane has an accent edge; needs-you is a header colour, not a border.
+7. Every dialog has ✕; every clickable row has a role and a key handler.
+8. Container queries, not media queries, decide what a pane hides; they live after every other pane rule.
+
+### Order of work
+
+1. BUG-005, BUG-006, BUG-007 (narrow widths) and BUG-008 (undo): one CSS commit, with the 3-column probe back in `test/ui.ts`.
+2. UX-010 + UX-011 + UX-012 + BUG-015/016: collapse `styles.css` to one token block and one state system. This is the big one; do it before any screen-level polish.
+3. BUG-011/012/013/014: one `agentState` everywhere, title via `rollup`.
+4. UX-013 + UX-016: header diet and tool-line rendering.
+5. UX-014/015/017/018/019/020/021: control cleanup.
+6. BUG-009/010, UX-022/023, PERF-002, IDEA-008.
+
 ## Pass 5 (2026-10-01)
 
 Security review of permission prompts and agent-to-agent reach, plus a review of `hive tui`, the CLI and the phone-access setup scripts. Items not fixed yet are being fixed on the core and UI branches.

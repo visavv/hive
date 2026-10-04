@@ -98,3 +98,15 @@ All open items fixed or mitigated:
 - **UX-009**: top bar no longer wraps, found while adding the Verdict button.
 
 Verified with `npm test` (17 suites), the UI test (new: Inbox lists held mail; verdict flow), the layout probe at 1366/1280 and the perf bench. What remains is by design: an agent you allow to run any command runs as you (SEC-004 residual).
+
+## Pass 6: 2026-10-04 (UI coherence, control value, orchestration workflows; review only)
+
+**Scope.** The review prompt of 2026-10-03: inspirations T3 Code, herdr, Odysseus; control inventory; transcript versus inspiration; state model; journeys; load states; design rules. No product code changed.
+
+**Method.** Demo session (`test/showcase.ts`) regenerated `docs/screenshots/`; a scenario script took 18 more shots (dialogs, six agents, 1920 / 1280 / 3 columns, 25-turn transcript, every drawer tab, light theme, zoom); three code traces (controls, state model, `styles.css` override layers); `npm run test:ui` passes. Mock agent only: no vendor is signed in here.
+
+**Found.** 13 bugs (BUG-005..017), 14 usability items (UX-010..023), PERF-002, IDEA-008; see FINDINGS.md "Pass 6". Headline: UX-004 (narrow header) regressed because a later CSS pass overrode the container queries; `styles.css` has four token blocks and five state systems; the four agent states are computed in four places.
+
+**Not tested.** Real vendors, Windows scaling, screen readers, hundreds of tool calls with a real adapter, device panes, the improvements → coder → owner rule with a real model.
+
+**Next.** Fix in the order given in FINDINGS.md; start with the narrow-width CSS and the stylesheet collapse.
