@@ -386,6 +386,12 @@ try {
   assert((await pane(page, "beta").locator(".pane-menu .menu [role=menuitem]").count()) >= 3, "the pane's … menu holds job, link and fresh session (menu items)");
   assert(!/default/i.test(await page.locator(".agent-item", { hasText: "beta" }).locator(".row2").innerText()), "the sidebar doesn't repeat a vendor's 'Default' model");
   await pane(page, "beta").locator(".pane-menu .menu button", { hasText: "Schedule a job" }).click();
+  {
+    // the Instruction label sits at the top of its tall field, not floating mid-way
+    const lab = (await page.locator(".modal label:has-text('Instruction') > span").first().boundingBox())!;
+    const ta = (await page.locator(".modal label:has-text('Instruction') textarea").boundingBox())!;
+    assert(Math.abs(lab.y - ta.y) < 12, `job dialog: the Instruction label aligns with the top of its box (${Math.round(lab.y - ta.y)} px)`);
+  }
   await page.locator(".modal textarea").fill("hunt bugs");
   await page.locator(".modal label:has-text('Times') input").fill("2");
   await page.locator(".modal button[type=submit]").click();

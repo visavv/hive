@@ -1290,3 +1290,8 @@ button.danger { color: var(--st-error); }
 .kb-editor { display: flex; flex-direction: column; gap: 8px; }
 .group-head .danger { margin-left: 8px; }
 .group-mode-hint { padding: 2px 2px 6px; }
+
+/* keyboard focus on every row that acts like a button; labels of tall fields sit at the top */
+.mail:focus-visible, .group-item:focus-visible, .stats-rows li:focus-visible, .kb-card:focus-visible, .pane-menu .menu button:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: -2px; }
+.form label:has(textarea) { align-items: start; }
+.form label:has(textarea) > span:first-child { padding-top: 7px; }
