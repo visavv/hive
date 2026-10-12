@@ -66,11 +66,15 @@ export function RecipesDialog({ onClose }: { onClose: () => void }) {
             void apply();
           }}
         >
-          <KindSelect label="Main agent" value={kind} onChange={setKind} />
-          {r.agents.some((a) => a.alt) && <KindSelect label="Checkers" value={alt} onChange={setAlt} />}
+          <KindSelect label="Does the work" value={kind} onChange={setKind} />
+          {r.agents.some((a) => a.alt) && <KindSelect label="Checks the work" value={alt} onChange={setAlt} />}
+          <p className="dim small recipe-why">A different vendor for the checkers catches more: one model rarely spots its own mistakes.</p>
           <label>
-            <span>Prefix</span>
-            <input value={prefix} onChange={(e) => setPrefix(e.target.value)} placeholder="optional, e.g. yt- for a second copy" />
+            <span>Name prefix</span>
+            <span className="field-col">
+              <input value={prefix} onChange={(e) => setPrefix(e.target.value)} placeholder="none" />
+              <span className="hint small dim">only if you set this team up twice, e.g. "yt-" gives yt-coder, yt-reviewer</span>
+            </span>
           </label>
           <p className="dim small">
             Agents: {r.agents.map((a) => `${prefix}${a.name}${a.interactive ? " (you talk to it)" : ""}`).join(", ")}. {r.next}

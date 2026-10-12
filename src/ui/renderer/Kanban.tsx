@@ -8,6 +8,7 @@ import { rpc } from "./bridge.js";
 import { store } from "./store.js";
 import { focus, useOverlay } from "./focus.js";
 import { IconClose, IconPlus, IconSearch } from "./Icons.js";
+import { Modal } from "./Modal.js";
 
 type BoardData = Awaited<ReturnType<typeof rpc<"board">>>;
 type Card = BoardData["cards"][number];
@@ -21,7 +22,7 @@ export function KanbanView({ onClose }: { onClose: () => void }) {
   const [q, setQ] = useState("");
   const [editing, setEditing] = useState<Card | null>(null);
   const [drag, setDrag] = useState<{ id: number; over?: Col; before?: number | null } | null>(null);
-  useOverlay("modal", onClose); // Esc closes the board; pane shortcuts wait while it's open
+  useOverlay("panel", onClose); // Esc closes the board; pane shortcuts wait while it's open
   const load = () =>
     void rpc("board", { done: showDone, project: project || undefined, q: q || undefined })
       .then(setData)
@@ -174,7 +175,6 @@ function CardEditor({ card, onClose, onSaved }: { card: Card; onClose: () => voi
   const [labels, setLabels] = useState(card.labels.join(", "));
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => ref.current?.focus(), []);
-  useOverlay("modal", onClose); // on top of the board: Esc closes only the editor
   const save = async () => {
     await rpc("cardUpdate", { id: card.id, title, body, project, labels: labels.split(",") });
     onSaved();
@@ -182,11 +182,9 @@ function CardEditor({ card, onClose, onSaved }: { card: Card; onClose: () => voi
   };
   const agents = store.layout.panes.map((p) => p.name);
   return (
-    <div className="modal-back" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <Modal title={`Card #${card.id}`} onClose={onClose}>
       <div
-        className="modal kb-editor"
-        role="dialog"
-        aria-label={`card #${card.id}`}
+        className="kb-editor"
         onKeyDown={(e) => {
           if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) void save();
         }}
@@ -245,6 +243,6 @@ function CardEditor({ card, onClose, onSaved }: { card: Card; onClose: () => voi
           </button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

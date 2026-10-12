@@ -94,6 +94,13 @@ export const IconMaximize = (p: P) => (
     <path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5 9 7M2.5 13.5 7 9" />
   </Svg>
 );
+export const IconMore = (p: P) => (
+  <Svg {...p}>
+    <circle cx="3.5" cy="8" r="1.2" fill="currentColor" stroke="none" />
+    <circle cx="8" cy="8" r="1.2" fill="currentColor" stroke="none" />
+    <circle cx="12.5" cy="8" r="1.2" fill="currentColor" stroke="none" />
+  </Svg>
+);
 export const IconClose = (p: P) => (
   <Svg {...p}>
     <path d="m4 4 8 8M12 4l-8 8" />

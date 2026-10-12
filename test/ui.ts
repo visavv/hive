@@ -142,7 +142,9 @@ try {
   await addAgent(page, "alpha");
   await addAgent(page, "beta", "allow-all");
   assert((await page.locator(".pane").count()) === 2, "two panes open");
+  assert((await pane(page, "alpha").locator(".empty").count()) === 1, "a fresh pane shows the getting-started hint");
   assert((await page.locator(".agent-item").count()) === 2, "sidebar lists both agents");
+  assert(/any agent can message any agent/.test(await page.locator(".group-rules summary").innerText()), "the group rules line reads as a sentence");
 
   // Add agent offers the models this kind has shown before
   await page.keyboard.press("Control+N");
@@ -150,6 +152,10 @@ try {
   await page.locator(".modal select").first().selectOption("mock");
   await until(async () => (await page.locator(".modal select.add-model option").allInnerTexts()).includes("Mock Large"), 5000);
   assert(true, "Add agent has a model choice (filled from what this kind offered)");
+  {
+    const opts = await page.locator(".modal label:has-text('Permissions') option").allInnerTexts();
+    assert(opts.some((o) => /chat only/.test(o)) && opts.some((o) => /asks first/.test(o)) && !opts.some((o) => /read-only/.test(o)), "permission options use the pane's own words (asks first / reads freely / full access / chat only)");
+  }
   await page.keyboard.press("Escape");
   await page.locator(".modal").waitFor({ state: "detached" });
 
@@ -176,6 +182,8 @@ try {
   await pane(page, "alpha").locator("textarea").press("Enter");
   const perm = pane(page, "alpha").locator(".ask.perm");
   await perm.waitFor({ timeout: 10_000 });
+  await until(async () => /needs you/.test(await page.title()), 5000);
+  assert(/^\(1\) hive — needs you$/.test(await page.title()) && (await page.locator(".agent-item .state-word", { hasText: "needs you" }).count()) === 1, "pane, sidebar and window title agree: one agent needs you");
   assert(await page.locator(".pane.needs-you").count(), "pane is highlighted while waiting on a permission");
   await perm.locator("button", { hasText: "Allow" }).click();
   await pane(page, "alpha").locator(".msg.agent", { hasText: "edit allowed" }).waitFor({ timeout: 10_000 });
@@ -184,7 +192,8 @@ try {
   const lines = await pane(page, "alpha").locator(".tool-line").allInnerTexts();
   assert(lines.length > 0 && lines.every((c) => c.includes("checked mail")) && (await pane(page, "alpha").locator(".tool").count()) === 0, "hive's own tool calls show as quiet one-liners, updated in place");
   await pane(page, "alpha").locator(".ctx").waitFor({ timeout: 5000 });
-  assert(/\d+%/.test(await pane(page, "alpha").locator(".ctx").innerText()), "ctx % meter shown in pane header");
+  assert(/\d+%/.test(await pane(page, "alpha").locator(".ctx").innerText()) && /context window/.test((await pane(page, "alpha").locator(".ctx").getAttribute("aria-label")) ?? ""), "ctx % meter shown in the pane, with a spoken label");
+  assert(/include alpha/.test((await pane(page, "alpha").locator("input.sel").getAttribute("aria-label")) ?? ""), "the broadcast checkbox has a spoken label");
   assert(await pane(page, "alpha").locator(".cfg select").count(), "model selector from configOptions shown");
   assert((await pane(page, "alpha").locator(".composer-bar .cfg select").count()) > 0 && (await pane(page, "alpha").locator(".pane-head .cfg").count()) === 0, "model settings sit under the message box, not in the pane header");
   // "/" opens a menu of hive's and the agent's commands
@@ -254,20 +263,19 @@ try {
   // team broadcast (default): one lead gets the task, the others are told to wait for its mail
   await page.locator(".broadcast input").fill("team task: tidy the readme");
   await page.locator(".broadcast input").press("Enter");
-  await pane(page, "beta").locator(".notice", { hasText: "alpha is leading" }).first().waitFor({ timeout: 10_000 });
+  await pane(page, "beta").locator(".notice.team", { hasText: "alpha is leading" }).first().waitFor({ timeout: 10_000 });
   await pane(page, "alpha").getByText("Team task · you lead").first().waitFor({ timeout: 10_000 });
   assert(true, "team broadcast: one agent leads, the others wait for its part");
   await until(async () => (await pane(page, "alpha").locator(".st.st-working").count()) === 0, 15_000);
 
   // "each": the same message to all
-  await page.locator(".broadcast .bc-mode").click();
-  await page.locator(".broadcast .bc-mode", { hasText: "Each" }).waitFor();
+  await page.locator(".broadcast select.bc-mode").selectOption("each");
   await page.locator(".broadcast input").fill("agents? roll call");
   await page.locator(".broadcast input").press("Enter");
   await pane(page, "alpha").locator(".msg.user", { hasText: "roll call" }).waitFor({ timeout: 10_000 });
   await pane(page, "beta").locator(".msg.user", { hasText: "roll call" }).waitFor({ timeout: 10_000 });
   assert(true, "broadcast reaches every pane");
-  await page.locator(".broadcast .bc-mode").click();
+  await page.locator(".broadcast select.bc-mode").selectOption("team");
 
   // voice: mic button -> fake microphone -> fake Whisper server -> text at the cursor (not sent)
   const ta = pane(page, "alpha").locator("textarea");
@@ -348,10 +356,52 @@ try {
   assert(await activeIn(page, "beta"), "Ctrl+2 while maximized restores the grid and focuses pane 2");
   await page.locator(".cols button", { hasText: "+" }).click();
 
-  // schedule a job from the pane
-  await pane(page, "beta").locator("button[title^='schedule']").click();
+  // pass 6: three columns at 1280 px: nothing in a pane header or sub row may clip (BUG-005), and the dialogs have a ✕
+  await page.setViewportSize({ width: 1280, height: 720 }).catch(() => {});
+  await page.locator(".cols button", { hasText: "+" }).click();
+  await sleep(300);
+  {
+    const clipped = await page.evaluate(() => {
+      const out: string[] = [];
+      for (const row of document.querySelectorAll<HTMLElement>(".pane-head, .pane-sub")) {
+        if (row.scrollWidth > row.clientWidth + 1) out.push(`${row.className}: ${row.scrollWidth}>${row.clientWidth}`);
+        for (const el of row.querySelectorAll<HTMLElement>("*")) {
+          const r = el.getBoundingClientRect();
+          const p = row.getBoundingClientRect();
+          if (r.width && (r.right > p.right + 1 || r.left < p.left - 1)) out.push(`${row.className} > ${el.className || el.tagName}`);
+        }
+      }
+      return out;
+    });
+    assert(clipped.length === 0, `1280 px, 3 columns: pane headers and sub rows fit (${clipped.slice(0, 3).join("; ") || "ok"})`);
+  }
+  await page.locator(".cols button", { hasText: "−" }).click();
+  await page.setViewportSize({ width: 1600, height: 950 }).catch(() => {});
+  await page.keyboard.press("Control+J");
+  await page.locator(".kanban, .kb-cols").first().waitFor({ timeout: 5000 });
+  await page.keyboard.press("Control+J");
+  await page.locator(".kb-cols").waitFor({ state: "detached", timeout: 3000 });
+  assert(true, "Ctrl+J opens and closes the board (BUG-010)");
+  await page.keyboard.press("Control+N");
+  await page.locator(".modal .modal-close").waitFor({ timeout: 3000 });
+  await page.locator(".modal .modal-close").click();
+  await page.locator(".modal").waitFor({ state: "detached", timeout: 3000 });
+  assert(true, "every dialog has a close button (UX-018)");
+
+  // schedule a job from the pane's "…" menu
+  await pane(page, "beta").locator(".pane-menu > button").click();
+  await pane(page, "beta").locator(".pane-menu .menu button", { hasText: "Fresh session" }).waitFor({ timeout: 3000 });
+  assert((await pane(page, "beta").locator(".pane-menu .menu [role=menuitem]").count()) >= 3, "the pane's … menu holds job, link and fresh session (menu items)");
+  assert(!/default/i.test(await page.locator(".agent-item", { hasText: "beta" }).locator(".row2").innerText()), "the sidebar doesn't repeat a vendor's 'Default' model");
+  await pane(page, "beta").locator(".pane-menu .menu button", { hasText: "Schedule a job" }).click();
+  {
+    // the Instruction label sits at the top of its tall field, not floating mid-way
+    const lab = (await page.locator(".modal label:has-text('Instruction') > span").first().boundingBox())!;
+    const ta = (await page.locator(".modal label:has-text('Instruction') textarea").boundingBox())!;
+    assert(Math.abs(lab.y - ta.y) < 12, `job dialog: the Instruction label aligns with the top of its box (${Math.round(lab.y - ta.y)} px)`);
+  }
   await page.locator(".modal textarea").fill("hunt bugs");
-  await page.locator(".modal label:has-text('Times') input").fill("2");
+  await page.locator(".modal label:has-text('How many runs') input").fill("2");
   await page.locator(".modal button[type=submit]").click();
   // the job must exist before we wait for it to finish: report the dialog if it didn't take
   const scheduled = await page.locator(".toast", { hasText: "scheduled on beta" }).waitFor({ timeout: 10_000 }).then(() => true, () => false);
@@ -400,6 +450,13 @@ try {
   assert(true, "missing required skill parameters are reported in the dialog");
   await page.keyboard.press("Escape");
   await pane(page, "skill-yt-titles").locator("button.close").click();
+  // a closed skill agent folds under "N finished" in the sidebar instead of staying listed for good
+  await page.locator(".side-head button", { hasText: "finished" }).waitFor({ timeout: 10_000 });
+  assert((await page.locator(".side-head button", { hasText: "finished" }).boundingBox())!.height < 30, "the 'N finished' button stays on one line");
+  assert((await page.locator(".job-list li", { hasText: "skill-yt-titles" }).count()) === 0, "finished agents are folded out of the sidebar until asked for");
+  await page.locator(".side-head button", { hasText: "finished" }).click();
+  await page.locator(".job-list li", { hasText: "skill-yt-titles" }).waitFor({ timeout: 5000 });
+  await page.locator(".side-head button", { hasText: "hide finished" }).click();
   // a required choice without a default runs with the option the dialog shows (the first)
   mkdirSync(join(process.env.HIVE_HOME!, "skills"), { recursive: true });
   writeFileSync(
@@ -417,7 +474,8 @@ try {
   // recipes: studio opens a chat pane
   await command(page, "set up a team");
   await page.locator(".modal .recipe", { hasText: "Creator studio" }).click();
-  await page.locator(".modal label:has-text('Main agent') select").selectOption("mock");
+  assert((await page.locator(".modal label:has-text('Does the work') select").count()) === 1 && (await page.locator(".modal label:has-text('Name prefix') .hint").count()) === 1, "recipes: the vendor selects say who does and who checks the work; the prefix is explained");
+  await page.locator(".modal label:has-text('Does the work') select").selectOption("mock");
   await page.locator(".modal button[type=submit]").click();
   await page.locator(`[data-pane="studio"] textarea:not([disabled])`).waitFor({ timeout: 20_000 });
   assert(true, "a recipe sets up its team and opens the agent you talk to");
@@ -440,12 +498,13 @@ try {
   await page.locator(".drawer").waitFor({ state: "detached", timeout: 2000 });
   await sleep(500);
   assert(
-    (await pane(page, "beta").locator(".turn", { hasText: "cancelled" }).count()) === 0 && (await pane(page, "beta").locator(".st.st-working").count()) === 1,
+    (await pane(page, "beta").locator(".turn", { hasText: "cancelled" }).count()) === 0 && (await pane(page, "beta").locator(".pane-head .st.st-working").count()) === 1,
     "Esc in the drawer closes it and leaves the agent's turn running",
   );
   assert(await activeIn(page, "beta"), "closing the drawer gives focus back to the pane");
   await page.keyboard.press("Escape");
   await pane(page, "beta").locator(".turn", { hasText: "cancelled" }).waitFor({ timeout: 10_000 });
+  assert(!/·\s*$/.test(await pane(page, "beta").locator(".turn", { hasText: "cancelled" }).last().innerText()), "a cancelled turn's footer has no dangling separator");
   assert(true, "Esc in a pane still cancels its turn");
 
   // hive drawer: mail to the owner, report, blackboard, send as owner
@@ -461,6 +520,8 @@ try {
   await page.locator(".drawer .seg button", { hasText: "Since you left" }).click();
   await page.locator(".drawer .rep-job", { hasText: "loop" }).waitFor({ timeout: 5000 });
   assert(true, "report tab summarizes job runs");
+  await page.locator(".drawer .seg button", { hasText: "Mail" }).first().click();
+  assert(!/hive_send/.test(await page.locator(".drawer-body").innerText()), "the Mail tab explains itself without tool names");
   await page.locator(".drawer .seg button", { hasText: "Blackboard" }).click();
   await page.locator(".drawer .bb-row", { hasText: "ideas/dark-mode" }).waitFor({ timeout: 5000 });
   assert(true, "blackboard tab shows entries agents wrote");
@@ -482,6 +543,8 @@ try {
   assert(await page.locator(".drawer .usage-win", { hasText: "resets in" }).count() > 0, "usage tab shows what's left in a window and when it resets");
   await page.locator(".drawer .usage-pause button").click();
   await page.locator(".drawer .usage-pause.on").waitFor({ timeout: 5000 });
+  await page.locator(".toast", { hasText: "Automatic work paused" }).waitFor({ timeout: 5000 });
+  assert(true, "pausing says what it did in words, not 'paused = 1'");
   assert(true, "the pause switch stops automatic work");
   await page.screenshot({ path: join(shots, "hive-ui-usage.png") });
   await page.locator(".drawer .usage-pause button").click();
@@ -519,6 +582,25 @@ try {
   await page.waitForFunction(() => document.activeElement?.closest("[data-pane]")?.getAttribute("data-pane") === "beta", null, { timeout: 5000 });
   assert(await activeIn(page, "beta"), "palette jumps to the agent");
 
+  // a nearly full context window: the composer says so and offers a fresh session
+  await pane(page, "beta").locator("textarea").fill("ctx-full please");
+  await pane(page, "beta").locator("textarea").press("Enter");
+  await pane(page, "beta").locator(".composer-state.warn", { hasText: "% full" }).waitFor({ timeout: 15_000 });
+  await pane(page, "beta").locator(".composer-state.warn button", { hasText: "Fresh session" }).click();
+  await pane(page, "beta").locator(".composer-state.warn").waitFor({ state: "detached", timeout: 15_000 });
+  assert(true, "a nearly full context shows a warning with a one-click fresh session");
+
+  // closing a pane while its agent works asks first; "cancel" keeps the pane
+  await pane(page, "beta").locator("textarea").fill("slow close-check");
+  await pane(page, "beta").locator("textarea").press("Enter");
+  await pane(page, "beta").locator(".pane-head .st.st-working").waitFor({ timeout: 10_000 });
+  page.once("dialog", (d) => void d.dismiss());
+  await pane(page, "beta").locator("button.close").click();
+  await sleep(300);
+  assert((await pane(page, "beta").count()) === 1, "closing a working agent asks first; dismissing keeps the pane");
+  await page.keyboard.press("Escape");
+  await until(async () => (await pane(page, "beta").locator(".pane-head .st.st-working").count()) === 0, 15_000);
+
   // ✦ improve: rough idea → full prompt in the same composer, undo, then send to the same agent
   {
     const box = pane(page, "beta").locator("textarea");
@@ -530,6 +612,8 @@ try {
     await pane(page, "beta").locator("button.improve").click();
     await until(async () => (await box.inputValue()).startsWith("IMPROVED:"), 30_000);
     assert((await box.inputValue()).includes("make the login remember the email"), "✦ turns the draft into a fuller prompt in the same box");
+    const undoW = (await pane(page, "beta").locator("button.improve-undo").boundingBox())!.width;
+    assert(undoW > 36, `the undo button is as wide as its text (${Math.round(undoW)} px) (BUG-008)`);
     await pane(page, "beta").locator("button.improve-undo").click();
     assert((await box.inputValue()) === "make the login remember the email", "undo brings the draft back");
     await box.press("Control+Shift+Enter");
@@ -538,6 +622,13 @@ try {
     await pane(page, "beta").locator(".msg.user", { hasText: "IMPROVED: make the login remember the email" }).waitFor({ timeout: 10_000 });
     assert(true, "Ctrl+Shift+Enter improves, Enter sends it to the same agent");
   }
+
+  // every shortcut in one place
+  await command(page, "keyboard shortcuts");
+  await page.locator(".modal", { hasText: "Keyboard shortcuts" }).waitFor({ timeout: 5000 });
+  assert((await page.locator(".modal .keys-table kbd", { hasText: "Ctrl+K" }).count()) >= 1, "a Keyboard shortcuts dialog lists the keys");
+  await page.keyboard.press("Escape");
+  await page.locator(".modal").waitFor({ state: "detached", timeout: 3000 });
 
   // board: Ctrl+J, quick add, Esc closes; stats and themes from the palette
   await page.keyboard.press("Control+j");
@@ -600,17 +691,17 @@ try {
   await td.locator("select").selectOption("mock");
   await td.locator("button[type=submit]").click();
   await page.locator('[data-pane="teacher"]').waitFor({ state: "attached", timeout: 20_000 });
-  const asked = page.locator(".code-dock .msg.user", { hasText: "const message" });
+  const asked = page.locator(".code-dock .sys", { hasText: "src/hello.ts lines 2–4" });
   await asked.waitFor({ timeout: 20_000 });
-  const askedText = await asked.innerText();
-  assert(askedText.includes("src/hello.ts lines 2–4") && askedText.includes("return message;") && askedText.includes("```ts") && askedText.includes("Help me understand what these lines do"), "Explain sends the path, line range and the code in a fenced block to the teacher");
-  assert((await pane(page, "teacher").locator(".msg.user", { hasText: "const message" }).count()) === 1, "the question is in the teacher's own pane too");
+  const askedText = (await asked.locator(".sys-body").textContent()) ?? "";
+  assert((await asked.locator("summary").innerText()).includes("src/hello.ts lines 2–4") && askedText.includes("return message;") && askedText.includes("```ts") && askedText.includes("Help me understand what these lines do"), "Explain sends the path, line range and the code in a fenced block to the teacher, folded under a one-line label");
+  assert((await pane(page, "teacher").locator(".sys", { hasText: "src/hello.ts lines 2–4" }).count()) === 1, "the question is in the teacher's own pane too");
   await page.locator(".code-dock .msg.agent", { hasText: "done" }).first().waitFor({ timeout: 20_000 });
   assert(true, "the teacher answers in the docked transcript next to the code");
   await page.screenshot({ path: join(shots, "hive-ui-code.png") });
   await page.locator('.cl[data-row="0"] .ln').click();
   await page.locator(".code-ask button", { hasText: "Quiz me" }).click();
-  await page.locator(".code-dock .msg.user", { hasText: "Quiz me" }).waitFor({ timeout: 10_000 });
+  await page.locator(".code-dock .sys", { hasText: "Quiz me" }).waitFor({ timeout: 10_000 });
   assert((await page.locator(".modal").count()) === 0, "with a teacher running, questions go straight to it");
   await page.keyboard.press("Escape");
   assert((await page.locator(".cl.sel").count()) === 0 && (await page.locator(".code-view").count()) === 1, "Esc clears the selection first");
@@ -665,6 +756,7 @@ try {
   await command(page, "layout"); // → auto
   await page.setViewportSize({ width: 720, height: 1280 }).catch(() => {});
   await page.locator(".app.vertical").waitFor({ timeout: 5000 });
+  assert(await page.evaluate(() => document.querySelector(".toasts")!.getBoundingClientRect().top > window.innerHeight / 2), "phone layout: toasts sit at the bottom, not over the pane header");
   assert(true, "auto layout goes vertical on a 9:16 window");
   await page.screenshot({ path: join(shots, "hive-ui-vertical.png") });
   // the wrapped top bar (buttons + broadcast row) must not spill over the panes — at a desktop-sized tall window
@@ -734,6 +826,8 @@ try {
   }
   assert(misaligned.length === 0, `rows are vertically aligned${misaligned.length ? ": " + misaligned.slice(0, 6).map((m) => `${m.row} > ${m.el} off by ${m.dy}px`).join("; ") : ""}`);
   await pane(page, "beta").locator(".group-chip").click();
+  await page.locator(".modal.wide .group-mode-hint", { hasText: /Review|Direct/ }).waitFor({ timeout: 5000 });
+  assert(true, "the group chat explains its mode in one line");
   const gc = page.locator(".modal.wide", { hasText: "@alpha-beta" });
   await gc.locator(".gmsg.held", { hasText: "please check the login flow" }).waitFor({ timeout: 5000 });
   await page.screenshot({ path: join(shots, "hive-ui-group-chat.png") });
@@ -745,10 +839,12 @@ try {
   await page.screenshot({ path: join(shots, "hive-ui-linked.png") });
 
   // verdict mode: one prompt to two agents, a judge picks the best parts, then build the merge
-  await page.locator(".topbar button", { hasText: "Verdict" }).click();
+  await command(page, "verdict");
   const vd = page.locator(".modal.wide", { hasText: "several agents, one judge" });
   await vd.locator("textarea.verdict-prompt").fill("verdict-task: three title ideas for my video");
   await vd.locator(".seg button", { hasText: "Text" }).click();
+  await vd.locator(".verdict-mode .hint", { hasText: "answers in words" }).waitFor({ timeout: 3000 });
+  assert(true, "verdict: the Code / Text choice is labelled and explained");
   for (const l of await vd.locator("fieldset label.radio").all()) if (await l.locator("input").isChecked()) await l.locator("input").uncheck();
   await vd.locator("fieldset label.radio", { hasText: /^\s*Mock agent \(tests\)/ }).locator("input").check();
   await vd.locator("fieldset label.radio", { hasText: "Mock agent 2" }).locator("input").check();
@@ -781,6 +877,10 @@ try {
   await pane(page, "gamma").locator(".branch", { hasText: "hive/gamma" }).waitFor({ timeout: 10_000 });
   assert(true, "coder preset puts the agent in its own worktree (branch shown in pane)");
   assert((await pane(page, "gamma").locator(".pane-head .role-badge").innerText()) === "coder", "the agent's role is a badge in its pane header");
+  await page.keyboard.press("Control+k");
+  await page.locator(".palette .pal-input").fill("gamma");
+  assert(/coder/.test(await page.locator(".palette .pal-item", { hasText: "gamma" }).first().innerText()), "the palette shows each agent's role");
+  await page.keyboard.press("Escape");
   const wt = g(["worktree", "list", "--porcelain"]).split("\n\n").find((b) => b.includes("refs/heads/hive/gamma"))!.match(/^worktree (.+)$/m)![1];
   writeFileSync(join(wt, "feature.txt"), "x\ny\n");
   g(["add", "."], wt);

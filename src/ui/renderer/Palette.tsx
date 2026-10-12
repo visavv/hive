@@ -20,6 +20,7 @@ export interface PaletteAction {
 
 export function Palette({ actions, onClose }: { actions: PaletteAction[]; onClose: () => void }) {
   const names = useStore((s) => s.layout.panes.map((p) => p.name));
+  const stateKey = useStore(() => names.map((n) => agentState(n)).join(","));
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
@@ -31,7 +32,8 @@ export function Palette({ actions, onClose }: { actions: PaletteAction[]; onClos
       return {
         id: "agent:" + n,
         label: n,
-        hint: `${a?.kind ?? store.starting.get(n)?.kind ?? ""}${a?.branch?.startsWith("hive/") ? " · " + a.branch : ""}`,
+        // the role says what the agent is for; the kind and branch are secondary
+        hint: [a?.role, a?.kind ?? store.starting.get(n)?.kind, a?.branch?.startsWith("hive/") ? a.branch : ""].filter(Boolean).join(" · "),
         keys: i < 9 ? `Ctrl+${i + 1}` : undefined,
         state: st,
         run: () => {
@@ -52,7 +54,7 @@ export function Palette({ actions, onClose }: { actions: PaletteAction[]; onClos
       .filter((x) => x.score >= 0)
       .sort((a, b) => a.score - b.score)
       .map((x) => x.it);
-  }, [q, names.join("|"), actions]);
+  }, [q, names.join("|"), actions, stateKey]);
   useEffect(() => setSel(0), [q]);
   useEffect(() => {
     listRef.current?.querySelector(".pal-item.on")?.scrollIntoView({ block: "nearest" });

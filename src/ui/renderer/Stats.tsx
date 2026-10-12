@@ -6,6 +6,7 @@
 import { useEffect, useState } from "react";
 import { rpc } from "./bridge.js";
 import { Modal } from "./Modal.js";
+import { onActivate } from "./focus.js";
 import { store } from "./store.js";
 
 type Dim = "vendor" | "model" | "category" | "project" | "day";
@@ -93,7 +94,10 @@ export function StatsDialog({ onClose }: { onClose: () => void }) {
               <li
                 key={x.key}
                 title={`${x.turns} turns${x.cost ? ` · $${x.cost.toFixed(2)}` : ""} — click to filter`}
+                role="button"
+                tabIndex={0}
                 onClick={() => set(by, x.key)}
+                onKeyDown={onActivate(() => set(by, x.key))}
               >
                 <span className="k">{x.key || "—"}</span>
                 <span className="bar">
